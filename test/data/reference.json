@@ -1,0 +1,149 @@
+{
+  "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "fixtures": {
+    "yuv444p-330x194": {
+      "sha256": "17739cecef5c3cb8e8b02219bf36dd5c78358deb48fade9bddf3239821662ad7",
+      "width": 330,
+      "height": 194,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "01171fb512707844f78dfacfe6053306",
+        "4791943d9c0cd3abae53b1de46e29d33",
+        "2fc01aedb624e0aabf9111d7b83610cf",
+        "85bd7916288c814a6cf38d84e04405a5",
+        "376baf1e03fd59fdaf46b54f47340848",
+        "97b1ba21e39c241edfbc6918de038b5d",
+        "0b4b6f7ff60c3eb723835ad9452d48e3",
+        "b01af929e4e49dbe36e4f2e4df749f27",
+        "c87502b161a9351cbe98612ca8040959",
+        "f167c943cbb6a9930bd00e92e29540ab",
+        "a4d0e953c7a38e1cb0c3793c3e051de4",
+        "cf1574d3763f11c0bacf4e16ec8b0d80"
+      ]
+    },
+    "yuv420p-330x194": {
+      "sha256": "bab6353d40b92af9327a9fb25f4573074d5208f20d706dafde81219e1db774d0",
+      "width": 330,
+      "height": 194,
+      "pixFmt": "yuv420p",
+      "md5s": [
+        "062f6912fe10d7e2f6da512568c8e1f8",
+        "7b0b85bad8ad6b22414ec02a155e191f",
+        "e26a0d49ba407f75e83996d96ba140bd",
+        "386a3ce7e45d1a8da592062ccbf612ad",
+        "c6527bb9c8d71595be0cec7f82d82886",
+        "7c00302e72ff65be988a8aed1454feb6",
+        "49e41e56c5ba1ef50e9d17a48157b6a0",
+        "63d9ea41588763d50e5b375163eed7d4",
+        "230d9253891dfe52c928dd1eb03d383b",
+        "bb42787121ed5618e523f6908251db1e",
+        "c1c02e5320f7c477e9a57d6c89619e55",
+        "5cb091ea7464ad6d0fdd96db220541e4"
+      ]
+    },
+    "yuv422p-320x180": {
+      "sha256": "274178a46f7c35526c5366f066d34db69fe783930b6f7c30d5dbc89173fadcce",
+      "width": 320,
+      "height": 180,
+      "pixFmt": "yuv422p",
+      "md5s": [
+        "ca5a476f83d9017442959752c2bba40a",
+        "b0d05c84b043b7cb9b9a3f9712172f2b",
+        "b084d6c3f5aea4205dd234377295b06f",
+        "248555451470a200ea2fafca32633aa6",
+        "c9c1dfaa747b08c2634783878c19f892",
+        "fa2f6ae87f5beb2374c6a75ea21de64e",
+        "a69ab5e243bffe90bfb86c87fe591d40",
+        "c2da3ef6947671a95147470e998fc7e1",
+        "834e9bf0ed8c5110c937c5ff691447d9",
+        "a2e2eff3ed1d49b3d41b38a810e87559",
+        "f3f66344052f3785aa439f30d8c79aab",
+        "913d16a20284e7ecd08df75a9a10e43a"
+      ]
+    },
+    "yuv444p-wpp-ctu16": {
+      "sha256": "72708b10733e921b4fe60d91088e8ae22ac0ba22e6ee1f3576cf25a765c76fe9",
+      "width": 352,
+      "height": 288,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "92c3f0f8579bb61dba679b072eb7ae05",
+        "469eddb6821099d643e7df1a50cf7a11",
+        "057e4d6784757cc091352bab14a251a6",
+        "56eb8bbf20e7583e892015e75deee8c0",
+        "3e48d36f8751c4405f7ada37fbf939d7",
+        "514681f39430c8fffb9b0ac17c2ad496",
+        "098a817fd295ba10c5d833f85f9768a7",
+        "ac1237fb864e85a229e83fdce3e58d44",
+        "9ea8a32ce47dac1951857345b26d0e87",
+        "322598ec1beb40da910d6137792e02b5",
+        "4e9f06d2c97ecb28d01bdf051ed9f9da",
+        "f4874691995c12a01d08abd15dae21bc"
+      ]
+    },
+    "yuv420p-slices4": {
+      "sha256": "2117ac466bf9a59ff2ad9e538c83ed80650d60400a68ab89025e372ef159fa13",
+      "width": 320,
+      "height": 240,
+      "pixFmt": "yuv420p",
+      "md5s": [
+        "4c47b921f31f8201c8dad8ce10369106",
+        "ac0a94dd1a85d34ed25e5160c03d9d04",
+        "469542cdb42c3d0e092f824da2e330f1",
+        "ce2c231aab418ce9d879ff963e25b34d",
+        "2228ff0a609c796444d2cebaafeb64ae",
+        "da0f61fc201370b1377b8c7a2dbd907c",
+        "50cd624fb7d557de89fe6afcb682f456",
+        "5ad79685fcc2ef99dacabd5192b8ba0a",
+        "26eaca527f07472e56e4c5d576507975",
+        "8e8d36c2c4a678ea7145ecab02447268",
+        "360149dadb413009fd9d439f2f7d190c",
+        "37776d0b6b079ee2f735dadf41d7050a"
+      ]
+    },
+    "yuv420p10-320x180": {
+      "sha256": "b13f7e7bbc745172bfe873b4f05959211643404fc520097452d234e8f986f2e5",
+      "width": 320,
+      "height": 180,
+      "pixFmt": "yuv420p10le",
+      "md5s": [
+        "3dcd5a67351d275d9990c6adff5c0016",
+        "3c31360ce5f55a5c03e02bc987fb6aae",
+        "bfb21c9ddf53bb58b3c08218d3399cba",
+        "3d7f2f65095534232878ab9d1b4bf014"
+      ]
+    },
+    "yuv420p-160x96": {
+      "sha256": "dc0b058ac7479f59c081e23c85ff49d0443078d95e6a24b45a0fca42466710d0",
+      "width": 160,
+      "height": 96,
+      "pixFmt": "yuv420p",
+      "md5s": [
+        "74e90a10cb95842ff3759119d09ccd45",
+        "a03188f2a4bc3649f5443faae62413e7",
+        "a9c5c4287dfa1be02d11fcc75c1a2678",
+        "c0a036aab88a279dadfed009f592b32f"
+      ]
+    },
+    "bt709-tv": {
+      "sha256": "897b94c4e8c19ea3c92bc06ec4cfb06b11bda5211a24cd113afe7c4c4d86ebe5",
+      "width": 160,
+      "height": 96,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "9536bf915d248b9e05556d5681b93946",
+        "f7a9f813aa7e7a7dc6c97c8efdf51788"
+      ]
+    },
+    "bt601-pc": {
+      "sha256": "d1b028c43ce814f772c46cdcd51690a2651873f5d0c98e6422110b8fcdacb4e7",
+      "width": 160,
+      "height": 96,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "9536bf915d248b9e05556d5681b93946",
+        "f7a9f813aa7e7a7dc6c97c8efdf51788"
+      ]
+    }
+  }
+}
