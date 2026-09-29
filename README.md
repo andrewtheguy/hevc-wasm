@@ -36,6 +36,27 @@ To try a local build in remotex without a release:
 REMOTEX_HEVC_WASM_DIR=../hevc-wasm/build/out cargo build --profile qa --features hevc-wasm
 ```
 
+## Testing
+
+```sh
+bun install
+bun test
+bun run typecheck
+```
+
+The tests load `build/out/hevc.js` (or `$HEVC_WASM_DIR/hevc.js`) under Bun as
+the page loads it, pthread pool and all, and feed it access units one at a time.
+Their streams are committed in `test/data`: 4:2:0, 4:2:2 and 4:4:4, cropped
+sizes, wavefront rows with 16-pixel CTBs, multiple slices, 10-bit, and color
+descriptions. Every picture must match native FFmpeg's `-f framemd5`, recorded
+in `test/data/reference.json`, at 1, 4 and 8 threads. They also cover
+parameter-set-only units, size and format changes mid-stream, empty and garbage
+units, joining mid-stream, and two decoders sharing one module.
+
+A run needs no ffmpeg. `bun run fixtures` regenerates the streams and their
+reference with the host's ffmpeg and libx265 from the specs in
+`test/fixtures.ts`; commit what it writes.
+
 ## Releasing
 
 Bump `VERSION`, push, and run the Publish workflow (`gh workflow run publish.yml`).
