@@ -8,9 +8,12 @@ decoder, compiled to WebAssembly with Emscripten, behind the small C surface in
 `src/decoder.c`.
 
 A release is `hevc-wasm-vX.Y.Z.tar.gz`, holding the two files the page loads:
-`hevc.js`, Emscripten's ES module glue, and `hevc.wasm`. No remotex build holds
-it: remotex pins one by version and SHA-256 (`src/hevc_wasm.rs`), an operator
-downloads that archive and names it in the gateway's `[hevc_wasm]` table, and the
+`hevc.js`, Emscripten's ES module glue, and `hevc.wasm`. This repository
+publishes the source of the build and no binary of it: releases go to the
+private [andrewtheguy/hevc-wasm-archives](https://github.com/andrewtheguy/hevc-wasm-archives),
+for whoever can see it. No remotex build holds it either: remotex pins one by
+version and SHA-256 (`src/hevc_wasm.rs`), an operator downloads that archive
+from there and names it in the gateway's `[hevc_wasm]` table, and the
 gateway reads it at start-up and serves its two files at `/hevc/`;
 the page runs it in a worker of its own, shaped as a `VideoDecoder`
 (remotex's `frontend/src/hevcWasmDecoder.ts` and `hevcWasm.worker.ts`).
@@ -39,7 +42,7 @@ remotex refuses until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.1.0.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.1.tar.gz"
 ```
 
 ## Testing
@@ -65,10 +68,12 @@ reference with the host's ffmpeg and libx265 from the specs in
 
 ## Releasing
 
-Bump `VERSION`, push, and run the Publish workflow (`gh workflow run publish.yml`).
-It builds on GitHub's runner and attaches the archive and its `SHA256SUMS` to the
-release `vX.Y.Z`. remotex then takes it as a new version and checksum in
-`src/hevc_wasm.rs`.
+Bump `VERSION`, commit, push, and run `./publish-private.sh`, logged in to `gh`
+with an account that can write to hevc-wasm-archives. It builds `git archive HEAD`
+on this machine, not in a workflow, since a public repository's workflow
+artifacts are anyone's to download; attaches the archive and its `SHA256SUMS` to
+hevc-wasm-archives' release `vX.Y.Z`; and tags the commit `vX.Y.Z` here. remotex
+then takes it as a new version and checksum in `src/hevc_wasm.rs`.
 
 ## What is optimized
 
