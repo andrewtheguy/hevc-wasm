@@ -8,8 +8,10 @@ decoder, compiled to WebAssembly with Emscripten, behind the small C surface in
 `src/decoder.c`.
 
 A release is `hevc-wasm-vX.Y.Z.tar.gz`, holding the two files the page loads:
-`hevc.js`, Emscripten's ES module glue, and `hevc.wasm`. remotex's non-default
-`hevc-wasm` feature pins one by version and SHA-256 and serves it at `/hevc/`;
+`hevc.js`, Emscripten's ES module glue, and `hevc.wasm`. No remotex build holds
+it: remotex pins one by version and SHA-256 (`src/hevc_wasm.rs`), an operator
+downloads that archive and names it in the gateway's `[hevc_wasm]` table, and the
+gateway reads it at start-up and serves its two files at `/hevc/`;
 the page runs it in a worker of its own, shaped as a `VideoDecoder`
 (remotex's `frontend/src/hevcWasmDecoder.ts` and `hevcWasm.worker.ts`).
 
@@ -30,10 +32,14 @@ A kernel changes on the fork's branch, which is rebased onto FFmpeg's next
 release tag when it moves, and reaches here as a new commit and checksum in
 `build.sh`.
 
-To try a local build in remotex without a release:
+The archive is reproducible, so `dist/`'s is byte-identical to the release's and
+remotex serves it as the release. A changed build has another SHA-256, which
+remotex refuses until its pin names it:
 
-```sh
-REMOTEX_HEVC_WASM_DIR=../hevc-wasm/build/out cargo build --profile qa --features hevc-wasm
+```toml
+[hevc_wasm]
+enabled = true
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.1.0.tar.gz"
 ```
 
 ## Testing
@@ -61,8 +67,8 @@ reference with the host's ffmpeg and libx265 from the specs in
 
 Bump `VERSION`, push, and run the Publish workflow (`gh workflow run publish.yml`).
 It builds on GitHub's runner and attaches the archive and its `SHA256SUMS` to the
-release `vX.Y.Z`. remotex then takes it as a new version and checksum in its
-`build.rs`.
+release `vX.Y.Z`. remotex then takes it as a new version and checksum in
+`src/hevc_wasm.rs`.
 
 ## What is optimized
 
@@ -119,5 +125,5 @@ prints a digest per picture on stdout, to compare with
 The page must be cross-origin isolated for `SharedArrayBuffer`, the threads'
 shared memory: remotex's gateway serves every file with
 `Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: require-corp` when built with the feature. The
+`Cross-Origin-Embedder-Policy: require-corp` when `[hevc_wasm]` is enabled. The
 browser must run shared-memory SIMD WebAssembly and build an I444 `VideoFrame`.
