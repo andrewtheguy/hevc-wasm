@@ -158,10 +158,9 @@ the byte planes and the threading are this repository's.
   loader differs from the FFmpeg module's.
 - `rust/hevc-bench` decodes a file natively and prints each picture's MD5 as
   `ffmpeg -f framemd5` does: `cargo run --release -p hevc-bench -- FILE THREADS [REPEATS]`
-  from `rust/`. To profile the module itself, build it with
-  `wasm-pack build rust/hevc-web --profiling --target web --no-pack --out-dir ../../tmp/pkg-prof`,
-  which keeps the function names, and run it under `node --perf-basic-prof`
-  and `perf record`; profiles and logs go under `tmp/`.
+  from `rust/`. To profile the module itself, run it under
+  `node --perf-basic-prof` and `perf record`: the build keeps the function
+  names. Profiles and logs go under `tmp/`.
 
 ```sh
 ./build-rust.sh              # rust/hevc-web/pkg, on the pinned nightly, via wasm-pack
@@ -184,30 +183,39 @@ two-pass run less a one-pass one). Per picture:
 
 | 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| 1 thread, median ms | 26.5 | 33.8 |
-| 1 thread, M cycles | 77 | 90 |
-| 4 threads, median ms | 9.4 | 10.9 |
-| 4 threads, M cycles | 79 | 91 |
-| M instructions | 195 | 213 |
+| 1 thread, median ms | 23.2 | 33.6 |
+| 1 thread, M cycles | 67 | 90 |
+| 4 threads, median ms | 8.5 | 10.6 |
+| 4 threads, M cycles | 70 | 91 |
+| M instructions | 173 | 213 |
 
 | 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| 1 thread, median ms | 6.6 | 7.1 |
-| 1 thread, M cycles | 23 | 24 |
-| 4 threads, median ms | 3.0 | 3.5 |
-| 4 threads, M cycles | 25 | 25 |
-| M instructions | 48 | 54 |
+| 1 thread, median ms | 4.7 | 6.2 |
+| 1 thread, M cycles | 20 | 23 |
+| 4 threads, median ms | 2.4 | 3.3 |
+| 4 threads, M cycles | 22 | 26 |
+| M instructions | 38 | 54 |
 
-On the Mac's dense screen content this decoder is a seventh ahead in cycles,
+On the Mac's dense screen content this decoder is a quarter ahead in cycles,
 and both spend their time where the stream does: CABAC residual parsing and
-the 32×32 inverse transforms. On ordinary video, where motion compensation
-dominates, the two are level, and the whole-pel block copies lead the profile
-of each. Running the filters inside the wavefront rather than as passes over
-the whole picture was worth a fifth of the cycles on four threads, where the
-passes had left the threads spinning at barriers; SAO in place rather than
-into a second picture, with the interpolation filters writing samples from
-their last pass, another tenth on one thread. Natively the decoder runs its
-scalar fallbacks, since the kernels are written for wasm32.
+the 32×32 inverse transforms, of which the capture has some three thousand a
+picture, nearly all dense. On ordinary video, where motion compensation
+dominates, this decoder is a tenth ahead, and the whole-pel block copies lead
+the profile of each: those are bound by memory, the reference and the picture
+being written not fitting the cache together. Of the steps that got here:
+running the filters inside the wavefront rather than as passes over the whole
+picture was worth a fifth of the cycles on four threads, where the passes had
+left the threads spinning at barriers; SAO in place rather than into a second
+picture, with the interpolation filters writing samples from their last pass,
+a tenth on one thread; the transform's row pass splatting each pair of
+coefficients with one shuffle rather than scalar loads, a twentieth of the
+capture's instructions; the block copy running down sixteen-wide columns, a
+seventh of the video's instructions; the maps filled by whole words rather
+than `memory.fill` calls into the runtime, a twelfth of the video's; and
+shipping LLVM's output without wasm-opt, a twentieth of the capture's cycles.
+Natively the decoder runs its scalar fallbacks, since the kernels are written
+for wasm32.
 
 To benchmark on a busy host, pin both runs to the same cores (`taskset`),
 alternate them, and read `perf stat -e instructions:u,cycles:u` rather than
