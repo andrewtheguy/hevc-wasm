@@ -19,13 +19,6 @@ fn load_u8x4(s: &[u8]) -> v128 {
 }
 
 #[inline(always)]
-fn load_u8x16(s: &[u8]) -> v128 {
-    let s = &s[..16];
-    // SAFETY: sixteen bytes are there, and an unaligned load is allowed.
-    unsafe { v128_load(s.as_ptr() as *const v128) }
-}
-
-#[inline(always)]
 fn load_i16x8(s: &[i16]) -> v128 {
     let s = &s[..8];
     // SAFETY: eight values are there, and an unaligned load is allowed.
@@ -35,13 +28,6 @@ fn load_i16x8(s: &[i16]) -> v128 {
 #[inline(always)]
 fn load_i16x4(s: &[i16]) -> v128 {
     i16x8(s[0], s[1], s[2], s[3], 0, 0, 0, 0)
-}
-
-#[inline(always)]
-fn load_i32x4(s: &[i32]) -> v128 {
-    let s = &s[..4];
-    // SAFETY: four values are there, and an unaligned load is allowed.
-    unsafe { v128_load(s.as_ptr() as *const v128) }
 }
 
 #[inline(always)]
@@ -57,20 +43,6 @@ fn store_i16x4(d: &mut [i16], v: v128) {
     for i in 0..4 {
         d[i] = i16::from_le_bytes([b[2 * i], b[2 * i + 1]]);
     }
-}
-
-#[inline(always)]
-fn store_i32x4(d: &mut [i32], v: v128) {
-    let d = &mut d[..4];
-    // SAFETY: as above.
-    unsafe { v128_store(d.as_mut_ptr() as *mut v128, v) }
-}
-
-#[inline(always)]
-fn store_u8x16(d: &mut [u8], v: v128) {
-    let d = &mut d[..16];
-    // SAFETY: as above.
-    unsafe { v128_store(d.as_mut_ptr() as *mut v128, v) }
 }
 
 #[inline(always)]
@@ -180,95 +152,138 @@ pub fn fill_i16(dst: &mut [i16], v: i16) {
 
 // ---- motion compensation ----
 
+/// The eight (or four, for a width of four) samples at `p`, widened to 16
+/// bits.
+///
+/// # Safety
+/// `w` samples are readable at `p`.
+#[inline(always)]
+unsafe fn samples_at(p: *const u8, w: usize) -> v128 {
+    u16x8_extend_low_u8x16(if w >= 8 { v128_load64_zero(p as *const u64) } else { v128_load32_zero(p as *const u32) })
+}
+
+/// Eight (or four) 16-bit values at `p`.
+///
+/// # Safety
+/// `w` values are readable at `p`.
+#[inline(always)]
+unsafe fn i16s_at(p: *const i16, w: usize) -> v128 {
+    if w >= 8 {
+        v128_load(p as *const v128)
+    } else {
+        v128_load64_zero(p as *const u64)
+    }
+}
+
+/// Eight (or four) 16-bit sums as samples at `p`: `(v + 32) >> 6`, clipped.
+///
+/// # Safety
+/// `w` bytes are writable at `p`.
+#[inline(always)]
+unsafe fn store_uni(p: *mut u8, w: usize, v: v128) {
+    let b = u8x16_narrow_i16x8(i16x8_shr(i16x8_add(v, i16x8_splat(32)), 6), v);
+    if w >= 8 {
+        v128_store64_lane::<0>(b, p as *mut u64);
+    } else {
+        v128_store32_lane::<0>(b, p as *mut u32);
+    }
+}
+
 /// The sums of an `N`-tap filter over 16-bit inputs never leave 16 bits for
-/// 8-bit samples (the positive taps sum to 80 at most), so the horizontal
-/// and sample-vertical passes accumulate in 16-bit lanes.
+/// 8-bit samples (the positive taps sum to 88 at most), so the passes over
+/// samples accumulate in 16-bit lanes. Like the block copies, the filters
+/// check their bounds once and run on pointers.
 pub fn fir_h<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [i16], dst_stride: usize) {
-    let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
-    for y in 0..h {
-        let row = &src[y * stride..y * stride + w + N - 1];
-        let out = &mut dst[y * dst_stride..y * dst_stride + w];
-        let mut x = 0;
-        while x < w {
-            let mut acc = i16x8_splat(0);
-            for i in 0..N {
-                acc = i16x8_add(acc, i16x8_mul(load_samples(&row[x + i..], w), taps[i]));
-            }
-            if w >= 8 {
-                store_i16x8(&mut out[x..], acc);
-            } else {
-                store_i16x4(&mut out[x..], acc);
-            }
-            x += 8;
-        }
-    }
-}
-
-pub fn fir_v_u8<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [i16], dst_stride: usize) {
-    let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
-    for y in 0..h {
-        let out = &mut dst[y * dst_stride..y * dst_stride + w];
-        let mut x = 0;
-        while x < w {
-            let mut acc = i16x8_splat(0);
-            for i in 0..N {
-                acc = i16x8_add(acc, i16x8_mul(load_samples(&src[(y + i) * stride + x..], w), taps[i]));
-            }
-            if w >= 8 {
-                store_i16x8(&mut out[x..], acc);
-            } else {
-                store_i16x4(&mut out[x..], acc);
-            }
-            x += 8;
-        }
-    }
-}
-
-/// The vertical pass over the intermediate needs 32-bit sums.
-pub fn fir_v_i16<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [i16], dst_stride: usize) {
-    let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
-    for y in 0..h {
-        let out = &mut dst[y * dst_stride..y * dst_stride + w];
-        let mut x = 0;
-        while x < w {
-            let mut lo = i32x4_splat(0);
-            let mut hi = i32x4_splat(0);
-            for i in 0..N {
-                let s = &src[(y + i) * stride + x..];
-                let v = if w >= 8 { load_i16x8(s) } else { load_i16x4(s) };
-                lo = i32x4_add(lo, i32x4_extmul_low_i16x8(v, taps[i]));
-                hi = i32x4_add(hi, i32x4_extmul_high_i16x8(v, taps[i]));
-            }
-            let r = i16x8_narrow_i32x4(i32x4_shr(lo, 6), i32x4_shr(hi, 6));
-            if w >= 8 {
-                store_i16x8(&mut out[x..], r);
-            } else {
-                store_i16x4(&mut out[x..], r);
-            }
-            x += 8;
-        }
-    }
-}
-
-pub fn put_uni(dst: &mut [u8], dst_stride: usize, src: &[i16], w: usize, h: usize) {
+    holds(src, stride, w + N - 1, h);
     holds(dst, dst_stride, w, h);
-    holds(src, w, w, h);
-    let round = i16x8_splat(32);
-    let (d, s) = (dst.as_mut_ptr(), src.as_ptr());
+    let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
+    let (s, d) = (src.as_ptr(), dst.as_mut_ptr());
     for y in 0..h {
         // SAFETY: inside the blocks `holds` checked; a width of four reads
         // and writes only its four.
         unsafe {
-            let (dr, sr) = (d.add(y * dst_stride), s.add(y * w));
+            let (sr, dr) = (s.add(y * stride), d.add(y * dst_stride));
             let mut x = 0;
             while x < w {
-                let v = if w >= 8 { v128_load(sr.add(x) as *const v128) } else { v128_load64_zero(sr.add(x) as *const u64) };
-                let b = u8x16_narrow_i16x8(i16x8_shr(i16x8_add(v, round), 6), v);
-                if w >= 8 {
-                    v128_store64_lane::<0>(b, dr.add(x) as *mut u64);
-                } else {
-                    v128_store32_lane::<0>(b, dr.add(x) as *mut u32);
+                let mut acc = i16x8_splat(0);
+                for i in 0..N {
+                    acc = i16x8_add(acc, i16x8_mul(samples_at(sr.add(x + i), w), taps[i]));
                 }
+                if w >= 8 {
+                    v128_store(dr.add(x) as *mut v128, acc);
+                } else {
+                    v128_store64_lane::<0>(acc, dr.add(x) as *mut u64);
+                }
+                x += 8;
+            }
+        }
+    }
+}
+
+pub fn fir_h_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
+    holds(src, stride, w + N - 1, h);
+    holds(dst, dst_stride, w, h);
+    let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
+    let (s, d) = (src.as_ptr(), dst.as_mut_ptr());
+    for y in 0..h {
+        // SAFETY: as in `fir_h`.
+        unsafe {
+            let (sr, dr) = (s.add(y * stride), d.add(y * dst_stride));
+            let mut x = 0;
+            while x < w {
+                let mut acc = i16x8_splat(0);
+                for i in 0..N {
+                    acc = i16x8_add(acc, i16x8_mul(samples_at(sr.add(x + i), w), taps[i]));
+                }
+                store_uni(dr.add(x), w, acc);
+                x += 8;
+            }
+        }
+    }
+}
+
+pub fn fir_v_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
+    holds(src, stride, w, h + N - 1);
+    holds(dst, dst_stride, w, h);
+    let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
+    let (s, d) = (src.as_ptr(), dst.as_mut_ptr());
+    for y in 0..h {
+        // SAFETY: as in `fir_h`.
+        unsafe {
+            let (sr, dr) = (s.add(y * stride), d.add(y * dst_stride));
+            let mut x = 0;
+            while x < w {
+                let mut acc = i16x8_splat(0);
+                for i in 0..N {
+                    acc = i16x8_add(acc, i16x8_mul(samples_at(sr.add(i * stride + x), w), taps[i]));
+                }
+                store_uni(dr.add(x), w, acc);
+                x += 8;
+            }
+        }
+    }
+}
+
+/// The pass over the intermediate needs 32-bit sums.
+pub fn fir_hv_uni<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
+    holds(src, stride, w, h + N - 1);
+    holds(dst, dst_stride, w, h);
+    let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
+    let (s, d) = (src.as_ptr(), dst.as_mut_ptr());
+    for y in 0..h {
+        // SAFETY: as in `fir_h`.
+        unsafe {
+            let (sr, dr) = (s.add(y * stride), d.add(y * dst_stride));
+            let mut x = 0;
+            while x < w {
+                let mut lo = i32x4_splat(0);
+                let mut hi = i32x4_splat(0);
+                for i in 0..N {
+                    let v = i16s_at(sr.add(i * stride + x), w);
+                    lo = i32x4_add(lo, i32x4_extmul_low_i16x8(v, taps[i]));
+                    hi = i32x4_add(hi, i32x4_extmul_high_i16x8(v, taps[i]));
+                }
+                store_uni(dr.add(x), w, i16x8_narrow_i32x4(i32x4_shr(lo, 6), i32x4_shr(hi, 6)));
                 x += 8;
             }
         }
@@ -373,34 +388,7 @@ pub fn angular_t(dst: &mut [u8], stride: usize, n: usize, refb: &[i16], off: usi
     }
 }
 
-// ---- scaling and the inverse transform ----
-
-/// Scaling in 32 bits: `c * levelScale * 16` fits, and the `<< (qp / 6)` and
-/// `>> bdShift` fold into one shift either way.
-pub fn dequant(coeffs: &mut [i16], n: usize, nz_w: usize, nz_h: usize, qp: i32) {
-    let log2n = n.trailing_zeros() as i32;
-    let r = 8 + log2n - 5;
-    let l = qp / 6;
-    let scale = i16x8_splat((crate::tables::LEVEL_SCALE[(qp % 6) as usize] * 16) as i16);
-    let round = i32x4_splat(if l < r { 1 << (r - l - 1) } else { 0 });
-    let (shl, shr) = ((l - r).max(0) as u32, (r - l).max(0) as u32);
-    for y in 0..nz_h {
-        let row = &mut coeffs[y * n..y * n + n];
-        let mut x = 0;
-        while x < nz_w {
-            let c = if n >= 8 { load_i16x8(&row[x..]) } else { load_i16x4(&row[x..]) };
-            let lo = i32x4_shr(i32x4_add(i32x4_shl(i32x4_extmul_low_i16x8(c, scale), shl), round), shr);
-            let hi = i32x4_shr(i32x4_add(i32x4_shl(i32x4_extmul_high_i16x8(c, scale), shl), round), shr);
-            let v = i16x8_narrow_i32x4(lo, hi);
-            if n >= 8 {
-                store_i16x8(&mut row[x..], v);
-            } else {
-                store_i16x4(&mut row[x..], v);
-            }
-            x += 8;
-        }
-    }
-}
+// ---- the inverse transform ----
 
 /// `(a, b)` as one 32-bit lane, splatted, for `dot` against an interleaved pair.
 #[inline(always)]
@@ -676,54 +664,68 @@ fn add_offset(v: v128, off: v128) -> v128 {
     u8x16_sub_sat(u8x16_add_sat(v, pos), neg)
 }
 
-pub fn sao_band(dst: &mut [u8], src: &[u8], stride: usize, x0: usize, y0: usize, w: usize, h: usize, band: &[i8; 32]) {
+pub fn sao_band(data: &mut [u8], stride: usize, w: usize, h: usize, band: &[i8; 32]) {
+    holds(data, stride, w, h);
     let lo = i8x16(band[0], band[1], band[2], band[3], band[4], band[5], band[6], band[7], band[8], band[9], band[10], band[11], band[12], band[13], band[14], band[15]);
     let hi = i8x16(band[16], band[17], band[18], band[19], band[20], band[21], band[22], band[23], band[24], band[25], band[26], band[27], band[28], band[29], band[30], band[31]);
     let sixteen = u8x16_splat(16);
-    for y in y0..y0 + h {
-        let (d, s) = (&mut dst[y * stride + x0..y * stride + x0 + w], &src[y * stride + x0..y * stride + x0 + w]);
-        let mut x = 0;
-        while x + 16 <= w {
-            let v = load_u8x16(&s[x..]);
-            let idx = u8x16_shr(v, 3);
-            // A swizzle index past 15 reads as 0, so the two halves sum.
-            let off = v128_or(u8x16_swizzle(lo, idx), u8x16_swizzle(hi, u8x16_sub(idx, sixteen)));
-            store_u8x16(&mut d[x..], add_offset(v, off));
-            x += 16;
-        }
-        for x in x..w {
-            d[x] = (s[x] as i32 + band[(s[x] >> 3) as usize] as i32).clamp(0, 255) as u8;
+    let d = data.as_mut_ptr();
+    for y in 0..h {
+        // SAFETY: inside the block `holds` checked.
+        unsafe {
+            let dr = d.add(y * stride);
+            let mut x = 0;
+            while x + 16 <= w {
+                let v = v128_load(dr.add(x) as *const v128);
+                let idx = u8x16_shr(v, 3);
+                // A swizzle index past 15 reads as 0, so the two halves sum.
+                let off = v128_or(u8x16_swizzle(lo, idx), u8x16_swizzle(hi, u8x16_sub(idx, sixteen)));
+                v128_store(dr.add(x) as *mut v128, add_offset(v, off));
+                x += 16;
+            }
+            for x in x..w {
+                let v = *dr.add(x);
+                *dr.add(x) = (v as i32 + band[(v >> 3) as usize] as i32).clamp(0, 255) as u8;
+            }
         }
     }
 }
 
-pub fn sao_edge(dst: &mut [u8], src: &[u8], stride: usize, x0: usize, y0: usize, w: usize, h: usize, da: (i32, i32), db: (i32, i32), offs: &[i8; 4]) {
+pub fn sao_edge(dst: &mut [u8], dst_stride: usize, src: &[u8], origin: usize, src_stride: usize, w: usize, h: usize, oa: isize, ob: isize, offs: &[i8; 4]) {
+    holds(dst, dst_stride, w, h);
+    // The block and its neighbours in `src`, checked once.
+    let (lo, hi) = (oa.min(ob).min(0), oa.max(ob).max(0));
+    assert!(w > 0 && h > 0 && origin as isize + lo >= 0 && origin + (h - 1) * src_stride + w - 1 < (src.len() as isize - hi) as usize);
     let table = [offs[0], offs[1], 0, offs[2], offs[3]];
     let tab = i8x16(table[0], table[1], 0, table[3], table[4], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     let two = i8x16_splat(2);
-    let oa = da.1 as isize * stride as isize + da.0 as isize;
-    let ob = db.1 as isize * stride as isize + db.0 as isize;
-    for y in y0..y0 + h {
-        let mut x = x0;
-        while x + 16 <= x0 + w {
-            let i = y * stride + x;
-            let v = load_u8x16(&src[i..]);
-            let a = load_u8x16(&src[(i as isize + oa) as usize..]);
-            let b = load_u8x16(&src[(i as isize + ob) as usize..]);
-            // sign(v - a) is (v < a) - (v > a) with the masks being -1.
-            let sa = i8x16_sub(u8x16_lt(v, a), u8x16_gt(v, a));
-            let sb = i8x16_sub(u8x16_lt(v, b), u8x16_gt(v, b));
-            let e = i8x16_add(two, i8x16_add(sa, sb));
-            store_u8x16(&mut dst[i..], add_offset(v, u8x16_swizzle(tab, e)));
-            x += 16;
-        }
-        for x in x..x0 + w {
-            let i = y * stride + x;
-            let v = src[i] as i32;
-            let a = src[(i as isize + oa) as usize] as i32;
-            let b = src[(i as isize + ob) as usize] as i32;
-            let e = (2 + (v - a).signum() + (v - b).signum()) as usize;
-            dst[i] = (v + table[e] as i32).clamp(0, 255) as u8;
+    let (d, s) = (dst.as_mut_ptr(), src.as_ptr());
+    for y in 0..h {
+        // SAFETY: inside the blocks checked above.
+        unsafe {
+            let dr = d.add(y * dst_stride);
+            let sr = s.add(origin + y * src_stride);
+            let mut x = 0;
+            while x + 16 <= w {
+                let p = sr.add(x);
+                let v = v128_load(p as *const v128);
+                let a = v128_load(p.offset(oa) as *const v128);
+                let b = v128_load(p.offset(ob) as *const v128);
+                // sign(v - a) is (v < a) - (v > a) with the masks being -1.
+                let sa = i8x16_sub(u8x16_lt(v, a), u8x16_gt(v, a));
+                let sb = i8x16_sub(u8x16_lt(v, b), u8x16_gt(v, b));
+                let e = i8x16_add(two, i8x16_add(sa, sb));
+                v128_store(dr.add(x) as *mut v128, add_offset(v, u8x16_swizzle(tab, e)));
+                x += 16;
+            }
+            for x in x..w {
+                let p = sr.add(x);
+                let v = *p as i32;
+                let a = *p.offset(oa) as i32;
+                let b = *p.offset(ob) as i32;
+                let e = (2 + (v - a).signum() + (v - b).signum()) as usize;
+                *dr.add(x) = (v + table[e] as i32).clamp(0, 255) as u8;
+            }
         }
     }
 }

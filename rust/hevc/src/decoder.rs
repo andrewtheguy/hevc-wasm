@@ -45,8 +45,6 @@ pub struct Decoder {
     prev_tid0_poc: i32,
     /// The per-block maps, reused across pictures.
     state: Option<PicState>,
-    /// Where a picture is reconstructed and deblocked, reused.
-    recon: Option<Picture>,
     /// Picture buffers no reference or output holds any more.
     pool: Vec<Picture>,
     progress: Vec<Progress>,
@@ -68,7 +66,6 @@ impl Decoder {
             started: false,
             prev_tid0_poc: 0,
             state: None,
-            recon: None,
             pool: Vec::new(),
             progress: Vec::new(),
             wpp_ctx: Vec::new(),
@@ -202,11 +199,8 @@ impl Decoder {
             }
         }
 
-        // The picture's buffers and maps.
-        let mut recon = match self.recon.take() {
-            Some(p) if p.width() == sps.width as usize && p.height() == sps.height as usize => p,
-            _ => Picture::new(sps.width as usize, sps.height as usize),
-        };
+        // The picture's buffer and maps.
+        let mut pic = self.take_buffer(&sps);
         let mut state = match self.state.take() {
             Some(s) if s.fits(&sps) => s,
             _ => PicState::new(&sps),
@@ -227,7 +221,9 @@ impl Decoder {
         }
 
         let maps = Maps::of(&mut state);
-        let planes = [PlanePtr::of(&mut recon.planes[0]), PlanePtr::of(&mut recon.planes[1]), PlanePtr::of(&mut recon.planes[2])];
+        let planes = [PlanePtr::of(&mut pic.planes[0]), PlanePtr::of(&mut pic.planes[1]), PlanePtr::of(&mut pic.planes[2])];
+        // The in-loop filters run behind the wavefront, in place.
+        let ref_pocs: Vec<i32> = refs.iter().map(|r| r.poc).collect();
         let decoded = {
             let ctx = PictureCtx {
                 sps: &sps,
@@ -242,6 +238,8 @@ impl Decoder {
                 substreams: &substreams,
                 progress: &self.progress,
                 wpp_ctx: &self.wpp_ctx,
+                deblock: (!sh.deblocking_filter_disabled).then_some(DeblockCtx { planes, maps, sh: &sh, pps: &pps, ref_pocs: &ref_pocs }),
+                sao: (sh.sao_luma || sh.sao_chroma).then_some(SaoCtx { planes, maps }),
             };
             let scratch = &self.scratch;
             wavefront::run_rows(self.threads, rows, &self.progress, |row| {
@@ -250,33 +248,15 @@ impl Decoder {
                 ctu::decode_row(&ctx, &mut s, row)
             })
         };
+        self.state = Some(state);
         if let Err(e) = decoded {
-            self.recon = Some(recon);
-            self.state = Some(state);
+            self.pool.push(pic);
             return Err(e);
         }
-
-        // The in-loop filters, into the output picture.
-        if !sh.deblocking_filter_disabled {
-            let ref_pocs: Vec<i32> = refs.iter().map(|r| r.poc).collect();
-            let ctx = DeblockCtx { planes, maps, sh: &sh, pps: &pps, ref_pocs: &ref_pocs };
-            wavefront::parallel_for(self.threads, rows, |row| ctx.vertical(row));
-            wavefront::parallel_for(self.threads, rows, |row| ctx.horizontal(row));
-        }
-        let mut out = self.take_buffer(&sps);
-        if sh.sao_luma || sh.sao_chroma {
-            let dst = [PlanePtr::of(&mut out.planes[0]), PlanePtr::of(&mut out.planes[1]), PlanePtr::of(&mut out.planes[2])];
-            let ctx = SaoCtx { src: [&recon.planes[0], &recon.planes[1], &recon.planes[2]], dst, maps };
-            wavefront::parallel_for(self.threads, rows, |row| ctx.row(row));
-        } else {
-            std::mem::swap(&mut out, &mut recon);
-        }
-        out.poc = poc;
-        self.recon = Some(recon);
-        self.state = Some(state);
+        pic.poc = poc;
         self.started = true;
 
-        let pic = Arc::new(out);
+        let pic = Arc::new(pic);
         self.dpb.push(Reference { pic: pic.clone(), poc });
         let (w, h) = sps.output_size();
         Ok(Some(Decoded { picture: pic, window: [sps.conf_win[0], sps.conf_win[2], w, h], colour: sps.colour, keyframe: idr }))

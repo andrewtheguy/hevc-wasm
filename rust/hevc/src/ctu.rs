@@ -1,6 +1,6 @@
 //! One coding tree block row of a picture, decoded from its own substream:
 //! the syntax of §7.3.8 and the reconstruction it drives, for the Mac's shape
-//! of stream.
+//! of stream, with the in-loop filters following behind.
 
 mod inter;
 mod residual;
@@ -8,10 +8,12 @@ mod residual;
 use std::sync::{Arc, Mutex};
 
 use crate::cabac::*;
+use crate::deblock::DeblockCtx;
 use crate::error::{Error, Result};
 use crate::intra::RefSamples;
 use crate::pic::{Motion, PicState, Picture, SaoParams, PRED_INTER, PRED_INTRA, PRED_SKIP};
 use crate::ps::{Pps, Sps};
+use crate::sao::SaoCtx;
 use crate::shared::{MapPtr, PlanePtr};
 use crate::slice::SliceHeader;
 use crate::wavefront::Progress;
@@ -48,6 +50,8 @@ pub struct Maps {
     pub nz: MapPtr<u8>,
     pub motion: MapPtr<Motion>,
     pub sao: MapPtr<[SaoParams; 3]>,
+    pub sao_rows: MapPtr<u8>,
+    pub sao_cols: MapPtr<u8>,
 }
 
 impl Maps {
@@ -67,6 +71,8 @@ impl Maps {
             nz: MapPtr::of(&mut st.nz),
             motion: MapPtr::of(&mut st.motion),
             sao: MapPtr::of(&mut st.sao),
+            sao_rows: MapPtr::of(&mut st.sao_rows),
+            sao_cols: MapPtr::of(&mut st.sao_cols),
         }
     }
 
@@ -96,6 +102,59 @@ pub struct PictureCtx<'a> {
     /// Each row's context models after its second coding tree block, for the
     /// row below to start from (§9.3.2.4).
     pub wpp_ctx: &'a [Mutex<Option<Contexts>>],
+    /// The in-loop filters, where the slice turns them on.
+    pub deblock: Option<DeblockCtx<'a>>,
+    pub sao: Option<SaoCtx>,
+}
+
+impl<'a> PictureCtx<'a> {
+    /// The in-loop filtering that decoding coding tree block (`x`, `y`) makes
+    /// possible. A block is deblocked once the blocks to its right, below and
+    /// below-right are decoded, since they predict from its unfiltered
+    /// samples; SAO reads a block's deblocked neighbours, so it follows a
+    /// block behind that, and runs along a row in order, which is what `sao`
+    /// relies on: a block's upper-right neighbour is filtered before it and
+    /// its lower-left one after. Between rows on different threads the
+    /// wavefront's two blocks of lag see to that; the last row's thread
+    /// finishes the two rows above it as well, so each of those stays a
+    /// block further behind than the row above it. At the picture's right
+    /// edge the lag runs out. `done` counts the blocks of rows `y - 2`,
+    /// `y - 1` and `y` SAO has reached.
+    fn filter_after(&self, s: &mut Scratch, x: usize, y: usize, done: &mut [usize; 3]) {
+        let m = &self.maps;
+        let (x_end, y_end) = (x + 1 == m.ctb_w, y + 1 == m.ctb_h);
+        if let Some(d) = &self.deblock {
+            if x > 0 && y > 0 {
+                d.ctb(x - 1, y - 1);
+            }
+            if x_end && y > 0 {
+                d.ctb(x, y - 1);
+            }
+            if x > 0 && y_end {
+                d.ctb(x - 1, y);
+            }
+            if x_end && y_end {
+                d.ctb(x, y);
+            }
+        }
+        let Some(sao) = &self.sao else { return };
+        let mut up_to = |row: usize, behind: usize, done: &mut usize| {
+            let end = if x_end { m.ctb_w } else { (x + 1).saturating_sub(behind) };
+            for cx in *done..end {
+                sao.ctb(&mut s.sao_src, cx, row);
+            }
+            *done = (*done).max(end);
+        };
+        if y >= 2 {
+            up_to(y - 2, 2, &mut done[0]);
+        }
+        if y_end {
+            if y >= 1 {
+                up_to(y - 1, 3, &mut done[1]);
+            }
+            up_to(y, 4, &mut done[2]);
+        }
+    }
 }
 
 /// Buffers a row needs, kept by the thread across the rows it decodes.
@@ -105,9 +164,10 @@ pub struct Scratch {
     res: Vec<i16>,
     /// The motion compensation intermediate and the edge-extended footprint.
     mc_tmp: Vec<i16>,
-    mc_pred: Vec<i16>,
     mc_pad: Vec<u8>,
     iref: RefSamples,
+    /// A coding tree block with its border, for SAO.
+    sao_src: Vec<u8>,
 }
 
 impl Default for Scratch {
@@ -117,9 +177,9 @@ impl Default for Scratch {
             itx_tmp: vec![0; 32 * 32],
             res: vec![0; 32 * 32],
             mc_tmp: vec![0; 64 * (64 + 7)],
-            mc_pred: vec![0; 64 * 64],
             mc_pad: vec![0; (64 + 7) * (64 + 7)],
             iref: RefSamples::default(),
+            sao_src: vec![0; crate::sao::SRC_STRIDE * (64 + 2)],
         }
     }
 }
@@ -149,8 +209,11 @@ pub struct Row<'a> {
 }
 
 /// Decodes row `row` of the picture into its planes and maps, waiting on the
-/// row above as the wavefront requires.
+/// row above as the wavefront requires, and filters what each block's
+/// decoding completes before marking the block done: a row's progress then
+/// covers its filtering too, for the rows below that read the result.
 pub fn decode_row(pic: &PictureCtx, s: &mut Scratch, row: usize) -> Result<()> {
+    let mut sao_done = [0usize; 3];
     let m = &pic.maps;
     let ctb = 1usize << m.log2_ctb;
     let y0 = row * ctb;
@@ -200,6 +263,7 @@ pub fn decode_row(pic: &PictureCtx, s: &mut Scratch, row: usize) -> Result<()> {
         if end_of_slice != (row == m.ctb_h - 1 && x == m.ctb_w - 1) {
             return Err(Error::invalid("end_of_slice_segment_flag where the picture does not end"));
         }
+        pic.filter_after(r.s, x, row, &mut sao_done);
         pic.progress[row].advance(x as u32 + 1);
     }
     Ok(())

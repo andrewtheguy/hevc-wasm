@@ -4,10 +4,14 @@
 //! thread, into one set of sample planes and one set of per-4×4 maps. A row
 //! writes only its own coding tree block row, and reads the row above only
 //! where that row has finished (`wavefront` orders every such read after the
-//! write with a release/acquire on the row's progress), so no two threads ever
-//! touch the same byte at once, and no reference made here outlives the access
-//! it serves. That is the contract every `unsafe` call below relies on, and
-//! the one place in this crate that holds it.
+//! write with the row's progress, which is sequentially consistent). The
+//! in-loop filters run on the same threads a block or two behind the
+//! decoding (`ctu::decode_row`): a row's thread deblocks the row above, which
+//! touches a few lines of the row above that, and applies SAO to the row
+//! above that, from blocks the rows above are at least two blocks past, so
+//! no two threads ever touch the same byte at once, and no reference made
+//! here outlives the access it serves. That is the contract every `unsafe`
+//! call below relies on, and the one place in this crate that holds it.
 
 use std::marker::PhantomData;
 
@@ -90,6 +94,25 @@ impl<T: Copy> MapPtr<T> {
     pub unsafe fn get(&self, i: usize) -> T {
         debug_assert!(i < self.len);
         unsafe { self.ptr.add(i).read() }
+    }
+
+    /// Entries `start..start + len`.
+    ///
+    /// # Safety
+    /// Nothing may be writing them: see the module.
+    #[inline]
+    pub unsafe fn slice(&self, start: usize, len: usize) -> &[T] {
+        debug_assert!(start + len <= self.len);
+        unsafe { std::slice::from_raw_parts(self.ptr.add(start), len) }
+    }
+
+    /// # Safety
+    /// Nothing else may be touching those entries: see the module.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn slice_mut(&self, start: usize, len: usize) -> &mut [T] {
+        debug_assert!(start + len <= self.len);
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.add(start), len) }
     }
 
     /// # Safety

@@ -320,13 +320,11 @@ impl<'a> Row<'a> {
                 pad_footprint(&mut s.mc_pad, plane, x0, y0, fw, fh);
                 (&s.mc_pad, fw)
             };
-            let pred = &mut s.mc_pred[..w * h];
             if c == 0 {
-                interp::<8>(src, stride, &LUMA_FILTER, fx, fy, w, h, pred, &mut s.mc_tmp);
+                interp::<8>(src, stride, &LUMA_FILTER, fx, fy, w, h, dst, dst_plane.stride, &mut s.mc_tmp);
             } else {
-                interp::<4>(src, stride, &CHROMA_FILTER, 2 * fx, 2 * fy, w, h, pred, &mut s.mc_tmp);
+                interp::<4>(src, stride, &CHROMA_FILTER, 2 * fx, 2 * fy, w, h, dst, dst_plane.stride, &mut s.mc_tmp);
             }
-            kernels::put_uni(dst, dst_plane.stride, pred, w, h);
         }
     }
 }
@@ -362,24 +360,17 @@ fn pad_footprint(pad: &mut [u8], plane: &crate::pic::Plane, x0: i32, y0: i32, fw
 }
 
 /// The `N`-tap interpolation of one block from an in-bounds footprint whose
-/// top left is `src`; `dst` takes the 14-bit intermediate at stride `w`.
-fn interp<const N: usize>(src: &[u8], stride: usize, taps: &[[i16; N]], fx: usize, fy: usize, w: usize, h: usize, dst: &mut [i16], tmp: &mut [i16]) {
+/// top left is `src`, into its samples (§8.5.3.3.3 with §8.5.3.3.4.2): one
+/// pass with the rounding, or two with `tmp` between them.
+fn interp<const N: usize>(src: &[u8], stride: usize, taps: &[[i16; N]], fx: usize, fy: usize, w: usize, h: usize, dst: &mut [u8], dst_stride: usize, tmp: &mut [i16]) {
     let m = N / 2 - 1;
     match (fx, fy) {
-        (0, 0) => {
-            // Full-pel, at the intermediate's scale.
-            for y in 0..h {
-                let row = &src[(y + m) * stride + m..(y + m) * stride + m + w];
-                for (d, &s) in dst[y * w..y * w + w].iter_mut().zip(row) {
-                    *d = (s as i16) << 6;
-                }
-            }
-        }
-        (fx, 0) => kernels::fir_h::<N>(&src[m * stride..], stride, &taps[fx], w, h, dst, w),
-        (0, fy) => kernels::fir_v_u8::<N>(&src[m..], stride, &taps[fy], w, h, dst, w),
+        (0, 0) => kernels::copy_block(dst, dst_stride, &src[m * stride + m..], stride, w, h),
+        (fx, 0) => kernels::fir_h_uni::<N>(&src[m * stride..], stride, &taps[fx], w, h, dst, dst_stride),
+        (0, fy) => kernels::fir_v_uni::<N>(&src[m..], stride, &taps[fy], w, h, dst, dst_stride),
         (fx, fy) => {
             kernels::fir_h::<N>(src, stride, &taps[fx], w, h + N - 1, tmp, w);
-            kernels::fir_v_i16::<N>(tmp, w, &taps[fy], w, h, dst, w);
+            kernels::fir_hv_uni::<N>(tmp, w, &taps[fy], w, h, dst, dst_stride);
         }
     }
 }

@@ -1,7 +1,7 @@
 //! Scaling (§8.6.3) and the inverse transforms (§8.6.4) of a transform block,
-//! in 16 bits: the coefficients, the intermediate between the two passes and
-//! the residual are all within 16 bits for 8-bit samples, and the sums of a
-//! pass are 32-bit, which is what the kernels multiply into.
+//! in 16 bits: the scaled coefficients, the intermediate between the two
+//! passes and the residual are all within 16 bits for 8-bit samples, and the
+//! sums of a pass are 32-bit, which is what the kernels multiply into.
 //!
 //! Each pass is a partial butterfly: the even half of an N-point transform is
 //! the N/2-point transform of the even coefficients, down to the 4-point base,
@@ -11,24 +11,28 @@
 use crate::kernels;
 use crate::tables::{DCT32, DST4, LEVEL_SCALE};
 
-/// `TransCoeffLevel` to scaled coefficients, in place, flat scaling, over the
-/// `nz_w`×`nz_h` rectangle that holds every non-zero one.
-pub fn dequant(coeffs: &mut [i16], n: usize, nz_w: usize, nz_h: usize, qp: i32) {
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    {
-        return crate::kernels::simd128::dequant(coeffs, n, nz_w, nz_h, qp);
+/// Flat scaling (§8.6.3) of a `TransCoeffLevel` of an `n`×`n` block at `qp`,
+/// as each is parsed. In 32 bits: `level * levelScale * 16` fits, and the
+/// `<< (qp / 6)` and `>> bdShift` fold into one shift either way.
+#[derive(Clone, Copy)]
+pub struct Dequant {
+    scale: i32,
+    shl: u32,
+    shr: u32,
+    round: i32,
+}
+
+impl Dequant {
+    pub fn new(n: usize, qp: i32) -> Self {
+        let log2n = n.trailing_zeros() as i32;
+        let r = 8 + log2n - 5;
+        let l = qp / 6;
+        Dequant { scale: LEVEL_SCALE[(qp % 6) as usize] * 16, shl: (l - r).max(0) as u32, shr: (r - l).max(0) as u32, round: if l < r { 1 << (r - l - 1) } else { 0 } }
     }
-    #[allow(unreachable_code)]
-    let log2n = n.trailing_zeros() as i32;
-    let bd_shift = 8 + log2n - 5;
-    let scale = (LEVEL_SCALE[(qp % 6) as usize] << (qp / 6)) as i64 * 16;
-    let add = 1i64 << (bd_shift - 1);
-    for y in 0..nz_h {
-        for c in &mut coeffs[y * n..y * n + nz_w] {
-            if *c != 0 {
-                *c = ((*c as i64 * scale + add) >> bd_shift).clamp(-32768, 32767) as i16;
-            }
-        }
+
+    #[inline(always)]
+    pub fn apply(&self, level: i32) -> i16 {
+        ((((level * self.scale) << self.shl) + self.round) >> self.shr).clamp(-32768, 32767) as i16
     }
 }
 
@@ -183,10 +187,9 @@ mod tests {
 
     #[test]
     fn dequant_flat() {
-        let mut c = vec![0i16; 16];
-        c[0] = 10;
-        dequant(&mut c, 4, 4, 4, 4);
-        assert_eq!(c[0], 320);
+        assert_eq!(Dequant::new(4, 4).apply(10), 320);
+        // QP 51 on a 4×4: the shift goes the other way.
+        assert_eq!(Dequant::new(4, 51).apply(3), ((3i64 * 57 * 16 << 8) >> 5) as i16);
     }
 }
 

@@ -129,6 +129,16 @@ impl<'a> Row<'a> {
 
     fn residual_block(&mut self, x0: usize, y0: usize, log2: usize, c_idx: usize, pred_mode_intra: u8) -> Result<()> {
         let n = 1usize << log2;
+        let qp = if c_idx == 0 {
+            self.qp_y
+        } else {
+            // §8.6.1: under 4:4:4 the chroma QP is the luma's with its offset,
+            // capped, not mapped through the 4:2:0 table.
+            let off = if c_idx == 1 { self.pic.pps.cb_qp_offset + self.pic.sh.cb_qp_offset } else { self.pic.pps.cr_qp_offset + self.pic.sh.cr_qp_offset };
+            (self.qp_y + off).clamp(0, 57).min(51)
+        };
+        // Each coefficient is scaled as it lands.
+        let dq = itx::Dequant::new(n, qp);
         // The engine's registers in locals for the whole block.
         let mut view = self.cab.view();
         let cab = &mut view;
@@ -307,7 +317,7 @@ impl<'a> Row<'a> {
                 let (xc, yc) = ((xs << 2) + xp, (ys << 2) + yp);
                 nz_w = nz_w.max(xc + 1);
                 nz_h = nz_h.max(yc + 1);
-                co[yc * n + xc] = v.clamp(-32768, 32767) as i16;
+                co[yc * n + xc] = dq.apply(v.clamp(-32768, 32767));
             }
         }
         let engine = cab.engine();
@@ -333,20 +343,11 @@ impl<'a> Row<'a> {
         }
     }
 
-    /// §8.6.2 to §8.6.4 over the parsed coefficients, added to the picture.
+    /// §8.6.4 over the scaled coefficients, added to the picture.
     fn reconstruct_residual(&mut self, x0: usize, y0: usize, log2: usize, c_idx: usize, nz_w: usize, nz_h: usize) {
         let n = 1usize << log2;
-        let qp = if c_idx == 0 {
-            self.qp_y
-        } else {
-            // §8.6.1: under 4:4:4 the chroma QP is the luma's with its offset,
-            // capped, not mapped through the 4:2:0 table.
-            let off = if c_idx == 1 { self.pic.pps.cb_qp_offset + self.pic.sh.cb_qp_offset } else { self.pic.pps.cr_qp_offset + self.pic.sh.cr_qp_offset };
-            (self.qp_y + off).clamp(0, 57).min(51)
-        };
         let dst = self.cu_intra && c_idx == 0 && n == 4;
         let s = &mut *self.s;
-        itx::dequant(&mut s.coeffs[..n * n], n, nz_w.clamp(1, n), nz_h.clamp(1, n), qp);
         itx::inverse_transform(&s.coeffs[..n * n], &mut s.itx_tmp, &mut s.res, n, nz_w, nz_h, dst);
         let plane = self.pic.planes[c_idx];
         // SAFETY: the block is this row's.

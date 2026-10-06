@@ -93,6 +93,12 @@ pub struct PicState {
     pub motion: Vec<Motion>,
     /// Per coding tree block: SAO for Y, Cb, Cr.
     pub sao: Vec<[SaoParams; 3]>,
+    /// The last line of each coding tree block row and the last column of
+    /// each coding tree block column as deblocked, per component (`sao`
+    /// filters in place and its neighbours read these): `[c][row][x]` and
+    /// `[c][column][y]`.
+    pub sao_rows: Vec<u8>,
+    pub sao_cols: Vec<u8>,
 }
 
 /// `MinTbAddrZs` at 4×4 granularity, raster order of the blocks in a picture
@@ -142,6 +148,8 @@ impl PicState {
             nz: vec![0; n4],
             motion: vec![Motion::default(); n4],
             sao: vec![[SaoParams::default(); 3]; ctb_w * ctb_h],
+            sao_rows: vec![0; 3 * ctb_h * width],
+            sao_cols: vec![0; 3 * ctb_w * height],
         }
     }
 

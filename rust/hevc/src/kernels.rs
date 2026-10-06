@@ -22,7 +22,8 @@ pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usi
 }
 
 /// Horizontal `N`-tap filter of samples into the 14-bit intermediate:
-/// `dst[y][x] = Σ t[i] * src[y][x + i]`.
+/// `dst[y][x] = Σ t[i] * src[y][x + i]`, the first pass of a two-dimensional
+/// interpolation.
 pub fn fir_h<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [i16], dst_stride: usize) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
@@ -42,11 +43,38 @@ pub fn fir_h<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, 
     }
 }
 
-/// Vertical `N`-tap filter of samples into the intermediate.
-pub fn fir_v_u8<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [i16], dst_stride: usize) {
+/// The intermediate as a sample (§8.5.3.3.4.2, uni-prediction).
+#[inline(always)]
+fn uni(v: i32) -> u8 {
+    ((v + 32) >> 6).clamp(0, 255) as u8
+}
+
+/// Horizontal `N`-tap filter straight to samples: the one pass of a
+/// horizontal interpolation, with its rounding.
+pub fn fir_h_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return simd128::fir_v_u8::<N>(src, stride, t, w, h, dst, dst_stride);
+        return simd128::fir_h_uni::<N>(src, stride, t, w, h, dst, dst_stride);
+    }
+    #[allow(unreachable_code)]
+    for y in 0..h {
+        let row = &src[y * stride..y * stride + w + N - 1];
+        let out = &mut dst[y * dst_stride..y * dst_stride + w];
+        for (x, o) in out.iter_mut().enumerate() {
+            let mut acc = 0i32;
+            for i in 0..N {
+                acc += t[i] as i32 * row[x + i] as i32;
+            }
+            *o = uni(acc);
+        }
+    }
+}
+
+/// Vertical `N`-tap filter of samples straight to samples.
+pub fn fir_v_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return simd128::fir_v_uni::<N>(src, stride, t, w, h, dst, dst_stride);
     }
     #[allow(unreachable_code)]
     for y in 0..h {
@@ -56,16 +84,17 @@ pub fn fir_v_u8<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usiz
             for i in 0..N {
                 acc += t[i] as i32 * src[(y + i) * stride + x] as i32;
             }
-            *o = acc as i16;
+            *o = uni(acc);
         }
     }
 }
 
-/// Vertical `N`-tap filter of the intermediate, `>> 6`, into the intermediate.
-pub fn fir_v_i16<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [i16], dst_stride: usize) {
+/// Vertical `N`-tap filter of the intermediate, `>> 6`, straight to samples:
+/// the second pass of a two-dimensional interpolation.
+pub fn fir_hv_uni<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return simd128::fir_v_i16::<N>(src, stride, t, w, h, dst, dst_stride);
+        return simd128::fir_hv_uni::<N>(src, stride, t, w, h, dst, dst_stride);
     }
     #[allow(unreachable_code)]
     for y in 0..h {
@@ -75,22 +104,7 @@ pub fn fir_v_i16<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: us
             for i in 0..N {
                 acc += t[i] as i32 * src[(y + i) * stride + x] as i32;
             }
-            *o = (acc >> 6) as i16;
-        }
-    }
-}
-
-/// The intermediate as samples (§8.5.3.3.4.2, uni-prediction).
-pub fn put_uni(dst: &mut [u8], dst_stride: usize, src: &[i16], w: usize, h: usize) {
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    {
-        return simd128::put_uni(dst, dst_stride, src, w, h);
-    }
-    #[allow(unreachable_code)]
-    for y in 0..h {
-        let row = &mut dst[y * dst_stride..y * dst_stride + w];
-        for (d, &v) in row.iter_mut().zip(&src[y * w..y * w + w]) {
-            *d = ((v as i32 + 32) >> 6).clamp(0, 255) as u8;
+            *o = uni(acc >> 6);
         }
     }
 }
@@ -303,42 +317,38 @@ pub fn luma_beta(qp: i32, beta_offset_div2: i32) -> i32 {
 
 // ---- sample adaptive offset (§8.7.3) ----
 
-/// Band offset over a rectangle: `dst = src + band[src >> 3]`.
-pub fn sao_band(dst: &mut [u8], src: &[u8], stride: usize, x0: usize, y0: usize, w: usize, h: usize, band: &[i8; 32]) {
+/// Band offset in place over a `w`×`h` block: `v += band[v >> 3]`.
+pub fn sao_band(data: &mut [u8], stride: usize, w: usize, h: usize, band: &[i8; 32]) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return simd128::sao_band(dst, src, stride, x0, y0, w, h, band);
+        return simd128::sao_band(data, stride, w, h, band);
     }
     #[allow(unreachable_code)]
-    for y in y0..y0 + h {
-        let (d, s) = (&mut dst[y * stride + x0..y * stride + x0 + w], &src[y * stride + x0..y * stride + x0 + w]);
-        for (d, &v) in d.iter_mut().zip(s) {
-            *d = (v as i32 + band[(v >> 3) as usize] as i32).clamp(0, 255) as u8;
+    for y in 0..h {
+        for v in &mut data[y * stride..y * stride + w] {
+            *v = (*v as i32 + band[(*v >> 3) as usize] as i32).clamp(0, 255) as u8;
         }
     }
 }
 
-/// Edge offset over a rectangle whose neighbours at `da` and `db` are all
-/// inside the picture.
-pub fn sao_edge(dst: &mut [u8], src: &[u8], stride: usize, x0: usize, y0: usize, w: usize, h: usize, da: (i32, i32), db: (i32, i32), offs: &[i8; 4]) {
+/// Edge offset of the `w`×`h` block at `origin` of `src`, whose neighbours
+/// `oa` and `ob` away are all in `src`, into `dst`.
+pub fn sao_edge(dst: &mut [u8], dst_stride: usize, src: &[u8], origin: usize, src_stride: usize, w: usize, h: usize, oa: isize, ob: isize, offs: &[i8; 4]) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return simd128::sao_edge(dst, src, stride, x0, y0, w, h, da, db, offs);
+        return simd128::sao_edge(dst, dst_stride, src, origin, src_stride, w, h, oa, ob, offs);
     }
-    // `edgeIdx` 0, 1, 3, 4 take the four offsets; 2 is the plateau (Table 8-19).
     // `edgeIdx` 0, 1, 3, 4 take the four offsets; 2 is the plateau (Table 8-19).
     #[allow(unreachable_code)]
     let table = [offs[0], offs[1], 0, offs[2], offs[3]];
-    let oa = da.1 as isize * stride as isize + da.0 as isize;
-    let ob = db.1 as isize * stride as isize + db.0 as isize;
-    for y in y0..y0 + h {
-        for x in x0..x0 + w {
-            let i = y * stride + x;
-            let v = src[i] as i32;
-            let a = src[(i as isize + oa) as usize] as i32;
-            let b = src[(i as isize + ob) as usize] as i32;
+    for y in 0..h {
+        for x in 0..w {
+            let i = (origin + y * src_stride + x) as isize;
+            let v = src[i as usize] as i32;
+            let a = src[(i + oa) as usize] as i32;
+            let b = src[(i + ob) as usize] as i32;
             let e = (2 + (v - a).signum() + (v - b).signum()) as usize;
-            dst[i] = (v + table[e] as i32).clamp(0, 255) as u8;
+            dst[y * dst_stride + x] = (v + table[e] as i32).clamp(0, 255) as u8;
         }
     }
 }

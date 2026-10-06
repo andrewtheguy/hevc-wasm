@@ -1,11 +1,12 @@
-//! The deblocking filter (§8.7.2) of a picture, a coding tree block row at a
-//! time: every vertical edge of the picture first, then every horizontal one.
+//! The deblocking filter (§8.7.2), a coding tree block at a time as the
+//! wavefront finishes with its neighbours (see `ctu::decode_row`).
 //!
-//! The rows' vertical edges touch only their own samples. Their horizontal
-//! edges touch three lines above the row too, which belong to the row above's
-//! last internal edge by no more than four lines; so the bands the horizontal
-//! pass hands to its threads are the rows shifted up by four lines, and are
-//! disjoint.
+//! The picture's vertical edges must all be filtered before any horizontal
+//! one that crosses them, so a block's vertical edges are filtered when it is
+//! reached, and its horizontal edges eight columns behind: from eight columns
+//! into the block on its left to eight columns short of its own right edge,
+//! where the next block's vertical edge has yet to run. The last block of a
+//! row runs to the picture's edge.
 
 use crate::ctu::Maps;
 use crate::kernels;
@@ -28,7 +29,7 @@ impl<'a> DeblockCtx<'a> {
     /// §8.7.2.4: the strength of the edge between 4×4 blocks `p` and `q`.
     fn boundary_strength(&self, p: usize, q: usize, tu_edge: bool) -> i32 {
         let m = &self.maps;
-        // SAFETY: the maps are complete and only read now.
+        // SAFETY: both blocks' maps are complete and only read now.
         let (pm_p, pm_q) = unsafe { (m.pred_mode.get(p), m.pred_mode.get(q)) };
         if pm_p == PRED_INTRA || pm_q == PRED_INTRA {
             return 2;
@@ -49,12 +50,12 @@ impl<'a> DeblockCtx<'a> {
     /// (`x`, `y`), `dir` 0 vertical.
     fn filter_edge(&self, p: usize, q: usize, x: usize, y: usize, dir: usize, bs: i32) {
         let m = &self.maps;
-        // SAFETY: the maps are complete and only read now.
+        // SAFETY: both blocks' maps are complete and only read now.
         let qp = unsafe { (m.qp_y.get(p) as i32 + m.qp_y.get(q) as i32 + 1) >> 1 };
         let beta = kernels::luma_beta(qp, self.sh.beta_offset_div2);
         let tc = kernels::luma_tc(qp, bs, self.sh.tc_offset_div2);
         let pl = self.planes[0];
-        // SAFETY: the band is this thread's (see the module).
+        // SAFETY: the samples an edge touches are this thread's (see the module).
         let data = unsafe { pl.block_mut(0, 0, pl.width, pl.height) };
         kernels::luma_edge(data, pl.stride, x, y, dir, beta, tc);
         if bs == 2 {
@@ -70,15 +71,17 @@ impl<'a> DeblockCtx<'a> {
         }
     }
 
-    /// The vertical edges of coding tree block row `row`.
-    pub fn vertical(&self, row: usize) {
+    /// The edges of coding tree block (`cx`, `cy`): its vertical ones, and
+    /// the horizontal ones eight columns behind.
+    pub fn ctb(&self, cx: usize, cy: usize) {
         let m = &self.maps;
-        let rows4 = 1usize << (m.log2_ctb - 2);
-        let y4_end = ((row + 1) * rows4).min(m.height.div_ceil(4));
-        for y4 in row * rows4..y4_end {
-            for x4 in (2..m.w4).step_by(2) {
+        let ctb4 = 1usize << (m.log2_ctb - 2);
+        let (x4_0, y4_0) = (cx * ctb4, cy * ctb4);
+        let (x4_1, y4_1) = ((x4_0 + ctb4).min(m.w4), (y4_0 + ctb4).min(m.height.div_ceil(4)));
+        for y4 in y4_0..y4_1 {
+            for x4 in (x4_0.max(2)..x4_1).step_by(2) {
                 let q = y4 * m.w4 + x4;
-                // SAFETY: the maps are complete and only read now.
+                // SAFETY: the block's maps are complete and only read now.
                 let e = unsafe { m.edges.get(q) };
                 if e & 0b0101 == 0 {
                     continue;
@@ -89,20 +92,12 @@ impl<'a> DeblockCtx<'a> {
                 }
             }
         }
-    }
-
-    /// The horizontal edges of coding tree block row `row`, its top one included.
-    pub fn horizontal(&self, row: usize) {
-        let m = &self.maps;
-        let rows4 = 1usize << (m.log2_ctb - 2);
-        let y4_end = ((row + 1) * rows4).min(m.height.div_ceil(4));
-        for y4 in (row * rows4..y4_end).step_by(2) {
-            if y4 == 0 {
-                continue;
-            }
-            for x4 in 0..m.w4 {
+        let hx0 = x4_0.saturating_sub(2);
+        let hx1 = if x4_1 == m.w4 { m.w4 } else { x4_1 - 2 };
+        for y4 in (y4_0.max(2)..y4_1).step_by(2) {
+            for x4 in hx0..hx1 {
                 let q = y4 * m.w4 + x4;
-                // SAFETY: the maps are complete and only read now.
+                // SAFETY: as above.
                 let e = unsafe { m.edges.get(q) };
                 if e & 0b1010 == 0 {
                     continue;

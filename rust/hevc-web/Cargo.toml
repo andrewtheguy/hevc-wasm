@@ -30,3 +30,8 @@ panic = "abort"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-O3", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-simd", "--enable-threads"]
+
+# For `perf` under Node (`node --perf-basic-prof`): the same optimisation with
+# the function names kept, through `wasm-pack build --profiling`.
+[package.metadata.wasm-pack.profile.profiling]
+wasm-opt = ["-O3", "-g", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-simd", "--enable-threads"]
