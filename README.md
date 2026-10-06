@@ -141,7 +141,10 @@ the byte planes and the threading are this repository's.
   planes of bytes at the coded size, with the window to show and the colour the
   stream states. A picture's rows decode on rayon's pool, each two coding tree
   blocks behind the row above; the deblocking and SAO passes run a row per
-  thread after. Every sample loop is plain Rust for now.
+  thread after. The sample loops are SIMD128 (`core::arch::wasm32`): the
+  interpolation filters and block copies, the residual add, planar and angular
+  intra prediction, SAO, dequantisation and a 16-bit inverse transform by dot
+  products; CABAC keeps its registers in locals for a whole residual block.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
@@ -150,7 +153,7 @@ the byte planes and the threading are this repository's.
   module's shared memory as it does now (remotex's `hevcPicture.ts`), and only the
   loader differs from the FFmpeg module's.
 - `rust/hevc-bench` decodes a file natively and prints each picture's MD5 as
-  `ffmpeg -f framemd5` does: `cargo run --release -p hevc-bench -- FILE THREADS`
+  `ffmpeg -f framemd5` does: `cargo run --release -p hevc-bench -- FILE THREADS [REPEATS]`
   from `rust/`.
 
 ```sh
@@ -160,16 +163,44 @@ bun test test/rust.test.ts   # the mac-* fixtures, bit for bit against FFmpeg
 
 It decodes every picture of the seven High Performance Mac captures tried
 (2,833 pictures, 1600×1000 and 1600×256, including the long-term-refresh ones)
-bit-identically to FFmpeg, on one thread and on six. The `mac-*` fixtures in
-`test/data` are x265's nearest shape to the Mac's. Native, without SIMD, on a
-six-core x86 workstation, milliseconds per 1600×1000 picture:
+and of a 1080p camera video x265 encoded in the Mac's shape (2,896 pictures)
+bit-identically to FFmpeg, natively on one thread and on six, and as the
+WebAssembly module on one and four. The `mac-*` fixtures in `test/data` are
+x265's nearest shape to the Mac's.
 
-| | 1 thread | 6 threads |
+Measured against the FFmpeg module under Node on a six-core x86 workstation
+that was busy with other work, so the two modules ran alternately on the same
+four cores and the medians of three rounds are shown. The instruction and cycle
+counts are `perf stat`'s for the whole process and do not depend on the load
+(the FFmpeg bench hashes every picture of its first pass, so its counts are a
+two-pass run less a one-pass one). Per picture:
+
+| 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| this decoder, scalar, median | 57 | 22 |
-| native FFmpeg 9, for scale | 21 | 8 |
+| 1 thread, median ms | 34.8 | 37.0 |
+| 1 thread, M cycles | 86 | 92 |
+| 4 threads, median ms | 12.1 | 12.4 |
+| 4 threads, M cycles | 93 | 93 |
+| M instructions | 215 | 213 |
 
-Next are the SIMD128 kernels and the profile of what remains.
+| 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg module |
+|---|---|---|
+| 1 thread, median ms | 8.3 | 7.0 |
+| 1 thread, M cycles | 27 | 23 |
+| 4 threads, median ms | 3.9 | 3.3 |
+| 4 threads, M cycles | 34 | 25 |
+| M instructions | 53 | 54 |
+
+On the Mac's dense screen content the two are level, and both spend their time
+where the stream does: CABAC residual parsing (about a third) and the 32×32
+inverse transforms (a quarter). On ordinary video, where motion compensation
+dominates, this decoder is a sixth behind on one thread, and its wavefront's
+spinning waits cost it a quarter more cycles on four. Natively the decoder
+runs its scalar fallbacks, since the kernels are written for wasm32.
+
+To benchmark on a busy host, pin both runs to the same cores (`taskset`),
+alternate them, and read `perf stat -e instructions:u,cycles:u` rather than
+wall time; wall-time medians drift with the load, the counts do not.
 
 ## Requirements
 
