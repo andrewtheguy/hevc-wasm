@@ -122,15 +122,19 @@ static FUSED: [u32; 128 * 4] = build_fused();
 const OFF: u32 = 41;
 const REFILL_AT: i32 = 8;
 
+/// The allocated length of the models, so an index masked to it needs no
+/// bounds check: the pad is never read or written.
+pub const CTX_PAD: usize = 256;
+
 /// The context models alone: what the wavefront hands from one row to the next.
 #[derive(Clone)]
-pub struct Contexts(pub [u8; NUM_CTX]);
+pub struct Contexts(pub [u8; CTX_PAD]);
 
 impl Contexts {
     /// §9.3.2.2 for `init_type` 0 (I) or 1 (P) at `SliceQpY`.
     pub fn init(init_type: usize, slice_qp: i32) -> Self {
         let q = slice_qp.clamp(0, 51);
-        let mut ctx = [0u8; NUM_CTX];
+        let mut ctx = [0u8; CTX_PAD];
         for (c, &init_value) in ctx.iter_mut().zip(&INIT_VALUES[init_type]) {
             let init_value = init_value as i32;
             let m = (init_value >> 4) * 5 - 45;
@@ -279,6 +283,7 @@ impl<'v, 'a> View<'v, 'a> {
     /// A context-coded bin (§9.3.4.3.2).
     #[inline(always)]
     pub fn decode(&mut self, ctx_idx: usize) -> u32 {
+        let ctx_idx = ctx_idx & (CTX_PAD - 1);
         let s = self.ctx.0[ctx_idx] as usize;
         let q = ((self.range >> 6) & 3) as usize;
         let e = FUSED[((s & 127) << 2) | q];

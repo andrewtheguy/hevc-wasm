@@ -102,46 +102,66 @@ fn store_samples(d: &mut [u8], w: usize, v: v128) {
 
 // ---- copies and fills ----
 
+/// Checks once that `w`×`h` at `stride` lies inside `s`.
+#[inline(always)]
+fn holds<T>(s: &[T], stride: usize, w: usize, h: usize) {
+    assert!(w > 0 && h > 0 && s.len() >= (h - 1) * stride + w);
+}
+
 /// `dst = src`, `w`×`h`, by vector: a `memory.copy` per row is a call into the
-/// runtime, which for a block's rows costs more than the bytes.
+/// runtime, which for a block's rows costs more than the bytes. The block loops
+/// here check their bounds once and then run on pointers, since a check per
+/// vector was most of the work of a copy.
 pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
+    holds(dst, dst_stride, w, h);
+    holds(src, src_stride, w, h);
+    let (d, s) = (dst.as_mut_ptr(), src.as_ptr());
     for y in 0..h {
-        let (d, s) = (&mut dst[y * dst_stride..y * dst_stride + w], &src[y * src_stride..y * src_stride + w]);
-        let mut x = 0;
-        while x + 16 <= w {
-            store_u8x16(&mut d[x..], load_u8x16(&s[x..]));
-            x += 16;
-        }
-        if x + 8 <= w {
-            store_u8x8(&mut d[x..], load_u8x8(&s[x..]));
-            x += 8;
-        }
-        if x + 4 <= w {
-            store_u8x4(&mut d[x..], load_u8x4(&s[x..]));
-            x += 4;
-        }
-        for x in x..w {
-            d[x] = s[x];
+        // SAFETY: every offset below is inside the block `holds` checked.
+        unsafe {
+            let (dr, sr) = (d.add(y * dst_stride), s.add(y * src_stride));
+            let mut x = 0;
+            while x + 16 <= w {
+                v128_store(dr.add(x) as *mut v128, v128_load(sr.add(x) as *const v128));
+                x += 16;
+            }
+            if x + 8 <= w {
+                (dr.add(x) as *mut u64).write_unaligned((sr.add(x) as *const u64).read_unaligned());
+                x += 8;
+            }
+            if x + 4 <= w {
+                (dr.add(x) as *mut u32).write_unaligned((sr.add(x) as *const u32).read_unaligned());
+                x += 4;
+            }
+            while x < w {
+                *dr.add(x) = *sr.add(x);
+                x += 1;
+            }
         }
     }
 }
 
 /// An `n`×`n` block of one value.
 pub fn fill(dst: &mut [u8], stride: usize, n: usize, v: u8) {
+    holds(dst, stride, n, n);
     let vv = u8x16_splat(v);
+    let d = dst.as_mut_ptr();
     for y in 0..n {
-        let row = &mut dst[y * stride..y * stride + n];
-        let mut x = 0;
-        while x + 16 <= n {
-            store_u8x16(&mut row[x..], vv);
-            x += 16;
-        }
-        if x + 8 <= n {
-            store_u8x8(&mut row[x..], vv);
-            x += 8;
-        }
-        if x + 4 <= n {
-            store_u8x4(&mut row[x..], vv);
+        // SAFETY: inside the block `holds` checked.
+        unsafe {
+            let dr = d.add(y * stride);
+            let mut x = 0;
+            while x + 16 <= n {
+                v128_store(dr.add(x) as *mut v128, vv);
+                x += 16;
+            }
+            if x + 8 <= n {
+                v128_store64_lane::<0>(vv, dr.add(x) as *mut u64);
+                x += 8;
+            }
+            if x + 4 <= n {
+                v128_store32_lane::<0>(vv, dr.add(x) as *mut u32);
+            }
         }
     }
 }
@@ -231,15 +251,26 @@ pub fn fir_v_i16<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: us
 }
 
 pub fn put_uni(dst: &mut [u8], dst_stride: usize, src: &[i16], w: usize, h: usize) {
+    holds(dst, dst_stride, w, h);
+    holds(src, w, w, h);
     let round = i16x8_splat(32);
+    let (d, s) = (dst.as_mut_ptr(), src.as_ptr());
     for y in 0..h {
-        let row = &mut dst[y * dst_stride..y * dst_stride + w];
-        let s = &src[y * w..y * w + w];
-        let mut x = 0;
-        while x < w {
-            let v = if w >= 8 { load_i16x8(&s[x..]) } else { load_i16x4(&s[x..]) };
-            store_samples(&mut row[x..], w, i16x8_shr(i16x8_add(v, round), 6));
-            x += 8;
+        // SAFETY: inside the blocks `holds` checked; a width of four reads
+        // and writes only its four.
+        unsafe {
+            let (dr, sr) = (d.add(y * dst_stride), s.add(y * w));
+            let mut x = 0;
+            while x < w {
+                let v = if w >= 8 { v128_load(sr.add(x) as *const v128) } else { v128_load64_zero(sr.add(x) as *const u64) };
+                let b = u8x16_narrow_i16x8(i16x8_shr(i16x8_add(v, round), 6), v);
+                if w >= 8 {
+                    v128_store64_lane::<0>(b, dr.add(x) as *mut u64);
+                } else {
+                    v128_store32_lane::<0>(b, dr.add(x) as *mut u32);
+                }
+                x += 8;
+            }
         }
     }
 }
@@ -247,15 +278,30 @@ pub fn put_uni(dst: &mut [u8], dst_stride: usize, src: &[i16], w: usize, h: usiz
 // ---- reconstruction ----
 
 pub fn add_residual(dst: &mut [u8], dst_stride: usize, res: &[i16], w: usize, h: usize) {
+    holds(dst, dst_stride, w, h);
+    holds(res, w, w, h);
+    let (d, s) = (dst.as_mut_ptr(), res.as_ptr());
     for y in 0..h {
-        let row = &mut dst[y * dst_stride..y * dst_stride + w];
-        let r = &res[y * w..y * w + w];
-        let mut x = 0;
-        while x < w {
-            let d = load_samples(&row[x..], w);
-            let v = if w >= 8 { load_i16x8(&r[x..]) } else { load_i16x4(&r[x..]) };
-            store_samples(&mut row[x..], w, i16x8_add(d, v));
-            x += 8;
+        // SAFETY: inside the blocks `holds` checked; a width of four reads
+        // and writes only its four.
+        unsafe {
+            let (dr, sr) = (d.add(y * dst_stride), s.add(y * w));
+            let mut x = 0;
+            while x < w {
+                let (p, v) = if w >= 8 {
+                    (v128_load64_zero(dr.add(x) as *const u64), v128_load(sr.add(x) as *const v128))
+                } else {
+                    (v128_load32_zero(dr.add(x) as *const u32), v128_load64_zero(sr.add(x) as *const u64))
+                };
+                let sum = i16x8_add(u16x8_extend_low_u8x16(p), v);
+                let b = u8x16_narrow_i16x8(sum, sum);
+                if w >= 8 {
+                    v128_store64_lane::<0>(b, dr.add(x) as *mut u64);
+                } else {
+                    v128_store32_lane::<0>(b, dr.add(x) as *mut u32);
+                }
+                x += 8;
+            }
         }
     }
 }
@@ -475,21 +521,39 @@ fn zip_rows(d: &[i16], n: usize, ka: usize, kb: Option<usize>, x: usize) -> (v12
 }
 
 /// One stage down the columns `x..x + 8`: `acc[j] += Ta[j] * d[ka][x..] +
-/// Tb[j] * d[kb][x..]`, two vectors of four columns per output.
+/// Tb[j] * d[kb][x..]`, two vectors of four columns per output. The pairs'
+/// rows are zipped once, and the outputs go four at a time so their eight
+/// sums stay in registers across the pairs.
 #[inline(always)]
 fn stage_cols(acc: &mut [[v128; 2]; 16], len: usize, table: &[[i32; 16]], d: &[i16], n: usize, x: usize, nz_h: usize, k: impl Fn(usize) -> usize) {
-    for (p, t) in table.iter().enumerate() {
+    let mut zips = [[i16x8_splat(0); 2]; 8];
+    let mut live = 0;
+    for p in 0..table.len() {
         let ka = k(2 * p);
         if ka >= nz_h {
             break;
         }
         let kb = k(2 * p + 1);
         let (lo, hi) = zip_rows(d, n, ka, (kb < nz_h).then_some(kb), x);
-        for j in 0..len {
-            let tv = i32x4_splat(t[j]);
-            acc[j][0] = i32x4_add(acc[j][0], i32x4_dot_i16x8(lo, tv));
-            acc[j][1] = i32x4_add(acc[j][1], i32x4_dot_i16x8(hi, tv));
+        zips[p] = [lo, hi];
+        live = p + 1;
+    }
+    let mut j = 0;
+    while j < len {
+        let mut a = [i32x4_splat(0); 8];
+        for p in 0..live {
+            let [lo, hi] = zips[p];
+            let t = &table[p];
+            for i in 0..4 {
+                let tv = i32x4_splat(t[j + i]);
+                a[2 * i] = i32x4_add(a[2 * i], i32x4_dot_i16x8(lo, tv));
+                a[2 * i + 1] = i32x4_add(a[2 * i + 1], i32x4_dot_i16x8(hi, tv));
+            }
         }
+        for i in 0..4 {
+            acc[j + i] = [a[2 * i], a[2 * i + 1]];
+        }
+        j += 4;
     }
 }
 
