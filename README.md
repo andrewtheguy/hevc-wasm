@@ -140,11 +140,15 @@ the byte planes and the threading are this repository's.
 - `rust/hevc` is the decoder: one access unit in, its picture out as three
   planes of bytes at the coded size, with the window to show and the colour the
   stream states. A picture's rows decode on rayon's pool, each two coding tree
-  blocks behind the row above; the deblocking and SAO passes run a row per
-  thread after. The sample loops are SIMD128 (`core::arch::wasm32`): the
-  interpolation filters and block copies, the residual add, planar and angular
-  intra prediction, SAO, dequantisation and a 16-bit inverse transform by dot
-  products; CABAC keeps its registers in locals for a whole residual block.
+  blocks behind the row above, and each row's thread deblocks a block behind
+  its decoding and applies SAO, in place, a block behind that, as FFmpeg's
+  does: the filters run while the block is still in cache, and nothing waits
+  for a pass over the whole picture. The sample loops are SIMD128
+  (`core::arch::wasm32`): the interpolation filters, which write samples
+  straight from their last pass, block copies, the residual add, planar and
+  angular intra prediction, SAO and a 16-bit inverse transform by dot
+  products; coefficients are scaled as they are parsed, and CABAC keeps its
+  registers in locals for a whole residual block.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
@@ -154,7 +158,10 @@ the byte planes and the threading are this repository's.
   loader differs from the FFmpeg module's.
 - `rust/hevc-bench` decodes a file natively and prints each picture's MD5 as
   `ffmpeg -f framemd5` does: `cargo run --release -p hevc-bench -- FILE THREADS [REPEATS]`
-  from `rust/`.
+  from `rust/`. To profile the module itself, build it with
+  `wasm-pack build rust/hevc-web --profiling --target web --no-pack --out-dir ../../tmp/pkg-prof`,
+  which keeps the function names, and run it under `node --perf-basic-prof`
+  and `perf record`; profiles and logs go under `tmp/`.
 
 ```sh
 ./build-rust.sh              # rust/hevc-web/pkg, on the pinned nightly, via wasm-pack
@@ -177,26 +184,30 @@ two-pass run less a one-pass one). Per picture:
 
 | 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| 1 thread, median ms | 34.8 | 37.0 |
-| 1 thread, M cycles | 86 | 92 |
-| 4 threads, median ms | 12.1 | 12.4 |
-| 4 threads, M cycles | 93 | 93 |
-| M instructions | 215 | 213 |
+| 1 thread, median ms | 26.5 | 33.8 |
+| 1 thread, M cycles | 77 | 90 |
+| 4 threads, median ms | 9.4 | 10.9 |
+| 4 threads, M cycles | 79 | 91 |
+| M instructions | 195 | 213 |
 
 | 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| 1 thread, median ms | 8.3 | 7.0 |
-| 1 thread, M cycles | 27 | 23 |
-| 4 threads, median ms | 3.9 | 3.3 |
-| 4 threads, M cycles | 34 | 25 |
-| M instructions | 53 | 54 |
+| 1 thread, median ms | 6.6 | 7.1 |
+| 1 thread, M cycles | 23 | 24 |
+| 4 threads, median ms | 3.0 | 3.5 |
+| 4 threads, M cycles | 25 | 25 |
+| M instructions | 48 | 54 |
 
-On the Mac's dense screen content the two are level, and both spend their time
-where the stream does: CABAC residual parsing (about a third) and the 32×32
-inverse transforms (a quarter). On ordinary video, where motion compensation
-dominates, this decoder is a sixth behind on one thread, and its wavefront's
-spinning waits cost it a quarter more cycles on four. Natively the decoder
-runs its scalar fallbacks, since the kernels are written for wasm32.
+On the Mac's dense screen content this decoder is a seventh ahead in cycles,
+and both spend their time where the stream does: CABAC residual parsing and
+the 32×32 inverse transforms. On ordinary video, where motion compensation
+dominates, the two are level, and the whole-pel block copies lead the profile
+of each. Running the filters inside the wavefront rather than as passes over
+the whole picture was worth a fifth of the cycles on four threads, where the
+passes had left the threads spinning at barriers; SAO in place rather than
+into a second picture, with the interpolation filters writing samples from
+their last pass, another tenth on one thread. Natively the decoder runs its
+scalar fallbacks, since the kernels are written for wasm32.
 
 To benchmark on a busy host, pin both runs to the same cores (`taskset`),
 alternate them, and read `perf stat -e instructions:u,cycles:u` rather than
