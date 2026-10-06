@@ -65,6 +65,16 @@ impl PlanePtr {
         debug_assert!(x + w <= self.width && y + h <= self.height && w > 0 && h > 0);
         unsafe { std::slice::from_raw_parts_mut(self.ptr.add(y * self.stride + x), (h - 1) * self.stride + w) }
     }
+
+    /// Rows `y..y + n`, whole, from the same rows of `src`, a plane of the
+    /// same size: one copy of the contiguous bytes.
+    ///
+    /// # Safety
+    /// Nothing else may be touching those rows' samples: see the module.
+    pub unsafe fn copy_rows_from(&self, src: &Plane, y: usize, n: usize) {
+        assert!(src.stride == self.stride && src.height == self.height && y + n <= self.height);
+        unsafe { std::ptr::copy_nonoverlapping(src.data.as_ptr().add(y * self.stride), self.ptr.add(y * self.stride), n * self.stride) }
+    }
 }
 
 /// A per-block map, by raw pointer.

@@ -93,6 +93,12 @@ pub struct PictureCtx<'a> {
     pub zs: &'a [u32],
     /// `RefPicList0`.
     pub refs: &'a [RefPic],
+    /// The first reference of a P picture, which each row starts as: a still
+    /// block from it is then already in place. Most of a screen is still from
+    /// one picture to the next, and the encoder codes that as a skip from the
+    /// first reference, whose samples cost less to copy by the row than by
+    /// the block.
+    pub base: Option<&'a Picture>,
     /// The slice's RBSP.
     pub data: &'a [u8],
     /// Where each row's substream starts in `data`.
@@ -220,6 +226,14 @@ pub fn decode_row(pic: &PictureCtx, s: &mut Scratch, row: usize) -> Result<()> {
     let start = pic.substreams[row];
     if start > pic.data.len() {
         return Err(Error::invalid("an entry point past the slice data"));
+    }
+    // The row's samples start as the base's, before the wait on the row above.
+    if let Some(base) = pic.base {
+        let n = ctb.min(m.height - y0);
+        for c in 0..3 {
+            // SAFETY: the rows are this row's, and nothing has written them.
+            unsafe { pic.planes[c].copy_rows_from(&base.planes[c], y0, n) };
+        }
     }
     // §9.3.1: the models start as the row above left them after its second
     // coding tree block, or fresh where there is no such block.

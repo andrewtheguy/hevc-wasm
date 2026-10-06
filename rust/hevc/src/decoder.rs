@@ -233,6 +233,7 @@ impl Decoder {
                 maps,
                 zs: &state.zs,
                 refs: &refs,
+                base: refs.first().map(|r| &*r.pic),
                 data: &rbsp.data,
                 substreams: &substreams,
                 progress: &self.progress,

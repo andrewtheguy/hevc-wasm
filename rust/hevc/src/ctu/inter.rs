@@ -292,6 +292,11 @@ impl<'a> Row<'a> {
     /// §8.5.3.3: the prediction of the block from its reference, into the
     /// picture.
     fn motion_compensate(&mut self, xp: usize, yp: usize, w: usize, h: usize, mv: Mv) {
+        if mv.ref_idx == 0 && mv.mv == [0, 0] {
+            // The block's samples are the first reference's, which the row
+            // started as (`PictureCtx::base`).
+            return;
+        }
         let r = &self.pic.refs[mv.ref_idx as usize].pic;
         let s = &mut *self.s;
         for c in 0..3usize {

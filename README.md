@@ -143,7 +143,9 @@ the byte planes and the threading are this repository's.
   blocks behind the row above, and each row's thread deblocks a block behind
   its decoding and applies SAO, in place, a block behind that, as FFmpeg's
   does: the filters run while the block is still in cache, and nothing waits
-  for a pass over the whole picture. The sample loops are SIMD128
+  for a pass over the whole picture. A P picture's rows start as the first
+  reference's, so the still blocks that are most of a screen are already in
+  place. The sample loops are SIMD128
   (`core::arch::wasm32`): the interpolation filters, which write samples
   straight from their last pass, block copies, the residual add, planar and
   angular intra prediction, SAO and a 16-bit inverse transform by dot
@@ -183,27 +185,28 @@ two-pass run less a one-pass one). Per picture:
 
 | 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| 1 thread, median ms | 22.6 | 32.2 |
-| 1 thread, M cycles | 66 | 89 |
-| 4 threads, median ms | 7.6 | 9.8 |
-| 4 threads, M cycles | 68 | 91 |
-| M instructions | 170 | 213 |
+| 1 thread, median ms | 21.7 | 30.8 |
+| 1 thread, M cycles | 64 | 88 |
+| 4 threads, median ms | 7.5 | 9.7 |
+| 4 threads, M cycles | 66 | 90 |
+| M instructions | 167 | 213 |
 
 | 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| 1 thread, median ms | 3.8 | 5.9 |
-| 1 thread, M cycles | 17 | 23 |
-| 4 threads, median ms | 2.5 | 3.3 |
-| 4 threads, M cycles | 19 | 25 |
-| M instructions | 30 | 54 |
+| 1 thread, median ms | 2.9 | 5.9 |
+| 1 thread, M cycles | 14 | 23 |
+| 4 threads, median ms | 2.3 | 3.1 |
+| 4 threads, M cycles | 17 | 25 |
+| M instructions | 26 | 54 |
 
 On the Mac's dense screen content this decoder is a quarter ahead in cycles,
 and both spend their time where the stream does: CABAC residual parsing and
 the 32×32 inverse transforms, of which the capture has some three thousand a
 picture, nearly all dense. On ordinary video, where motion compensation
-dominates, this decoder is a quarter ahead too, and the whole-pel block copies lead
-the profile of each: those are bound by memory, the reference and the picture
-being written not fitting the cache together. Of the steps that got here:
+dominates, this decoder is two fifths ahead, and what leads its profile is the copy
+of the first reference that each row starts as: bound by memory, the reference
+and the picture being written not fitting the cache together. Of the steps that
+got here:
 running the filters inside the wavefront rather than as passes over the whole
 picture was worth a fifth of the cycles on four threads, where the passes had
 left the threads spinning at barriers; SAO in place rather than into a second
@@ -221,7 +224,13 @@ read back per 4×4 block at filter time, so the filter scans eight strengths
 at a time and nearly all are zero; the edge filter itself by vector, its four
 lines in the lanes; and SAO blocks with no offset of their own and no
 neighbour's edge offset to save a line for, which on these streams is nearly
-all of them, cost one check. Together a seventh of the video's cycles.
+all of them, cost one check. Together a seventh of the video's cycles. And
+the whole-pel copies: on these streams nearly every block is a skip with a zero
+vector from the first reference, four fifths of the video's samples and all but
+a hundredth of the capture's, so each row's thread starts the row as one
+sequential copy of the first reference's rows, before it waits on the row
+above, and such a block costs nothing; the copy by the row moves the bytes
+sooner than the copies by the block did, a seventh of the video's cycles again.
 Natively the decoder runs its scalar fallbacks, since the kernels are written
 for wasm32.
 
