@@ -129,7 +129,9 @@ impl<'a> Row<'a> {
 
     fn residual_block(&mut self, x0: usize, y0: usize, log2: usize, c_idx: usize, pred_mode_intra: u8) -> Result<()> {
         let n = 1usize << log2;
-        let cab = &mut self.cab;
+        // The engine's registers in locals for the whole block.
+        let mut view = self.cab.view();
+        let cab = &mut view;
         // last_sig_coeff_{x,y}_prefix and suffix
         let (ctx_off, ctx_shift) = if c_idx == 0 { (3 * (log2 - 2) + ((log2 - 1) >> 2), (log2 + 1) >> 2) } else { (15, log2 - 2) };
         let cmax = (log2 << 1) - 1;
@@ -180,7 +182,7 @@ impl<'a> Row<'a> {
         let (fw, fh) = ((bw as usize) << 2, (bh as usize) << 2);
         let co = &mut self.s.coeffs[..n * n];
         for y in 0..fh {
-            co[y * n..y * n + fw].fill(0);
+            kernels::fill_i16(&mut co[y * n..y * n + fw], 0);
         }
         let mut csbf = 0u64;
         let (mut nz_w, mut nz_h) = (0usize, 0usize);
@@ -308,12 +310,14 @@ impl<'a> Row<'a> {
                 co[yc * n + xc] = v.clamp(-32768, 32767) as i16;
             }
         }
+        let engine = cab.engine();
+        self.cab.restore(engine);
         self.reconstruct_residual(x0, y0, log2, c_idx, nz_w, nz_h);
         Ok(())
     }
 
     /// `coeff_abs_level_remaining` (§9.3.3.11).
-    fn coeff_remaining(cab: &mut Cabac, rice: u32) -> Result<i32> {
+    fn coeff_remaining(cab: &mut View, rice: u32) -> Result<i32> {
         let prefix = cab.bypass_ones(32);
         if prefix >= 32 {
             return Err(Error::invalid("a coefficient prefix too long"));

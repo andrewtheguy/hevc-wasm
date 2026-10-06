@@ -100,6 +100,64 @@ fn store_samples(d: &mut [u8], w: usize, v: v128) {
     }
 }
 
+// ---- copies and fills ----
+
+/// `dst = src`, `w`×`h`, by vector: a `memory.copy` per row is a call into the
+/// runtime, which for a block's rows costs more than the bytes.
+pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
+    for y in 0..h {
+        let (d, s) = (&mut dst[y * dst_stride..y * dst_stride + w], &src[y * src_stride..y * src_stride + w]);
+        let mut x = 0;
+        while x + 16 <= w {
+            store_u8x16(&mut d[x..], load_u8x16(&s[x..]));
+            x += 16;
+        }
+        if x + 8 <= w {
+            store_u8x8(&mut d[x..], load_u8x8(&s[x..]));
+            x += 8;
+        }
+        if x + 4 <= w {
+            store_u8x4(&mut d[x..], load_u8x4(&s[x..]));
+            x += 4;
+        }
+        for x in x..w {
+            d[x] = s[x];
+        }
+    }
+}
+
+/// An `n`×`n` block of one value.
+pub fn fill(dst: &mut [u8], stride: usize, n: usize, v: u8) {
+    let vv = u8x16_splat(v);
+    for y in 0..n {
+        let row = &mut dst[y * stride..y * stride + n];
+        let mut x = 0;
+        while x + 16 <= n {
+            store_u8x16(&mut row[x..], vv);
+            x += 16;
+        }
+        if x + 8 <= n {
+            store_u8x8(&mut row[x..], vv);
+            x += 8;
+        }
+        if x + 4 <= n {
+            store_u8x4(&mut row[x..], vv);
+        }
+    }
+}
+
+pub fn fill_i16(dst: &mut [i16], v: i16) {
+    let vv = i16x8_splat(v);
+    let mut x = 0;
+    while x + 8 <= dst.len() {
+        store_i16x8(&mut dst[x..], vv);
+        x += 8;
+    }
+    if x < dst.len() {
+        store_i16x4(&mut dst[x..], vv);
+    }
+}
+
 // ---- motion compensation ----
 
 /// The sums of an `N`-tap filter over 16-bit inputs never leave 16 bits for
@@ -269,31 +327,277 @@ pub fn angular_t(dst: &mut [u8], stride: usize, n: usize, refb: &[i16], off: usi
     }
 }
 
-// ---- inverse transform ----
+// ---- scaling and the inverse transform ----
 
-/// `LEN` is 4, 8 or 16: one, two or four lanes of 32-bit sums.
-pub fn accum<const LEN: usize>(out: &mut [i32; LEN], src: &[i16], s_in: usize, k0: usize, kstep: usize, nz: usize, tab: &[[i16; 32]], tstep: usize) {
-    let mut acc = [i32x4_splat(0); 4];
-    let mut k = k0;
-    while k < nz {
-        let c = src[k * s_in];
-        if c != 0 {
-            let cv = i16x8_splat(c);
-            let row = &tab[k * tstep][..LEN];
-            if LEN == 4 {
-                acc[0] = i32x4_add(acc[0], i32x4_extmul_low_i16x8(cv, load_i16x4(row)));
+/// Scaling in 32 bits: `c * levelScale * 16` fits, and the `<< (qp / 6)` and
+/// `>> bdShift` fold into one shift either way.
+pub fn dequant(coeffs: &mut [i16], n: usize, nz_w: usize, nz_h: usize, qp: i32) {
+    let log2n = n.trailing_zeros() as i32;
+    let r = 8 + log2n - 5;
+    let l = qp / 6;
+    let scale = i16x8_splat((crate::tables::LEVEL_SCALE[(qp % 6) as usize] * 16) as i16);
+    let round = i32x4_splat(if l < r { 1 << (r - l - 1) } else { 0 });
+    let (shl, shr) = ((l - r).max(0) as u32, (r - l).max(0) as u32);
+    for y in 0..nz_h {
+        let row = &mut coeffs[y * n..y * n + n];
+        let mut x = 0;
+        while x < nz_w {
+            let c = if n >= 8 { load_i16x8(&row[x..]) } else { load_i16x4(&row[x..]) };
+            let lo = i32x4_shr(i32x4_add(i32x4_shl(i32x4_extmul_low_i16x8(c, scale), shl), round), shr);
+            let hi = i32x4_shr(i32x4_add(i32x4_shl(i32x4_extmul_high_i16x8(c, scale), shl), round), shr);
+            let v = i16x8_narrow_i32x4(lo, hi);
+            if n >= 8 {
+                store_i16x8(&mut row[x..], v);
             } else {
-                for p in 0..LEN / 8 {
-                    let v = load_i16x8(&row[8 * p..]);
-                    acc[2 * p] = i32x4_add(acc[2 * p], i32x4_extmul_low_i16x8(cv, v));
-                    acc[2 * p + 1] = i32x4_add(acc[2 * p + 1], i32x4_extmul_high_i16x8(cv, v));
-                }
+                store_i16x4(&mut row[x..], v);
+            }
+            x += 8;
+        }
+    }
+}
+
+/// `(a, b)` as one 32-bit lane, splatted, for `dot` against an interleaved pair.
+#[inline(always)]
+fn pair(a: i16, b: i16) -> v128 {
+    i32x4_splat((a as u16 as u32 | ((b as u16 as u32) << 16)) as i32)
+}
+
+/// The sums of one stage along a row: `out[j] += a * Ta[j] + b * Tb[j]` over
+/// the stage's pairs, four outputs per `dot`. `inputs` gives each pair's two
+/// coefficients, zero past the live ones.
+#[inline(always)]
+fn stage_row(acc: &mut [v128; 4], chunks: usize, table: &[[[i16; 8]; 4]], inputs: impl Fn(usize) -> Option<(i16, i16)>) {
+    for (p, t) in table.iter().enumerate() {
+        let Some((a, b)) = inputs(p) else { break };
+        if a == 0 && b == 0 {
+            continue;
+        }
+        let s = pair(a, b);
+        for c in 0..chunks {
+            acc[c] = i32x4_add(acc[c], i32x4_dot_i16x8(load_i16x8(&t[c]), s));
+        }
+    }
+}
+
+/// Even and odd halves into the `n` outputs of one row: `out[j] = e + o`,
+/// `out[n - 1 - j] = e - o`.
+#[inline(always)]
+fn butterfly_row(out: &mut [v128; 8], even: &[v128; 4], odd: &[v128; 4], n: usize) {
+    let half = n / 2;
+    for c in 0..half / 4 {
+        out[c] = i32x4_add(even[c], odd[c]);
+        let d = i32x4_sub(even[c], odd[c]);
+        out[(n - 4 - 4 * c) / 4] = i32x4_shuffle::<3, 2, 1, 0>(d, d);
+    }
+}
+
+/// The `N`-point inverse DCT of `row` (`nz` live inputs), as 32-bit sums in
+/// `out[..N / 4]`.
+#[inline(always)]
+fn idct_row<const N: usize>(row: &[i16], nz: usize, out: &mut [v128; 8]) {
+    use crate::itx::stages::{INTERLEAVED, K32};
+    let zero = i32x4_splat(0);
+    // The input of pair `p` of a stage: coefficient `K32[..] * N / 32`.
+    let input = |stage: usize| {
+        move |p: usize| {
+            let ka = K32[stage][2 * p] * N / 32;
+            if ka >= nz {
+                return None;
+            }
+            let kb = K32[stage][2 * p + 1] * N / 32;
+            Some((row[ka], if kb < nz { row[kb] } else { 0 }))
+        }
+    };
+    let mut base = [zero; 4];
+    stage_row(&mut base, 1, &INTERLEAVED[0][..2], input(0));
+    if N == 4 {
+        out[0] = base[0];
+        return;
+    }
+    let mut odd8 = [zero; 4];
+    stage_row(&mut odd8, 1, &INTERLEAVED[1][..2], input(1));
+    let mut e8 = [zero; 8];
+    butterfly_row(&mut e8, &base, &odd8, 8);
+    if N == 8 {
+        out[0] = e8[0];
+        out[1] = e8[1];
+        return;
+    }
+    let mut odd16 = [zero; 4];
+    stage_row(&mut odd16, 2, &INTERLEAVED[2][..4], input(2));
+    let mut e16 = [zero; 8];
+    butterfly_row(&mut e16, &[e8[0], e8[1], zero, zero], &odd16, 16);
+    if N == 16 {
+        for c in 0..4 {
+            out[c] = e16[c];
+        }
+        return;
+    }
+    let mut odd32 = [zero; 4];
+    stage_row(&mut odd32, 4, &INTERLEAVED[3][..8], input(3));
+    butterfly_row(out, &[e16[0], e16[1], e16[2], e16[3]], &odd32, 32);
+}
+
+/// The 4-point inverse DST of `row`.
+#[inline(always)]
+fn idst_row(row: &[i16], nz: usize, out: &mut [v128; 8]) {
+    use crate::itx::stages::DST_INTERLEAVED;
+    let mut acc = i32x4_splat(0);
+    for p in 0..2 {
+        let (ka, kb) = (2 * p, 2 * p + 1);
+        if ka >= nz {
+            break;
+        }
+        let (a, b) = (row[ka], if kb < nz { row[kb] } else { 0 });
+        if a != 0 || b != 0 {
+            acc = i32x4_add(acc, i32x4_dot_i16x8(load_i16x8(&DST_INTERLEAVED[p]), pair(a, b)));
+        }
+    }
+    out[0] = acc;
+}
+
+/// Rows `ka` and `kb` of the block at columns `x..x + 8`, interleaved: the
+/// pairs `dot` takes, four columns per vector.
+#[inline(always)]
+fn zip_rows(d: &[i16], n: usize, ka: usize, kb: Option<usize>, x: usize) -> (v128, v128) {
+    let a = if n >= 8 { load_i16x8(&d[ka * n + x..]) } else { load_i16x4(&d[ka * n + x..]) };
+    let b = match kb {
+        Some(kb) => {
+            if n >= 8 {
+                load_i16x8(&d[kb * n + x..])
+            } else {
+                load_i16x4(&d[kb * n + x..])
             }
         }
-        k += kstep;
+        None => i16x8_splat(0),
+    };
+    (i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(a, b), i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(a, b))
+}
+
+/// One stage down the columns `x..x + 8`: `acc[j] += Ta[j] * d[ka][x..] +
+/// Tb[j] * d[kb][x..]`, two vectors of four columns per output.
+#[inline(always)]
+fn stage_cols(acc: &mut [[v128; 2]; 16], len: usize, table: &[[i32; 16]], d: &[i16], n: usize, x: usize, nz_h: usize, k: impl Fn(usize) -> usize) {
+    for (p, t) in table.iter().enumerate() {
+        let ka = k(2 * p);
+        if ka >= nz_h {
+            break;
+        }
+        let kb = k(2 * p + 1);
+        let (lo, hi) = zip_rows(d, n, ka, (kb < nz_h).then_some(kb), x);
+        for j in 0..len {
+            let tv = i32x4_splat(t[j]);
+            acc[j][0] = i32x4_add(acc[j][0], i32x4_dot_i16x8(lo, tv));
+            acc[j][1] = i32x4_add(acc[j][1], i32x4_dot_i16x8(hi, tv));
+        }
     }
-    for j in 0..LEN / 4 {
-        store_i32x4(&mut out[4 * j..], acc[j]);
+}
+
+#[inline(always)]
+fn butterfly_cols(out: &mut [[v128; 2]; 32], even: &[[v128; 2]; 16], odd: &[[v128; 2]; 16], n: usize) {
+    for j in 0..n / 2 {
+        out[j] = [i32x4_add(even[j][0], odd[j][0]), i32x4_add(even[j][1], odd[j][1])];
+        out[n - 1 - j] = [i32x4_sub(even[j][0], odd[j][0]), i32x4_sub(even[j][1], odd[j][1])];
+    }
+}
+
+/// The `N`-point inverse DCT down eight columns at once, from the rows of `d`
+/// at `x`, as 32-bit sums per output row.
+#[inline(always)]
+fn idct_cols<const N: usize>(d: &[i16], x: usize, nz_h: usize, out: &mut [[v128; 2]; 32]) {
+    use crate::itx::stages::{K32, PACKED};
+    let zero = [i32x4_splat(0); 2];
+    let k = |stage: usize| move |i: usize| K32[stage][i] * N / 32;
+    // Each level's even half is the level below's output, in place in `out`.
+    let mut even = [zero; 16];
+    stage_cols(&mut even, 4, &PACKED[0][..2], d, N, x, nz_h, k(0));
+    if N == 4 {
+        for j in 0..4 {
+            out[j] = even[j];
+        }
+        return;
+    }
+    let mut odd = [zero; 16];
+    stage_cols(&mut odd, 4, &PACKED[1][..2], d, N, x, nz_h, k(1));
+    butterfly_cols(out, &even, &odd, 8);
+    if N == 8 {
+        return;
+    }
+    for j in 0..8 {
+        even[j] = out[j];
+    }
+    let mut odd = [zero; 16];
+    stage_cols(&mut odd, 8, &PACKED[2][..4], d, N, x, nz_h, k(2));
+    butterfly_cols(out, &even, &odd, 16);
+    if N == 16 {
+        return;
+    }
+    for j in 0..16 {
+        even[j] = out[j];
+    }
+    let mut odd = [zero; 16];
+    stage_cols(&mut odd, 16, &PACKED[3][..8], d, N, x, nz_h, k(3));
+    butterfly_cols(out, &even, &odd, 32);
+}
+
+#[inline(always)]
+fn idst_cols(d: &[i16], x: usize, nz_h: usize, out: &mut [[v128; 2]; 32]) {
+    use crate::itx::stages::DST_PACKED;
+    let zero = [i32x4_splat(0); 2];
+    let mut base = [zero; 16];
+    stage_cols(&mut base, 4, &DST_PACKED, d, 4, x, nz_h, |i| i);
+    for j in 0..4 {
+        out[j] = base[j];
+    }
+}
+
+/// Both passes of an `N`×`N` block: columns, eight at a time, into `tmp`,
+/// clipped to 16 bits; then each row into `res`.
+#[inline(always)]
+fn block<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], nz_w: usize, nz_h: usize, cols: impl Fn(&[i16], usize, usize, &mut [[v128; 2]; 32]), rows: impl Fn(&[i16], usize, &mut [v128; 8])) {
+    let round1 = i32x4_splat(64);
+    let mut sums = [[i32x4_splat(0); 2]; 32];
+    let mut x = 0;
+    while x < nz_w {
+        cols(d, x, nz_h, &mut sums);
+        for j in 0..N {
+            let lo = i32x4_shr(i32x4_add(sums[j][0], round1), 7);
+            let hi = i32x4_shr(i32x4_add(sums[j][1], round1), 7);
+            let v = i16x8_narrow_i32x4(lo, hi);
+            if N >= 8 {
+                store_i16x8(&mut tmp[j * N + x..], v);
+            } else {
+                store_i16x4(&mut tmp[j * N + x..], v);
+            }
+        }
+        x += 8;
+    }
+    let round2 = i32x4_splat(2048);
+    let mut out = [i32x4_splat(0); 8];
+    for y in 0..N {
+        rows(&tmp[y * N..y * N + N], nz_w, &mut out);
+        let r = &mut res[y * N..y * N + N];
+        let mut j = 0;
+        while j < N {
+            let lo = i32x4_shr(i32x4_add(out[j / 4], round2), 12);
+            if N >= 8 {
+                let hi = i32x4_shr(i32x4_add(out[j / 4 + 1], round2), 12);
+                store_i16x8(&mut r[j..], i16x8_narrow_i32x4(lo, hi));
+            } else {
+                store_i16x4(&mut r[j..], i16x8_narrow_i32x4(lo, lo));
+            }
+            j += 8;
+        }
+    }
+}
+
+pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, nz_w: usize, nz_h: usize, dst: bool) {
+    match (n, dst) {
+        (4, true) => block::<4>(d, tmp, res, nz_w, nz_h, idst_cols, idst_row),
+        (4, false) => block::<4>(d, tmp, res, nz_w, nz_h, idct_cols::<4>, idct_row::<4>),
+        (8, _) => block::<8>(d, tmp, res, nz_w, nz_h, idct_cols::<8>, idct_row::<8>),
+        (16, _) => block::<16>(d, tmp, res, nz_w, nz_h, idct_cols::<16>, idct_row::<16>),
+        _ => block::<32>(d, tmp, res, nz_w, nz_h, idct_cols::<32>, idct_row::<32>),
     }
 }
 

@@ -54,14 +54,19 @@ impl<'a> SaoCtx<'a> {
                         // outside the picture keeps its value.
                         let (ix0, ix1) = if da.0 == 0 { (x0, x1) } else { (x0.max(1), x1.min(pw - 1)) };
                         let (iy0, iy1) = if da.1 == 0 { (y0, y1) } else { (y0.max(1), y1.min(ph - 1)) };
-                        for y in y0..y1 {
-                            let inner = y >= iy0 && y < iy1;
-                            let (a, b) = if inner { (ix0, ix1) } else { (x1, x1) };
-                            out[y * stride + x0..y * stride + a].copy_from_slice(&src.data[y * stride + x0..y * stride + a]);
-                            out[y * stride + b..y * stride + x1].copy_from_slice(&src.data[y * stride + b..y * stride + x1]);
-                        }
+                        let copy = |out: &mut [u8], x: usize, y: usize, w: usize, h: usize| {
+                            if w > 0 && h > 0 {
+                                kernels::copy_block(&mut out[y * stride + x..], stride, &src.data[y * stride + x..], stride, w, h);
+                            }
+                        };
                         if ix0 < ix1 && iy0 < iy1 {
+                            copy(out, x0, y0, w, iy0 - y0);
+                            copy(out, x0, iy1, w, y1 - iy1);
+                            copy(out, x0, iy0, ix0 - x0, iy1 - iy0);
+                            copy(out, ix1, iy0, x1 - ix1, iy1 - iy0);
                             kernels::sao_edge(out, &src.data, stride, ix0, iy0, ix1 - ix0, iy1 - iy0, da, db, &prm.offset);
+                        } else {
+                            copy(out, x0, y0, w, h);
                         }
                     }
                     _ => kernels::copy_block(&mut out[y0 * stride + x0..], stride, &src.data[y0 * stride + x0..], stride, w, h),

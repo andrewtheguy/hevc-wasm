@@ -46,8 +46,17 @@ impl Progress {
     }
 
     /// Waits for `n` coding tree blocks; false if the row failed instead.
+    ///
+    /// A coding tree block is tens of microseconds of work, less than waking
+    /// a sleeping thread takes, so the wait spins for about that long first.
     pub fn wait_for(&self, n: u32) -> bool {
         let mut v = self.done.load(Ordering::Acquire);
+        let mut spins = 0;
+        while v < n && spins < 4000 {
+            std::hint::spin_loop();
+            spins += 1;
+            v = self.done.load(Ordering::Acquire);
+        }
         if v < n {
             let mut g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
             loop {

@@ -14,6 +14,11 @@ use crate::tables::{DCT32, DST4, LEVEL_SCALE};
 /// `TransCoeffLevel` to scaled coefficients, in place, flat scaling, over the
 /// `nz_w`×`nz_h` rectangle that holds every non-zero one.
 pub fn dequant(coeffs: &mut [i16], n: usize, nz_w: usize, nz_h: usize, qp: i32) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return crate::kernels::simd128::dequant(coeffs, n, nz_w, nz_h, qp);
+    }
+    #[allow(unreachable_code)]
     let log2n = n.trailing_zeros() as i32;
     let bd_shift = 8 + log2n - 5;
     let scale = (LEVEL_SCALE[(qp % 6) as usize] << (qp / 6)) as i64 * 16;
@@ -100,10 +105,15 @@ pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, 
         // both passes are one value.
         let v1 = ((d[0] as i32 * 64 + 64) >> 7).clamp(-32768, 32767);
         let out = ((v1 * 64 + (1 << 11)) >> 12) as i16;
-        res[..n * n].fill(out);
+        crate::kernels::fill_i16(&mut res[..n * n], out);
         return;
     }
     let (nz_w, nz_h) = (nz_w.clamp(1, n), nz_h.clamp(1, n));
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return crate::kernels::simd128::inverse_transform(d, tmp, res, n, nz_w, nz_h, dst);
+    }
+    #[allow(unreachable_code)]
     match (n, dst) {
         (4, true) => block::<4>(d, tmp, res, nz_w, nz_h, idst4),
         (4, false) => block::<4>(d, tmp, res, nz_w, nz_h, idct4),
@@ -178,4 +188,93 @@ mod tests {
         dequant(&mut c, 4, 4, 4, 4);
         assert_eq!(c[0], 320);
     }
+}
+
+/// The stages of the partial butterfly, as pairs of coefficients, in the shapes
+/// the vector kernels multiply: the
+/// four-point base (coefficients 0, 8, 16 and 24 of a 32-point transform) and
+/// the odd halves of the 8-, 16- and 32-point transforms. A pair multiplies
+/// two rows of `DCT32`, and a stage of a smaller block reads its coefficients
+/// at the proportionally smaller indices.
+#[cfg_attr(not(all(target_arch = "wasm32", target_feature = "simd128")), allow(dead_code))]
+pub mod stages {
+    use super::DCT32;
+
+    /// `(row of DCT32, coefficient index in a 32-point transform)` of each
+    /// coefficient of each stage, pairs in order.
+    pub const K32: [&[usize]; 4] = [&[0, 8, 16, 24], &[4, 12, 20, 28], &[2, 6, 10, 14, 18, 22, 26, 30], &[1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31]];
+
+    /// Each pair's rows as `(row a, row b)` packed into one 32-bit lane per
+    /// output, for a pass that runs across columns: `[stage][pair][output]`.
+    pub static PACKED: [[[i32; 16]; 8]; 4] = {
+        let mut t = [[[0i32; 16]; 8]; 4];
+        let mut s = 0;
+        while s < 4 {
+            let ks = K32[s];
+            let len = ks.len();
+            let mut p = 0;
+            while p < len / 2 {
+                let mut j = 0;
+                while j < len {
+                    t[s][p][j] = (DCT32[ks[2 * p]][j] as u16 as i32) | ((DCT32[ks[2 * p + 1]][j] as u16 as i32) << 16);
+                    j += 1;
+                }
+                p += 1;
+            }
+            s += 1;
+        }
+        t
+    };
+
+    /// Each pair's rows interleaved, four outputs per vector, for a pass that
+    /// runs along a row: `[stage][pair][output / 4][2 * (output % 4) + which]`.
+    pub static INTERLEAVED: [[[[i16; 8]; 4]; 8]; 4] = {
+        let mut t = [[[[0i16; 8]; 4]; 8]; 4];
+        let mut s = 0;
+        while s < 4 {
+            let ks = K32[s];
+            let len = ks.len();
+            let mut p = 0;
+            while p < len / 2 {
+                let mut j = 0;
+                while j < len {
+                    t[s][p][j / 4][2 * (j % 4)] = DCT32[ks[2 * p]][j];
+                    t[s][p][j / 4][2 * (j % 4) + 1] = DCT32[ks[2 * p + 1]][j];
+                    j += 1;
+                }
+                p += 1;
+            }
+            s += 1;
+        }
+        t
+    };
+
+    /// The 4-point DST in the same two shapes: pairs (0, 1) and (2, 3).
+    pub static DST_PACKED: [[i32; 16]; 2] = {
+        let mut t = [[0i32; 16]; 2];
+        let mut p = 0;
+        while p < 2 {
+            let mut j = 0;
+            while j < 4 {
+                t[p][j] = (super::DST4[2 * p][j] as u16 as i32) | ((super::DST4[2 * p + 1][j] as u16 as i32) << 16);
+                j += 1;
+            }
+            p += 1;
+        }
+        t
+    };
+    pub static DST_INTERLEAVED: [[i16; 8]; 2] = {
+        let mut t = [[0i16; 8]; 2];
+        let mut p = 0;
+        while p < 2 {
+            let mut j = 0;
+            while j < 4 {
+                t[p][2 * j] = super::DST4[2 * p][j];
+                t[p][2 * j + 1] = super::DST4[2 * p + 1][j];
+                j += 1;
+            }
+            p += 1;
+        }
+        t
+    };
 }

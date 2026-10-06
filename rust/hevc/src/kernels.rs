@@ -3,7 +3,7 @@
 //! public function dispatches to it where it is built in.
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-mod simd128;
+pub mod simd128;
 
 use crate::tables::{BETA_TABLE, TC_TABLE};
 
@@ -11,6 +11,11 @@ use crate::tables::{BETA_TABLE, TC_TABLE};
 
 /// `dst = src`, `w`×`h`, each at its stride.
 pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return simd128::copy_block(dst, dst_stride, src, src_stride, w, h);
+    }
+    #[allow(unreachable_code)]
     for y in 0..h {
         dst[y * dst_stride..y * dst_stride + w].copy_from_slice(&src[y * src_stride..y * src_stride + w]);
     }
@@ -107,6 +112,17 @@ pub fn add_residual(dst: &mut [u8], dst_stride: usize, res: &[i16], w: usize, h:
     }
 }
 
+/// `dst = v`, for the lengths a transform block has: at least four, a multiple
+/// of four.
+pub fn fill_i16(dst: &mut [i16], v: i16) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return simd128::fill_i16(dst, v);
+    }
+    #[allow(unreachable_code)]
+    dst.fill(v);
+}
+
 // ---- intra prediction (§8.4.4.2.5, §8.4.4.2.6) ----
 
 /// Planar prediction of an `n`×`n` block from `n + 1` left and top neighbours.
@@ -130,6 +146,11 @@ pub fn planar(dst: &mut [u8], stride: usize, n: usize, left: &[u8], top: &[u8]) 
 }
 
 pub fn fill(dst: &mut [u8], stride: usize, n: usize, v: u8) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return simd128::fill(dst, stride, n, v);
+    }
+    #[allow(unreachable_code)]
     for y in 0..n {
         dst[y * stride..y * stride + n].fill(v);
     }
@@ -191,11 +212,6 @@ pub fn angular_t(dst: &mut [u8], stride: usize, n: usize, refb: &[i16], off: usi
 /// `out[j] = Σ src[k * s_in] * tab[k * tstep][j]` over `k = k0, k0 + kstep, ..
 /// < nz`, for `LEN` outputs.
 pub fn accum<const LEN: usize>(out: &mut [i32; LEN], src: &[i16], s_in: usize, k0: usize, kstep: usize, nz: usize, tab: &[[i16; 32]], tstep: usize) {
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-    {
-        return simd128::accum::<LEN>(out, src, s_in, k0, kstep, nz, tab, tstep);
-    }
-    #[allow(unreachable_code)]
     {
         *out = [0; LEN];
         let mut k = k0;

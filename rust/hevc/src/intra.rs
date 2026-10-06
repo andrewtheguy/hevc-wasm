@@ -123,8 +123,10 @@ pub fn predict(refs: &mut RefSamples, n: usize, mode: u8, luma: bool, out: &mut 
     refs.filter(n, mode);
     match mode {
         MODE_PLANAR => {
-            refs.pl[..=n].copy_from_slice(&refs.left[..=n]);
-            refs.pt[..=n].copy_from_slice(&refs.top[..=n]);
+            for i in 0..=n {
+                refs.pl[i] = refs.left[i];
+                refs.pt[i] = refs.top[i];
+            }
             kernels::planar(out, stride, n, &refs.pl, &refs.pt);
         }
         MODE_DC => {

@@ -142,34 +142,109 @@ impl Contexts {
     }
 }
 
-/// The arithmetic decoder over one substream of a slice's data.
-pub struct Cabac<'a> {
-    data: &'a [u8],
+/// The arithmetic decoder's registers (§9.3.2.5).
+#[derive(Clone, Copy)]
+pub struct Engine {
     byte_pos: usize,
     /// `ivlOffset << 41`, with the bits not yet consumed below.
     low: u64,
     cnt: i32,
     range: u32,
+}
+
+/// The arithmetic decoder over one substream of a slice's data.
+pub struct Cabac<'a> {
+    data: &'a [u8],
+    engine: Engine,
     pub ctx: Contexts,
 }
 
 impl<'a> Cabac<'a> {
     /// The engine at byte `start` of `data` (§9.3.2.5), with the models `ctx`.
     pub fn new(data: &'a [u8], start: usize, ctx: Contexts) -> Self {
-        let mut e = Cabac { data, byte_pos: start, low: 0, cnt: 0, range: 510, ctx };
+        let mut e = Cabac { data, engine: Engine { byte_pos: start, low: 0, cnt: 0, range: 510 }, ctx };
         e.reinit_at(start);
         e
     }
 
     /// Restart the arithmetic registers at byte `byte`, keeping the models.
     pub fn reinit_at(&mut self, byte: usize) {
-        self.byte_pos = byte;
-        self.low = 0;
-        self.cnt = 0;
-        self.range = 510;
-        self.refill();
-        self.low <<= 9;
-        self.cnt -= 9;
+        self.engine = Engine { byte_pos: byte, low: 0, cnt: 0, range: 510 };
+        let mut v = self.view();
+        v.refill();
+        v.low <<= 9;
+        v.cnt -= 9;
+        self.engine = v.engine();
+    }
+
+    /// The decoder with its registers as values: what a hot loop decodes
+    /// with, so the registers live in locals rather than in this struct. Put
+    /// back with [`Self::restore`].
+    #[inline(always)]
+    pub fn view(&mut self) -> View<'_, 'a> {
+        View { data: self.data, ctx: &mut self.ctx, byte_pos: self.engine.byte_pos, low: self.engine.low, cnt: self.engine.cnt, range: self.engine.range }
+    }
+
+    #[inline(always)]
+    pub fn restore(&mut self, v: Engine) {
+        self.engine = v;
+    }
+
+    #[inline(always)]
+    pub fn decode(&mut self, ctx_idx: usize) -> u32 {
+        let mut v = self.view();
+        let bin = v.decode(ctx_idx);
+        self.engine = v.engine();
+        bin
+    }
+
+    #[inline(always)]
+    pub fn bypass(&mut self) -> u32 {
+        let mut v = self.view();
+        let bin = v.bypass();
+        self.engine = v.engine();
+        bin
+    }
+
+    #[inline]
+    pub fn bypass_bits(&mut self, n: u32) -> u32 {
+        let mut v = self.view();
+        let bits = v.bypass_bits(n);
+        self.engine = v.engine();
+        bits
+    }
+
+    #[inline]
+    pub fn bypass_ones(&mut self, max: u32) -> u32 {
+        let mut v = self.view();
+        let ones = v.bypass_ones(max);
+        self.engine = v.engine();
+        ones
+    }
+
+    #[inline(always)]
+    pub fn terminate(&mut self) -> bool {
+        let mut v = self.view();
+        let end = v.terminate();
+        self.engine = v.engine();
+        end
+    }
+}
+
+/// The decoder with its registers in hand: see [`Cabac::view`].
+pub struct View<'v, 'a> {
+    data: &'a [u8],
+    pub ctx: &'v mut Contexts,
+    byte_pos: usize,
+    low: u64,
+    cnt: i32,
+    range: u32,
+}
+
+impl<'v, 'a> View<'v, 'a> {
+    #[inline(always)]
+    pub fn engine(&self) -> Engine {
+        Engine { byte_pos: self.byte_pos, low: self.low, cnt: self.cnt, range: self.range }
     }
 
     #[cold]
