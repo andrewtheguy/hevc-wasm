@@ -96,6 +96,16 @@ impl<T: Copy> MapPtr<T> {
         unsafe { self.ptr.add(i).read() }
     }
 
+    /// Entry `i`, in place.
+    ///
+    /// # Safety
+    /// Nothing may be writing it: see the module.
+    #[inline]
+    pub unsafe fn at(&self, i: usize) -> &T {
+        debug_assert!(i < self.len);
+        unsafe { &*self.ptr.add(i) }
+    }
+
     /// Entries `start..start + len`.
     ///
     /// # Safety
@@ -145,6 +155,18 @@ impl<T: Copy> MapPtr<T> {
                 }
             }
         }
+    }
+}
+
+impl MapPtr<u8> {
+    /// Entries `i..i + 8` as one little-endian word.
+    ///
+    /// # Safety
+    /// Nothing may be writing them: see the module.
+    #[inline]
+    pub unsafe fn word(&self, i: usize) -> u64 {
+        debug_assert!(i + 8 <= self.len);
+        u64::from_le_bytes(unsafe { (self.ptr.add(i) as *const [u8; 8]).read_unaligned() })
     }
 }
 

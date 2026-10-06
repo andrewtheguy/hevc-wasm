@@ -85,9 +85,11 @@ pub struct PicState {
     pub intra_mode: Vec<u8>,
     pub qp_y: Vec<i8>,
     pub ct_depth: Vec<u8>,
-    /// Bit 0: the left edge is a transform block edge; bit 1: the top edge is;
-    /// bits 2 and 3 the same for prediction block edges.
-    pub edges: Vec<u8>,
+    /// Bits 0 and 1: the boundary strength of the block's left edge, bits 2
+    /// and 3 its top edge's (§8.7.2.4), set as the blocks decode and zero off
+    /// the 8×8 grid; eight spare entries at the end let the deblocking read
+    /// eight at a time.
+    pub bs: Vec<u8>,
     /// The luma transform block has a non-zero coefficient.
     pub nz: Vec<u8>,
     pub motion: Vec<Motion>,
@@ -144,7 +146,7 @@ impl PicState {
             intra_mode: vec![1; n4],
             qp_y: vec![0; n4],
             ct_depth: vec![0; n4],
-            edges: vec![0; n4],
+            bs: vec![0; n4 + 8],
             nz: vec![0; n4],
             motion: vec![Motion::default(); n4],
             sao: vec![[SaoParams::default(); 3]; ctb_w * ctb_h],
@@ -160,7 +162,7 @@ impl PicState {
 
     /// Clears what a picture does not write everywhere.
     pub fn reset(&mut self) {
-        self.edges.fill(0);
+        self.bs.fill(0);
         self.nz.fill(0);
     }
 }

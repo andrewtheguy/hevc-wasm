@@ -183,25 +183,25 @@ two-pass run less a one-pass one). Per picture:
 
 | 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| 1 thread, median ms | 23.2 | 33.6 |
-| 1 thread, M cycles | 67 | 90 |
-| 4 threads, median ms | 8.5 | 10.6 |
-| 4 threads, M cycles | 70 | 91 |
-| M instructions | 173 | 213 |
+| 1 thread, median ms | 22.6 | 32.2 |
+| 1 thread, M cycles | 66 | 89 |
+| 4 threads, median ms | 7.6 | 9.8 |
+| 4 threads, M cycles | 68 | 91 |
+| M instructions | 170 | 213 |
 
 | 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| 1 thread, median ms | 4.7 | 6.2 |
-| 1 thread, M cycles | 20 | 23 |
-| 4 threads, median ms | 2.4 | 3.3 |
-| 4 threads, M cycles | 22 | 26 |
-| M instructions | 38 | 54 |
+| 1 thread, median ms | 3.8 | 5.9 |
+| 1 thread, M cycles | 17 | 23 |
+| 4 threads, median ms | 2.5 | 3.3 |
+| 4 threads, M cycles | 19 | 25 |
+| M instructions | 30 | 54 |
 
 On the Mac's dense screen content this decoder is a quarter ahead in cycles,
 and both spend their time where the stream does: CABAC residual parsing and
 the 32×32 inverse transforms, of which the capture has some three thousand a
 picture, nearly all dense. On ordinary video, where motion compensation
-dominates, this decoder is a tenth ahead, and the whole-pel block copies lead
+dominates, this decoder is a quarter ahead too, and the whole-pel block copies lead
 the profile of each: those are bound by memory, the reference and the picture
 being written not fitting the cache together. Of the steps that got here:
 running the filters inside the wavefront rather than as passes over the whole
@@ -212,8 +212,16 @@ a tenth on one thread; the transform's row pass splatting each pair of
 coefficients with one shuffle rather than scalar loads, a twentieth of the
 capture's instructions; the block copy running down sixteen-wide columns, a
 seventh of the video's instructions; the maps filled by whole words rather
-than `memory.fill` calls into the runtime, a twelfth of the video's; and
-shipping LLVM's output without wasm-opt, a twentieth of the capture's cycles.
+than `memory.fill` calls into the runtime, a twelfth of the video's;
+shipping LLVM's output without wasm-opt, a twentieth of the capture's cycles;
+and the in-loop filters, which had been a quarter of the video's cycles: the
+deblocking's boundary strengths settled as the blocks decode, where one side
+of each edge is known once and a skipped neighbour is one block, rather than
+read back per 4×4 block at filter time, so the filter scans eight strengths
+at a time and nearly all are zero; the edge filter itself by vector, its four
+lines in the lanes; and SAO blocks with no offset of their own and no
+neighbour's edge offset to save a line for, which on these streams is nearly
+all of them, cost one check. Together a seventh of the video's cycles.
 Natively the decoder runs its scalar fallbacks, since the kernels are written
 for wasm32.
 

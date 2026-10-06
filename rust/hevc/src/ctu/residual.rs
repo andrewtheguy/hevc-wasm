@@ -58,7 +58,6 @@ impl<'a> Row<'a> {
             self.qp_y = super::wrap_qp(self.qp_y_pred + delta);
             self.set_cu_qp();
         }
-        self.mark_edges(x0, y0, n, n, 0);
         let m = self.pic.maps;
         let luma_mode = self.map_get(m.intra_mode, m.idx4(x0, y0));
         if self.cu_intra {
@@ -68,6 +67,7 @@ impl<'a> Row<'a> {
             self.residual_block(x0, y0, log2, 0, luma_mode)?;
             self.fill4(m.nz, x0, y0, n, n, 1);
         }
+        self.edge_strengths(x0, y0, n, n, true);
         // Chroma: the same block, the quadrant's mode under an NxN split.
         let half = self.cu_size / 2;
         let quadrant = if self.intra_split { ((y0 - self.cu_y >= half) as usize) * 2 + (x0 - self.cu_x >= half) as usize } else { 0 };

@@ -46,7 +46,7 @@ pub struct Maps {
     pub intra_mode: MapPtr<u8>,
     pub qp_y: MapPtr<i8>,
     pub ct_depth: MapPtr<u8>,
-    pub edges: MapPtr<u8>,
+    pub bs: MapPtr<u8>,
     pub nz: MapPtr<u8>,
     pub motion: MapPtr<Motion>,
     pub sao: MapPtr<[SaoParams; 3]>,
@@ -67,7 +67,7 @@ impl Maps {
             intra_mode: MapPtr::of(&mut st.intra_mode),
             qp_y: MapPtr::of(&mut st.qp_y),
             ct_depth: MapPtr::of(&mut st.ct_depth),
-            edges: MapPtr::of(&mut st.edges),
+            bs: MapPtr::of(&mut st.bs),
             nz: MapPtr::of(&mut st.nz),
             motion: MapPtr::of(&mut st.motion),
             sao: MapPtr::of(&mut st.sao),
@@ -410,24 +410,79 @@ impl<'a> Row<'a> {
         self.fill4(self.pic.maps.qp_y, self.cu_x, self.cu_y, self.cu_size, self.cu_size, self.qp_y as i8);
     }
 
-    /// Marks the left and top edges of a block: `kind` 0 a transform block's,
-    /// 1 a prediction block's, 2 a coding block's (both).
-    fn mark_edges(&mut self, x: usize, y: usize, w: usize, h: usize, kind: u8) {
-        let (bits_v, bits_h) = match kind {
-            0 => (0b0001, 0b0010),
-            1 => (0b0100, 0b1000),
-            _ => (0b0101, 0b1010),
-        };
+    /// Records the strengths (§8.7.2.4) of the edges along the left and top
+    /// sides of the `w`×`h` block at (`x`, `y`) where they lie on the 8×8
+    /// grid, `tu` whether the block is a transform block: the greater of
+    /// what a prediction block edge put there and this, a transform block
+    /// edge's strength being at least that of a prediction block edge in the
+    /// same place. Runs once the block's prediction mode, motion and
+    /// coefficients are in the maps; the blocks across the edges decoded
+    /// before it. The block's own side is the same all along an edge, but
+    /// for the motion of a transform block spanning prediction blocks, and
+    /// a skipped block across it is one prediction block without
+    /// coefficients, so one strength holds as far as its edge.
+    fn edge_strengths(&mut self, x: usize, y: usize, w: usize, h: usize, tu: bool) {
+        if self.pic.deblock.is_none() {
+            return;
+        }
         let m = self.pic.maps;
         let base = m.idx4(x, y);
-        for r in 0..(h >> 2) {
-            let i = base + r * m.w4;
-            // SAFETY: the block is this row's.
-            unsafe { m.edges.set(i, m.edges.get(i) | bits_v) };
+        let intra = self.cu_intra;
+        let nz_q = tu && self.map_get(m.nz, base) != 0;
+        let strength = |p: usize, q: usize| -> u8 {
+            if intra || self.map_get(m.pred_mode, p) == PRED_INTRA {
+                return 2;
+            }
+            if nz_q || (tu && self.map_get(m.nz, p) != 0) {
+                return 1;
+            }
+            let (mp, mq) = (self.map_get(m.motion, p), self.map_get(m.motion, q));
+            if mp.ref_idx != mq.ref_idx && self.pic.refs[mp.ref_idx as usize].poc != self.pic.refs[mq.ref_idx as usize].poc {
+                return 1;
+            }
+            ((mp.mv[0] as i32 - mq.mv[0] as i32).abs() >= 4 || (mp.mv[1] as i32 - mq.mv[1] as i32).abs() >= 4) as u8
+        };
+        // How many blocks from `p`, at `pos4` along the edge with `left` to
+        // go, share its strength.
+        let uniform = !tu || self.part_mode == PartMode::Part2Nx2N;
+        let run = |p: usize, pos4: usize, left: usize| -> usize {
+            if intra {
+                left
+            } else if uniform && self.map_get(m.pred_mode, p) == PRED_SKIP {
+                let n4 = (1usize << m.log2_ctb >> self.map_get(m.ct_depth, p)) >> 2;
+                (n4 - (pos4 & (n4 - 1))).min(left)
+            } else {
+                1
+            }
+        };
+        // SAFETY: the block is this row's.
+        let put = |q: usize, bs: u8, shift: u32| unsafe {
+            let v = m.bs.get(q);
+            m.bs.set(q, (v & !(3 << shift)) | (v & (3 << shift)).max(bs << shift));
+        };
+        if x & 7 == 0 && x > 0 {
+            let (y4, h4) = (y >> 2, h >> 2);
+            let mut r = 0;
+            while r < h4 {
+                let q = base + r * m.w4;
+                let (bs, n) = (strength(q - 1, q), run(q - 1, y4 + r, h4 - r));
+                for k in 0..n {
+                    put(q + k * m.w4, bs, 0);
+                }
+                r += n;
+            }
         }
-        for i in base..base + (w >> 2) {
-            // SAFETY: as above.
-            unsafe { m.edges.set(i, m.edges.get(i) | bits_h) };
+        if y & 7 == 0 && y > 0 {
+            let (x4, w4) = (x >> 2, w >> 2);
+            let mut c = 0;
+            while c < w4 {
+                let q = base + c;
+                let (bs, n) = (strength(q - m.w4, q), run(q - m.w4, x4 + c, w4 - c));
+                for k in 0..n {
+                    put(q + k, bs, 2);
+                }
+                c += n;
+            }
         }
     }
 
@@ -449,13 +504,13 @@ impl<'a> Row<'a> {
         self.qp_y = wrap_qp(self.qp_y_pred + self.cu_qp_delta_val);
         self.fill4(m.ct_depth, x0, y0, n, n, depth);
         self.set_cu_qp();
-        self.mark_edges(x0, y0, n, n, 2);
         if skip {
             self.fill4(m.pred_mode, x0, y0, n, n, PRED_SKIP);
             self.fill4(m.intra_mode, x0, y0, n, n, 1);
             self.cu_intra = false;
             self.part_mode = PartMode::Part2Nx2N;
             self.prediction_unit(x0, y0, n, x0, y0, n, n, 0, true)?;
+            self.edge_strengths(x0, y0, n, n, true);
             self.last_cu_qp = self.qp_y;
             return Ok(());
         }
@@ -478,6 +533,9 @@ impl<'a> Row<'a> {
         if rqt_root_cbf {
             self.max_trafo_depth = if self.cu_intra { self.pic.sps.max_transform_hierarchy_depth_intra + self.intra_split as u8 } else { self.pic.sps.max_transform_hierarchy_depth_inter };
             self.transform_tree(x0, y0, log2cb, 0, true, true)?;
+        } else {
+            // The coding block is the one transform block, without coefficients.
+            self.edge_strengths(x0, y0, n, n, true);
         }
         self.last_cu_qp = self.qp_y;
         Ok(())
@@ -530,8 +588,8 @@ impl<'a> Row<'a> {
             self.fill4(m.intra_mode, xp, yp, pb, pb, mode);
         }
         if parts == 4 {
-            self.mark_edges(x0 + pb, y0, pb, n, 1);
-            self.mark_edges(x0, y0 + pb, n, pb, 1);
+            self.edge_strengths(x0 + pb, y0, pb, n, false);
+            self.edge_strengths(x0, y0 + pb, n, pb, false);
         }
         // Under 4:4:4 an NxN split codes a chroma mode per quadrant, each
         // derived from its own luma mode.

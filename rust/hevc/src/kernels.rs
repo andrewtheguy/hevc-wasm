@@ -247,6 +247,11 @@ pub fn accum<const LEN: usize>(out: &mut [i32; LEN], src: &[i16], s_in: usize, k
 /// One four-line luma edge segment at (`x`, `y`): a vertical edge (`dir` 0)
 /// between columns `x - 1` and `x`, or a horizontal one between rows.
 pub fn luma_edge(data: &mut [u8], stride: usize, x: usize, y: usize, dir: usize, beta: i32, tc: i32) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return simd128::luma_edge(data, stride, x, y, dir, beta, tc);
+    }
+    #[allow(unreachable_code)]
     let (line_step, tap_step): (isize, isize) = if dir == 0 { (stride as isize, 1) } else { (1, stride as isize) };
     let origin = (y * stride + x) as isize;
     let idx = |k: usize, i: i32| -> usize { (origin + k as isize * line_step + i as isize * tap_step) as usize };
@@ -295,6 +300,11 @@ pub fn luma_edge(data: &mut [u8], stride: usize, x: usize, y: usize, dir: usize,
 
 /// One four-line chroma edge segment (§8.7.2.5.5): one sample each side.
 pub fn chroma_edge(data: &mut [u8], stride: usize, x: usize, y: usize, dir: usize, tc: i32) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return simd128::chroma_edge(data, stride, x, y, dir, tc);
+    }
+    #[allow(unreachable_code)]
     let (line_step, tap_step): (isize, isize) = if dir == 0 { (stride as isize, 1) } else { (1, stride as isize) };
     let origin = (y * stride + x) as isize;
     for k in 0..4isize {

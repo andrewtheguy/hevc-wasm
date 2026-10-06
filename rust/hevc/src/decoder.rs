@@ -223,7 +223,6 @@ impl Decoder {
         let maps = Maps::of(&mut state);
         let planes = [PlanePtr::of(&mut pic.planes[0]), PlanePtr::of(&mut pic.planes[1]), PlanePtr::of(&mut pic.planes[2])];
         // The in-loop filters run behind the wavefront, in place.
-        let ref_pocs: Vec<i32> = refs.iter().map(|r| r.poc).collect();
         let decoded = {
             let ctx = PictureCtx {
                 sps: &sps,
@@ -238,7 +237,7 @@ impl Decoder {
                 substreams: &substreams,
                 progress: &self.progress,
                 wpp_ctx: &self.wpp_ctx,
-                deblock: (!sh.deblocking_filter_disabled).then_some(DeblockCtx { planes, maps, sh: &sh, pps: &pps, ref_pocs: &ref_pocs }),
+                deblock: (!sh.deblocking_filter_disabled).then_some(DeblockCtx { planes, maps, sh: &sh, pps: &pps }),
                 sao: (sh.sao_luma || sh.sao_chroma).then_some(SaoCtx { planes, maps }),
             };
             let scratch = &self.scratch;

@@ -82,10 +82,10 @@ impl<'a> Row<'a> {
         };
         let mut merge = false;
         for (i, &(x, y, w, hh)) in parts.iter().enumerate() {
-            if i > 0 {
-                self.mark_edges(x, y, w, hh, 1);
-            }
             merge = self.prediction_unit(x0, y0, n, x, y, w, hh, i, false)?;
+            if i > 0 {
+                self.edge_strengths(x, y, w, hh, false);
+            }
         }
         Ok(merge && self.part_mode == PartMode::Part2Nx2N)
     }
