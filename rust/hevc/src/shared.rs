@@ -131,11 +131,46 @@ impl<T: Copy> MapPtr<T> {
     #[inline]
     pub unsafe fn fill_rect(&self, w4: usize, x: usize, y: usize, w: usize, h: usize, v: T) {
         let (x0, x1) = (x >> 2, (x + w).div_ceil(4));
+        let n = x1 - x0;
         for yy in y >> 2..(y + h).div_ceil(4) {
             let a = yy * w4 + x0;
-            debug_assert!(a + (x1 - x0) <= self.len);
-            for i in a..a + (x1 - x0) {
-                unsafe { self.ptr.add(i).write(v) };
+            debug_assert!(a + n <= self.len);
+            let p = unsafe { self.ptr.add(a) };
+            if std::mem::size_of::<T>() == 1 {
+                // SAFETY: `T` is one byte, so its bits are a `u8`'s.
+                unsafe { fill_bytes(p as *mut u8, n, std::mem::transmute_copy(&v)) };
+            } else {
+                for i in 0..n {
+                    unsafe { p.add(i).write(v) };
+                }
+            }
+        }
+    }
+}
+
+/// `n` copies of `b` at `p`, `n` a block's width in map entries (a power of
+/// two up to 16), as one or two whole words: a `memory.fill` is a call into
+/// the runtime, which costs more than the bytes it writes.
+///
+/// # Safety
+/// `p..p + n` must be writable.
+#[inline(always)]
+unsafe fn fill_bytes(p: *mut u8, n: usize, b: u8) {
+    let w = u64::from_ne_bytes([b; 8]);
+    unsafe {
+        match n {
+            16 => {
+                (p as *mut u64).write_unaligned(w);
+                (p.add(8) as *mut u64).write_unaligned(w);
+            }
+            8 => (p as *mut u64).write_unaligned(w),
+            4 => (p as *mut u32).write_unaligned(w as u32),
+            2 => (p as *mut u16).write_unaligned(w as u16),
+            1 => *p = b,
+            _ => {
+                for i in 0..n {
+                    *p.add(i) = b;
+                }
             }
         }
     }

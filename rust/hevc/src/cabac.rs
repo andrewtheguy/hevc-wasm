@@ -96,9 +96,10 @@ static INIT_VALUES: [[u8; NUM_CTX]; 2] = [
 
 /// Per (model byte, range quartile): `lps | transMps << 8 | transLps << 16`,
 /// with a model byte being `pStateIdx * 2 + valMps` and the state-0 flip of the
-/// MPS folded in.
-const fn build_fused() -> [u32; 128 * 4] {
-    let mut t = [0u32; 128 * 4];
+/// MPS folded in. Sized for any byte, so the index needs no check; the upper
+/// half is never read.
+const fn build_fused() -> [u32; 256 * 4] {
+    let mut t = [0u32; 256 * 4];
     let mut s = 0;
     while s < 128 {
         let p = s >> 1;
@@ -116,7 +117,7 @@ const fn build_fused() -> [u32; 128 * 4] {
     }
     t
 }
-static FUSED: [u32; 128 * 4] = build_fused();
+static FUSED: [u32; 256 * 4] = build_fused();
 
 /// Bit position of `ivlOffset` inside [`Cabac::low`].
 const OFF: u32 = 41;
@@ -286,7 +287,7 @@ impl<'v, 'a> View<'v, 'a> {
         let ctx_idx = ctx_idx & (CTX_PAD - 1);
         let s = self.ctx.0[ctx_idx] as usize;
         let q = ((self.range >> 6) & 3) as usize;
-        let e = FUSED[((s & 127) << 2) | q];
+        let e = FUSED[(s << 2) | q];
         let lps = e & 0xFF;
         self.range -= lps;
         let scaled = (self.range as u64) << OFF;
@@ -294,7 +295,7 @@ impl<'v, 'a> View<'v, 'a> {
         let mask = mask64 as u32;
         self.low -= scaled & mask64;
         self.range = self.range.wrapping_add(lps.wrapping_sub(self.range) & mask);
-        self.ctx.0[ctx_idx] = ((e >> (8 + (mask & 8))) & 0xFF) as u8;
+        self.ctx.0[ctx_idx] = (if mask == 0 { e >> 8 } else { e >> 16 }) as u8;
         let bin = (s as u32 ^ mask) & 1;
         self.renorm();
         bin

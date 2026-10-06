@@ -29,9 +29,7 @@ codegen-units = 1
 panic = "abort"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O3", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-simd", "--enable-threads"]
-
-# For `perf` under Node (`node --perf-basic-prof`): the same optimisation with
-# the function names kept, through `wasm-pack build --profiling`.
-[package.metadata.wasm-pack.profile.profiling]
-wasm-opt = ["-O3", "-g", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-simd", "--enable-threads"]
+# LLVM's output as it is: after wasm-opt -O3 the residual parser ran a
+# twentieth slower under V8 (the capture, 71M cycles a picture against 68M), for
+# a module 45 KB smaller. The function names stay, for `perf` under Node.
+wasm-opt = false

@@ -50,18 +50,16 @@ const fn invert<const SIZE: usize, const N: usize>(f: [(u8, u8); N]) -> [u8; N] 
     t
 }
 
-/// `t[k]` is `(max x + 1, max y + 1)` over scan positions `0..=k`.
-const fn bbox<const N: usize>(f: [(u8, u8); N]) -> [(u8, u8); N] {
-    let mut t = [(0u8, 0u8); N];
-    let (mut w, mut h, mut i) = (0u8, 0u8, 0usize);
+/// `t[k]` is `max y + 1` over scan positions `0..=k`: the rows of sub-blocks
+/// that the first `k + 1` cover.
+const fn rows<const N: usize>(f: [(u8, u8); N]) -> [u8; N] {
+    let mut t = [0u8; N];
+    let (mut h, mut i) = (0u8, 0usize);
     while i < N {
-        if f[i].0 + 1 > w {
-            w = f[i].0 + 1;
-        }
         if f[i].1 + 1 > h {
             h = f[i].1 + 1;
         }
-        t[i] = (w, h);
+        t[i] = h;
         i += 1;
     }
     t
@@ -132,7 +130,7 @@ pub struct ScanSet {
     /// The sub-block scan, its inverse and its prefix bounding boxes.
     pub sb: &'static [(u8, u8)],
     pub sb_inv: &'static [u8],
-    pub sb_bbox: &'static [(u8, u8)],
+    pub sb_rows: &'static [u8],
     /// The scan inside a 4×4 sub-block and its inverse.
     pub pos: &'static [(u8, u8); 16],
     pub pos_inv: &'static [u8; 16],
@@ -150,9 +148,9 @@ macro_rules! scans {
             pub static DIAG_INV: [u8; $n] = invert::<$size, $n>(diag_scan::<$size, $n>());
             pub static HORIZ_INV: [u8; $n] = invert::<$size, $n>(horiz_scan::<$size, $n>());
             pub static VERT_INV: [u8; $n] = invert::<$size, $n>(vert_scan::<$size, $n>());
-            pub static DIAG_BBOX: [(u8, u8); $n] = bbox(diag_scan::<$size, $n>());
-            pub static HORIZ_BBOX: [(u8, u8); $n] = bbox(horiz_scan::<$size, $n>());
-            pub static VERT_BBOX: [(u8, u8); $n] = bbox(vert_scan::<$size, $n>());
+            pub static DIAG_ROWS: [u8; $n] = rows(diag_scan::<$size, $n>());
+            pub static HORIZ_ROWS: [u8; $n] = rows(horiz_scan::<$size, $n>());
+            pub static VERT_ROWS: [u8; $n] = rows(vert_scan::<$size, $n>());
         }
     };
 }
@@ -171,13 +169,13 @@ macro_rules! set {
 }
 macro_rules! paste_set {
     ($m:ident, DIAG, $pos:ident, $si:literal) => {
-        ScanSet { sb: &$m::DIAG, sb_inv: &$m::DIAG_INV, sb_bbox: &$m::DIAG_BBOX, pos: &s4::$pos, pos_inv: &s4::DIAG_INV, sig_4x4: &SIG_4X4[$si], sig_nb: &SIG_NB[$si] }
+        ScanSet { sb: &$m::DIAG, sb_inv: &$m::DIAG_INV, sb_rows: &$m::DIAG_ROWS, pos: &s4::$pos, pos_inv: &s4::DIAG_INV, sig_4x4: &SIG_4X4[$si], sig_nb: &SIG_NB[$si] }
     };
     ($m:ident, HORIZ, $pos:ident, $si:literal) => {
-        ScanSet { sb: &$m::HORIZ, sb_inv: &$m::HORIZ_INV, sb_bbox: &$m::HORIZ_BBOX, pos: &s4::$pos, pos_inv: &s4::HORIZ_INV, sig_4x4: &SIG_4X4[$si], sig_nb: &SIG_NB[$si] }
+        ScanSet { sb: &$m::HORIZ, sb_inv: &$m::HORIZ_INV, sb_rows: &$m::HORIZ_ROWS, pos: &s4::$pos, pos_inv: &s4::HORIZ_INV, sig_4x4: &SIG_4X4[$si], sig_nb: &SIG_NB[$si] }
     };
     ($m:ident, VERT, $pos:ident, $si:literal) => {
-        ScanSet { sb: &$m::VERT, sb_inv: &$m::VERT_INV, sb_bbox: &$m::VERT_BBOX, pos: &s4::$pos, pos_inv: &s4::VERT_INV, sig_4x4: &SIG_4X4[$si], sig_nb: &SIG_NB[$si] }
+        ScanSet { sb: &$m::VERT, sb_inv: &$m::VERT_INV, sb_rows: &$m::VERT_ROWS, pos: &s4::$pos, pos_inv: &s4::VERT_INV, sig_4x4: &SIG_4X4[$si], sig_nb: &SIG_NB[$si] }
     };
 }
 

@@ -27,7 +27,9 @@ fn load_i16x8(s: &[i16]) -> v128 {
 
 #[inline(always)]
 fn load_i16x4(s: &[i16]) -> v128 {
-    i16x8(s[0], s[1], s[2], s[3], 0, 0, 0, 0)
+    let s = &s[..4];
+    // SAFETY: four values are there, and an unaligned load is allowed.
+    unsafe { v128_load64_zero(s.as_ptr() as *const u64) }
 }
 
 #[inline(always)]
@@ -83,31 +85,39 @@ fn holds<T>(s: &[T], stride: usize, w: usize, h: usize) {
 /// `dst = src`, `w`×`h`, by vector: a `memory.copy` per row is a call into the
 /// runtime, which for a block's rows costs more than the bytes. The block loops
 /// here check their bounds once and then run on pointers, since a check per
-/// vector was most of the work of a copy.
+/// vector was most of the work of a copy. The copy runs down each sixteen-wide
+/// column, so the loads step by the stride and the prefetcher follows them,
+/// and so a row of a wide block has no tail to test.
 pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
     holds(dst, dst_stride, w, h);
     holds(src, src_stride, w, h);
     let (d, s) = (dst.as_mut_ptr(), src.as_ptr());
-    for y in 0..h {
-        // SAFETY: every offset below is inside the block `holds` checked.
-        unsafe {
-            let (dr, sr) = (d.add(y * dst_stride), s.add(y * src_stride));
-            let mut x = 0;
-            while x + 16 <= w {
-                v128_store(dr.add(x) as *mut v128, v128_load(sr.add(x) as *const v128));
-                x += 16;
-            }
-            if x + 8 <= w {
-                (dr.add(x) as *mut u64).write_unaligned((sr.add(x) as *const u64).read_unaligned());
-                x += 8;
-            }
-            if x + 4 <= w {
-                (dr.add(x) as *mut u32).write_unaligned((sr.add(x) as *const u32).read_unaligned());
-                x += 4;
-            }
-            while x < w {
-                *dr.add(x) = *sr.add(x);
-                x += 1;
+    let mut x = 0;
+    while x + 16 <= w {
+        for y in 0..h {
+            // SAFETY: inside the block `holds` checked.
+            unsafe { v128_store(d.add(y * dst_stride + x) as *mut v128, v128_load(s.add(y * src_stride + x) as *const v128)) };
+        }
+        x += 16;
+    }
+    if x < w {
+        for y in 0..h {
+            // SAFETY: as above.
+            unsafe {
+                let (dr, sr) = (d.add(y * dst_stride), s.add(y * src_stride));
+                let mut x = x;
+                if x + 8 <= w {
+                    (dr.add(x) as *mut u64).write_unaligned((sr.add(x) as *const u64).read_unaligned());
+                    x += 8;
+                }
+                if x + 4 <= w {
+                    (dr.add(x) as *mut u32).write_unaligned((sr.add(x) as *const u32).read_unaligned());
+                    x += 4;
+                }
+                while x < w {
+                    *dr.add(x) = *sr.add(x);
+                    x += 1;
+                }
             }
         }
     }
@@ -390,27 +400,52 @@ pub fn angular_t(dst: &mut [u8], stride: usize, n: usize, refb: &[i16], off: usi
 
 // ---- the inverse transform ----
 
-/// `(a, b)` as one 32-bit lane, splatted, for `dot` against an interleaved pair.
+/// Coefficients `A` and `B` of the row in `v` (eight per vector), as one
+/// 32-bit lane splatted: what `dot` multiplies against an interleaved pair of
+/// transform rows.
+macro_rules! splat_pair {
+    ($v:expr, $a:literal, $b:literal) => {
+        i16x8_shuffle::<{ $a % 8 }, { 8 + $b % 8 }, { $a % 8 }, { 8 + $b % 8 }, { $a % 8 }, { 8 + $b % 8 }, { $a % 8 }, { 8 + $b % 8 }>($v[$a / 8], $v[$b / 8])
+    };
+}
+
+/// The row's coefficients as vectors, the ones past the `nz` live ones zero:
+/// the column pass wrote exact zeros up to the next multiple of eight, and
+/// nothing beyond.
 #[inline(always)]
-fn pair(a: i16, b: i16) -> v128 {
-    i32x4_splat((a as u16 as u32 | ((b as u16 as u32) << 16)) as i32)
+fn row_vecs<const N: usize>(row: &[i16], nz: usize) -> [v128; 4] {
+    let mut v = [i16x8_splat(0); 4];
+    if N == 4 {
+        v[0] = load_i16x4(row);
+        return v;
+    }
+    for k in 0..N / 8 {
+        if 8 * k < nz {
+            v[k] = load_i16x8(&row[8 * k..]);
+        }
+    }
+    v
 }
 
 /// The sums of one stage along a row: `out[j] += a * Ta[j] + b * Tb[j]` over
-/// the stage's pairs, four outputs per `dot`. `inputs` gives each pair's two
-/// coefficients, zero past the live ones.
+/// the first `live` of the stage's `pairs`, four outputs per `dot`.
 #[inline(always)]
-fn stage_row(acc: &mut [v128; 4], chunks: usize, table: &[[[i16; 8]; 4]], inputs: impl Fn(usize) -> Option<(i16, i16)>) {
-    for (p, t) in table.iter().enumerate() {
-        let Some((a, b)) = inputs(p) else { break };
-        if a == 0 && b == 0 {
-            continue;
+fn stage_row<const P: usize>(acc: &mut [v128; 4], chunks: usize, table: &[[[i16; 8]; 4]], pairs: &[v128; P], live: usize) {
+    for p in 0..P {
+        if p == live {
+            break;
         }
-        let s = pair(a, b);
         for c in 0..chunks {
-            acc[c] = i32x4_add(acc[c], i32x4_dot_i16x8(load_i16x8(&t[c]), s));
+            acc[c] = i32x4_add(acc[c], i32x4_dot_i16x8(load_i16x8(&table[p][c]), pairs[p]));
         }
     }
+}
+
+/// How many of a stage's pairs start before coefficient `nz` of an `N`-point
+/// row: the pairs are in order of their first coefficient.
+#[inline(always)]
+fn live_pairs<const N: usize>(stage: usize, nz: usize) -> usize {
+    crate::itx::stages::K32[stage].iter().step_by(2).take_while(|&&k| k * N / 32 < nz).count()
 }
 
 /// Even and odd halves into the `n` outputs of one row: `out[j] = e + o`,
@@ -426,30 +461,45 @@ fn butterfly_row(out: &mut [v128; 8], even: &[v128; 4], odd: &[v128; 4], n: usiz
 }
 
 /// The `N`-point inverse DCT of `row` (`nz` live inputs), as 32-bit sums in
-/// `out[..N / 4]`.
+/// `out[..N / 4]`. The pairs of each stage are the coefficients `K32` names,
+/// scaled to `N`.
 #[inline(always)]
 fn idct_row<const N: usize>(row: &[i16], nz: usize, out: &mut [v128; 8]) {
-    use crate::itx::stages::{INTERLEAVED, K32};
+    use crate::itx::stages::INTERLEAVED;
     let zero = i32x4_splat(0);
-    // The input of pair `p` of a stage: coefficient `K32[..] * N / 32`.
-    let input = |stage: usize| {
-        move |p: usize| {
-            let ka = K32[stage][2 * p] * N / 32;
-            if ka >= nz {
-                return None;
-            }
-            let kb = K32[stage][2 * p + 1] * N / 32;
-            Some((row[ka], if kb < nz { row[kb] } else { 0 }))
-        }
-    };
+    let v = row_vecs::<N>(row, nz);
     let mut base = [zero; 4];
-    stage_row(&mut base, 1, &INTERLEAVED[0][..2], input(0));
+    let mut odd8 = [zero; 4];
+    let mut odd16 = [zero; 4];
+    let mut odd32 = [zero; 4];
+    match N {
+        4 => stage_row(&mut base, 1, &INTERLEAVED[0], &[splat_pair!(v, 0, 1), splat_pair!(v, 2, 3)], live_pairs::<N>(0, nz)),
+        8 => {
+            stage_row(&mut base, 1, &INTERLEAVED[0], &[splat_pair!(v, 0, 2), splat_pair!(v, 4, 6)], live_pairs::<N>(0, nz));
+            stage_row(&mut odd8, 1, &INTERLEAVED[1], &[splat_pair!(v, 1, 3), splat_pair!(v, 5, 7)], live_pairs::<N>(1, nz));
+        }
+        16 => {
+            stage_row(&mut base, 1, &INTERLEAVED[0], &[splat_pair!(v, 0, 4), splat_pair!(v, 8, 12)], live_pairs::<N>(0, nz));
+            stage_row(&mut odd8, 1, &INTERLEAVED[1], &[splat_pair!(v, 2, 6), splat_pair!(v, 10, 14)], live_pairs::<N>(1, nz));
+            stage_row(&mut odd16, 2, &INTERLEAVED[2], &[splat_pair!(v, 1, 3), splat_pair!(v, 5, 7), splat_pair!(v, 9, 11), splat_pair!(v, 13, 15)], live_pairs::<N>(2, nz));
+        }
+        _ => {
+            stage_row(&mut base, 1, &INTERLEAVED[0], &[splat_pair!(v, 0, 8), splat_pair!(v, 16, 24)], live_pairs::<N>(0, nz));
+            stage_row(&mut odd8, 1, &INTERLEAVED[1], &[splat_pair!(v, 4, 12), splat_pair!(v, 20, 28)], live_pairs::<N>(1, nz));
+            stage_row(&mut odd16, 2, &INTERLEAVED[2], &[splat_pair!(v, 2, 6), splat_pair!(v, 10, 14), splat_pair!(v, 18, 22), splat_pair!(v, 26, 30)], live_pairs::<N>(2, nz));
+            stage_row(
+                &mut odd32,
+                4,
+                &INTERLEAVED[3],
+                &[splat_pair!(v, 1, 3), splat_pair!(v, 5, 7), splat_pair!(v, 9, 11), splat_pair!(v, 13, 15), splat_pair!(v, 17, 19), splat_pair!(v, 21, 23), splat_pair!(v, 25, 27), splat_pair!(v, 29, 31)],
+                live_pairs::<N>(3, nz),
+            );
+        }
+    }
     if N == 4 {
         out[0] = base[0];
         return;
     }
-    let mut odd8 = [zero; 4];
-    stage_row(&mut odd8, 1, &INTERLEAVED[1][..2], input(1));
     let mut e8 = [zero; 8];
     butterfly_row(&mut e8, &base, &odd8, 8);
     if N == 8 {
@@ -457,8 +507,6 @@ fn idct_row<const N: usize>(row: &[i16], nz: usize, out: &mut [v128; 8]) {
         out[1] = e8[1];
         return;
     }
-    let mut odd16 = [zero; 4];
-    stage_row(&mut odd16, 2, &INTERLEAVED[2][..4], input(2));
     let mut e16 = [zero; 8];
     butterfly_row(&mut e16, &[e8[0], e8[1], zero, zero], &odd16, 16);
     if N == 16 {
@@ -467,8 +515,6 @@ fn idct_row<const N: usize>(row: &[i16], nz: usize, out: &mut [v128; 8]) {
         }
         return;
     }
-    let mut odd32 = [zero; 4];
-    stage_row(&mut odd32, 4, &INTERLEAVED[3][..8], input(3));
     butterfly_row(out, &[e16[0], e16[1], e16[2], e16[3]], &odd32, 32);
 }
 
@@ -476,18 +522,10 @@ fn idct_row<const N: usize>(row: &[i16], nz: usize, out: &mut [v128; 8]) {
 #[inline(always)]
 fn idst_row(row: &[i16], nz: usize, out: &mut [v128; 8]) {
     use crate::itx::stages::DST_INTERLEAVED;
-    let mut acc = i32x4_splat(0);
-    for p in 0..2 {
-        let (ka, kb) = (2 * p, 2 * p + 1);
-        if ka >= nz {
-            break;
-        }
-        let (a, b) = (row[ka], if kb < nz { row[kb] } else { 0 });
-        if a != 0 || b != 0 {
-            acc = i32x4_add(acc, i32x4_dot_i16x8(load_i16x8(&DST_INTERLEAVED[p]), pair(a, b)));
-        }
-    }
-    out[0] = acc;
+    let v = row_vecs::<4>(row, nz);
+    let mut acc = [i32x4_splat(0); 4];
+    stage_row(&mut acc, 1, &DST_INTERLEAVED, &[splat_pair!(v, 0, 1), splat_pair!(v, 2, 3)], if nz > 2 { 2 } else { 1 });
+    out[0] = acc[0];
 }
 
 /// Rows `ka` and `kb` of the block at columns `x..x + 8`, interleaved: the

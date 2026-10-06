@@ -187,13 +187,12 @@ impl<'a> Row<'a> {
         let sc = scan_set(log2sb, scan_idx);
         let last_sb = sc.sb_inv[(last_y >> 2) * nsb + (last_x >> 2)] as usize;
         let last_pos = sc.pos_inv[(last_y & 3) * 4 + (last_x & 3)] as usize;
-        // Only the sub-blocks up to the last can hold a coefficient: clear those.
-        let (bw, bh) = sc.sb_bbox[last_sb];
-        let (fw, fh) = ((bw as usize) << 2, (bh as usize) << 2);
+        // Only the sub-blocks up to the last can hold a coefficient: clear
+        // their rows, whole, so the transform reads zeros past the live
+        // columns.
+        let fh = (sc.sb_rows[last_sb] as usize) << 2;
         let co = &mut self.s.coeffs[..n * n];
-        for y in 0..fh {
-            kernels::fill_i16(&mut co[y * n..y * n + fw], 0);
-        }
+        kernels::fill_i16(&mut co[..fh * n], 0);
         let mut csbf = 0u64;
         let (mut nz_w, mut nz_h) = (0usize, 0usize);
         let mut c1: usize = 1;
@@ -204,9 +203,8 @@ impl<'a> Row<'a> {
             let (xs, ys) = (sc.sb[i].0 as usize, sc.sb[i].1 as usize);
             let right = xs + 1 < nsb && (csbf >> ((xs + 1) * 8 + ys)) & 1 != 0;
             let below = ys + 1 < nsb && (csbf >> (xs * 8 + ys + 1)) & 1 != 0;
-            let mut infer_sb_dc = false;
-            let coded = if i < last_sb && i > 0 {
-                infer_sb_dc = true;
+            let infer_sb_dc = i < last_sb && i > 0;
+            let coded = if infer_sb_dc {
                 cab.decode(CTX_CSBF + (right || below) as usize + if c_idx == 0 { 0 } else { 2 }) == 1
             } else {
                 true
@@ -243,25 +241,20 @@ impl<'a> Row<'a> {
             } else {
                 15
             };
-            if coded {
-                let mut p = start;
-                while p >= 0 {
-                    let np = p as usize;
-                    let s = if np > 0 || !infer_sb_dc {
-                        let sig_ctx = if dc_sb && np == 0 { 0 } else { sig_row[np] as usize + sig_off };
-                        let b = cab.decode(sig_base + sig_ctx) == 1;
-                        if b {
-                            infer_sb_dc = false;
-                        }
-                        b
-                    } else {
-                        true
-                    };
-                    if s {
+            if coded && start >= 0 {
+                for np in (1..=start as usize).rev() {
+                    if cab.decode(sig_base + sig_row[np & 15] as usize + sig_off) == 1 {
                         sig_pos[nsig & 15] = np as u8;
                         nsig += 1;
                     }
-                    p -= 1;
+                }
+                // Position 0: inferred when the sub-block's flag was coded
+                // and nothing else in it was; its own context in the DC
+                // sub-block.
+                let dc = (infer_sb_dc && nsig == 0) || cab.decode(sig_base + if dc_sb { 0 } else { sig_row[0] as usize + sig_off }) == 1;
+                if dc {
+                    sig_pos[nsig & 15] = 0;
+                    nsig += 1;
                 }
             }
             if nsig == 0 {

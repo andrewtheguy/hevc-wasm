@@ -266,14 +266,14 @@ pub mod stages {
         }
         t
     };
-    pub static DST_INTERLEAVED: [[i16; 8]; 2] = {
-        let mut t = [[0i16; 8]; 2];
+    pub static DST_INTERLEAVED: [[[i16; 8]; 4]; 2] = {
+        let mut t = [[[0i16; 8]; 4]; 2];
         let mut p = 0;
         while p < 2 {
             let mut j = 0;
             while j < 4 {
-                t[p][2 * j] = super::DST4[2 * p][j];
-                t[p][2 * j + 1] = super::DST4[2 * p + 1][j];
+                t[p][0][2 * j] = super::DST4[2 * p][j];
+                t[p][0][2 * j + 1] = super::DST4[2 * p + 1][j];
                 j += 1;
             }
             p += 1;
