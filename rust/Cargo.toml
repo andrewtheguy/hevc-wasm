@@ -20,3 +20,11 @@ lto = true
 codegen-units = 1
 panic = "abort"
 debug = 1
+
+# For `perf`: release speed without the cross-crate inlining that folds every
+# stage into one symbol.
+[profile.profiling]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = true

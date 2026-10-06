@@ -1,83 +1,115 @@
 //! Scaling (§8.6.3) and the inverse transforms (§8.6.4) of a transform block,
-//! over the rectangle of coefficients the parser found non-zero.
+//! in 16 bits: the coefficients, the intermediate between the two passes and
+//! the residual are all within 16 bits for 8-bit samples, and the sums of a
+//! pass are 32-bit, which is what the kernels multiply into.
+//!
+//! Each pass is a partial butterfly: the even half of an N-point transform is
+//! the N/2-point transform of the even coefficients, down to the 4-point base,
+//! and each level adds its odd half, a sum over the odd coefficients of the
+//! block that were non-zero.
 
 use crate::kernels;
 use crate::tables::{DCT32, DST4, LEVEL_SCALE};
 
-const COEFF_MIN: i32 = -32768;
-const COEFF_MAX: i32 = 32767;
-
-/// `TransCoeffLevel` to scaled coefficients, in place, flat scaling.
-pub fn dequant(coeffs: &mut [i32], n: usize, nz_w: usize, nz_h: usize, qp: i32) {
+/// `TransCoeffLevel` to scaled coefficients, in place, flat scaling, over the
+/// `nz_w`×`nz_h` rectangle that holds every non-zero one.
+pub fn dequant(coeffs: &mut [i16], n: usize, nz_w: usize, nz_h: usize, qp: i32) {
     let log2n = n.trailing_zeros() as i32;
     let bd_shift = 8 + log2n - 5;
-    let scale = LEVEL_SCALE[(qp % 6) as usize] << (qp / 6);
+    let scale = (LEVEL_SCALE[(qp % 6) as usize] << (qp / 6)) as i64 * 16;
     let add = 1i64 << (bd_shift - 1);
     for y in 0..nz_h {
         for c in &mut coeffs[y * n..y * n + nz_w] {
             if *c != 0 {
-                *c = (((*c as i64 * 16 * scale as i64) + add) >> bd_shift).clamp(COEFF_MIN as i64, COEFF_MAX as i64) as i32;
+                *c = ((*c as i64 * scale + add) >> bd_shift).clamp(-32768, 32767) as i16;
             }
         }
     }
 }
 
-/// The partial sums of an `n`-point inverse DCT by partial butterfly: the
-/// even half is the `n/2`-point transform of the even coefficients, down to
-/// a 4-point base, and each level adds its odd half.
-fn idct_sums(src: &[i32], s_in: usize, n: usize, nz: usize, out: &mut [i32]) {
-    let levels = n.trailing_zeros() as usize - 2;
-    let mut nzs = [0usize; 4];
-    let (mut z, mut m) = (nz.min(n), n);
-    for slot in nzs.iter_mut().take(levels + 1) {
-        *slot = z;
-        if m > 4 {
-            m /= 2;
-            z = z.div_ceil(2).min(m);
-        }
-    }
-    let tab = DCT32.as_flattened();
-    kernels::accum(&mut out[..4], src, s_in << levels, tab, 8, 0, 1, nzs[levels], 4);
-    for d in (0..levels).rev() {
-        let m = n >> d;
-        kernels::accum_butterfly(&mut out[..m], src, s_in << d, tab, 32 >> m.trailing_zeros(), nzs[d], m);
+#[inline(always)]
+fn butterfly<const H: usize>(out: &mut [i32], even: &[i32; H], odd: &[i32; H]) {
+    for j in 0..H {
+        out[j] = even[j] + odd[j];
+        out[2 * H - 1 - j] = even[j] - odd[j];
     }
 }
 
-/// One column (`CLIP`, into the clipped intermediate) or row of the transform.
-fn idct_1d<const CLIP: bool, T: Copy>(src: &[i32], s_in: usize, dst: &mut [T], s_out: usize, n: usize, nz: usize, shift: u32, dst4: bool, clip_to: impl Fn(i32) -> T) {
-    let mut sums = [0i32; 32];
-    if dst4 {
-        kernels::accum(&mut sums[..4], src, s_in, DST4.as_flattened(), 1, 0, 1, nz.min(4), 4);
-    } else {
-        idct_sums(src, s_in, n, nz, &mut sums[..n]);
+/// The sums of the 4-point inverse DCT of `src` (`s_in` apart, `nz` of them
+/// possibly non-zero).
+#[inline(always)]
+fn idct4(src: &[i16], s_in: usize, nz: usize, out: &mut [i32; 4]) {
+    kernels::accum::<4>(out, src, s_in, 0, 1, nz, &DCT32, 8);
+}
+
+#[inline(always)]
+fn idct8(src: &[i16], s_in: usize, nz: usize, out: &mut [i32; 8]) {
+    let (mut even, mut odd) = ([0i32; 4], [0i32; 4]);
+    idct4(src, 2 * s_in, nz.div_ceil(2), &mut even);
+    kernels::accum::<4>(&mut odd, src, s_in, 1, 2, nz, &DCT32, 4);
+    butterfly(out, &even, &odd);
+}
+
+#[inline(always)]
+fn idct16(src: &[i16], s_in: usize, nz: usize, out: &mut [i32; 16]) {
+    let (mut even, mut odd) = ([0i32; 8], [0i32; 8]);
+    idct8(src, 2 * s_in, nz.div_ceil(2), &mut even);
+    kernels::accum::<8>(&mut odd, src, s_in, 1, 2, nz, &DCT32, 2);
+    butterfly(out, &even, &odd);
+}
+
+#[inline(always)]
+fn idct32(src: &[i16], s_in: usize, nz: usize, out: &mut [i32; 32]) {
+    let (mut even, mut odd) = ([0i32; 16], [0i32; 16]);
+    idct16(src, 2 * s_in, nz.div_ceil(2), &mut even);
+    kernels::accum::<16>(&mut odd, src, s_in, 1, 2, nz, &DCT32, 1);
+    butterfly(out, &even, &odd);
+}
+
+/// The 4-point inverse DST of intra luma 4×4 blocks.
+#[inline(always)]
+fn idst4(src: &[i16], s_in: usize, nz: usize, out: &mut [i32; 4]) {
+    kernels::accum::<4>(out, src, s_in, 0, 1, nz, &DST4, 1);
+}
+
+/// Both passes over an `N`×`N` block: columns into `tmp`, clipped to 16 bits,
+/// then rows into `res`.
+#[inline(always)]
+fn block<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], nz_w: usize, nz_h: usize, idct: impl Fn(&[i16], usize, usize, &mut [i32; N])) {
+    let mut sums = [0i32; N];
+    for x in 0..nz_w {
+        idct(&d[x..], N, nz_h, &mut sums);
+        for j in 0..N {
+            tmp[j * N + x] = ((sums[j] + 64) >> 7).clamp(-32768, 32767) as i16;
+        }
     }
-    let add = 1i32 << (shift - 1);
-    for i in 0..n {
-        let v = (sums[i] + add) >> shift;
-        dst[i * s_out] = clip_to(if CLIP { v.clamp(COEFF_MIN, COEFF_MAX) } else { v });
+    for y in 0..N {
+        idct(&tmp[y * N..], 1, nz_w, &mut sums);
+        for (r, &s) in res[y * N..y * N + N].iter_mut().zip(&sums) {
+            *r = ((s + 2048) >> 12) as i16;
+        }
     }
 }
 
 /// Scaled coefficients `d` (raster, `n`×`n`, non-zero within `nz_w`×`nz_h`)
 /// to the residual `res`. `dst` selects the 4×4 DST of intra luma. `tmp` is
-/// the first stage's intermediate.
-pub fn inverse_transform(d: &[i32], tmp: &mut [i32], res: &mut [i16], n: usize, nz_w: usize, nz_h: usize, dst: bool) {
-    let nn = n * n;
+/// the first pass's intermediate.
+pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, nz_w: usize, nz_h: usize, dst: bool) {
     if nz_w <= 1 && nz_h <= 1 && !dst {
         // A lone DC coefficient: row 0 of the matrix is the constant 64, so
-        // both stages are one value.
-        let v1 = (((d[0] as i64 * 64 + 64) >> 7) as i32).clamp(COEFF_MIN, COEFF_MAX);
-        let out = ((v1 as i64 * 64 + (1 << 11)) >> 12) as i16;
-        res[..nn].fill(out);
+        // both passes are one value.
+        let v1 = ((d[0] as i32 * 64 + 64) >> 7).clamp(-32768, 32767);
+        let out = ((v1 * 64 + (1 << 11)) >> 12) as i16;
+        res[..n * n].fill(out);
         return;
     }
     let (nz_w, nz_h) = (nz_w.clamp(1, n), nz_h.clamp(1, n));
-    for x in 0..nz_w {
-        idct_1d::<true, i32>(&d[x..], n, &mut tmp[x..], n, n, nz_h, 7, dst, |v| v);
-    }
-    for y in 0..n {
-        idct_1d::<false, i16>(&tmp[y * n..], 1, &mut res[y * n..], 1, n, nz_w, 12, dst, |v| v as i16);
+    match (n, dst) {
+        (4, true) => block::<4>(d, tmp, res, nz_w, nz_h, idst4),
+        (4, false) => block::<4>(d, tmp, res, nz_w, nz_h, idct4),
+        (8, _) => block::<8>(d, tmp, res, nz_w, nz_h, idct8),
+        (16, _) => block::<16>(d, tmp, res, nz_w, nz_h, idct16),
+        _ => block::<32>(d, tmp, res, nz_w, nz_h, idct32),
     }
 }
 
@@ -85,7 +117,7 @@ pub fn inverse_transform(d: &[i32], tmp: &mut [i32], res: &mut [i16], n: usize, 
 mod tests {
     use super::*;
 
-    fn naive(d: &[i32], n: usize, dst: bool) -> Vec<i16> {
+    fn naive(d: &[i16], n: usize, dst: bool) -> Vec<i16> {
         let step = 32 / n;
         let t = |k: usize, j: usize| -> i32 { if dst { DST4[k][j] as i32 } else { DCT32[k * step][j] as i32 } };
         let mut tmp = vec![0i32; n * n];
@@ -93,9 +125,9 @@ mod tests {
             for j in 0..n {
                 let mut s = 0i32;
                 for k in 0..n {
-                    s += d[k * n + x] * t(k, j);
+                    s += d[k * n + x] as i32 * t(k, j);
                 }
-                tmp[j * n + x] = ((s + 64) >> 7).clamp(COEFF_MIN, COEFF_MAX);
+                tmp[j * n + x] = ((s + 64) >> 7).clamp(-32768, 32767);
             }
         }
         let mut out = vec![0i16; n * n];
@@ -112,17 +144,17 @@ mod tests {
     }
 
     #[test]
-    fn butterfly_and_sparse_bounds_match_the_naive_transform() {
+    fn butterflies_and_sparse_bounds_match_the_naive_transform() {
         let mut st = 0x1234_5678u32;
         let mut rnd = || {
             st = st.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            ((st >> 16) as i32 & 0x1ff) - 256
+            ((st >> 16) as i32 & 0x1ff) as i16 - 256
         };
-        let mut tmp = vec![0i32; 32 * 32];
+        let mut tmp = vec![0i16; 32 * 32];
         let mut res = vec![0i16; 32 * 32];
         for &n in &[4usize, 8, 16, 32] {
-            for &(nz_w, nz_h) in &[(1usize, 1usize), (2, 3), (n, n), (n / 2, 1)] {
-                let mut d = vec![0i32; n * n];
+            for &(nz_w, nz_h) in &[(1usize, 1usize), (2, 3), (n, n), (n / 2, 1), (3, n)] {
+                let mut d = vec![0i16; n * n];
                 for y in 0..nz_h {
                     for x in 0..nz_w {
                         d[y * n + x] = rnd();
@@ -141,7 +173,7 @@ mod tests {
 
     #[test]
     fn dequant_flat() {
-        let mut c = vec![0i32; 16];
+        let mut c = vec![0i16; 16];
         c[0] = 10;
         dequant(&mut c, 4, 4, 4, 4);
         assert_eq!(c[0], 320);

@@ -305,7 +305,7 @@ impl<'a> Row<'a> {
                 let (xc, yc) = ((xs << 2) + xp, (ys << 2) + yp);
                 nz_w = nz_w.max(xc + 1);
                 nz_h = nz_h.max(yc + 1);
-                co[yc * n + xc] = v.clamp(-32768, 32767);
+                co[yc * n + xc] = v.clamp(-32768, 32767) as i16;
             }
         }
         self.reconstruct_residual(x0, y0, log2, c_idx, nz_w, nz_h);

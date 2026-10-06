@@ -86,9 +86,11 @@ fn main() {
                 Err(e) => eprintln!("unit {}: {e}", times.len() - 1),
             }
         }
-        let total = t.elapsed().as_secs_f64() * 1000.0;
+        let _ = t;
+        // The decode calls alone: the digests are not timed.
+        let total: f64 = times.iter().sum();
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = |q: f64| times[((times.len() - 1) as f64 * q) as usize];
-        eprintln!("{n} pictures in {total:.1} ms: {:.2} ms/picture, median {:.2}, p95 {:.2}, max {:.2}", total / n.max(1) as f64, p(0.5), p(0.95), p(1.0));
+        eprintln!("{n} pictures, {total:.1} ms decoding: {:.2} ms/picture, median {:.2}, p95 {:.2}, max {:.2}", total / n.max(1) as f64, p(0.5), p(0.95), p(1.0));
     }
 }

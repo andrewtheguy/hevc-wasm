@@ -100,8 +100,8 @@ pub struct PictureCtx<'a> {
 
 /// Buffers a row needs, kept by the thread across the rows it decodes.
 pub struct Scratch {
-    coeffs: Vec<i32>,
-    itx_tmp: Vec<i32>,
+    coeffs: Vec<i16>,
+    itx_tmp: Vec<i16>,
     res: Vec<i16>,
     /// The motion compensation intermediate and the edge-extended footprint.
     mc_tmp: Vec<i16>,

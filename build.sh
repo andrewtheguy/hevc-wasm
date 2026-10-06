@@ -31,11 +31,19 @@ if [[ ! -f $tarball ]]; then
 fi
 echo "$FFMPEG_SHA256  $tarball" | shasum -a 256 -c -
 
+# The build runs as this user, so what it writes under build/ is this user's:
+# Docker takes the ids, rootless Podman keeps them through its user namespace.
+if [[ $CONTAINER == podman ]]; then
+  as_user=(--userns=keep-id)
+else
+  as_user=(-u "$(id -u):$(id -g)")
+fi
+
 "$CONTAINER" run --rm \
   -v "$PWD:/src" -w /src \
   -e FFMPEG_COMMIT="$FFMPEG_COMMIT" \
   -e VERSION="$VERSION" \
-  -u "$(id -u):$(id -g)" \
+  "${as_user[@]}" \
   -e HOME=/src/build/home \
   -e EM_CACHE=/src/build/emcache \
   "$EMSDK_IMAGE" bash /src/build-in-container.sh
