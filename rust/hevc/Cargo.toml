@@ -1,0 +1,28 @@
+# The decoder for a High Performance Mac's HEVC, and nothing else of HEVC:
+# 4:4:4 at 8 bits, one slice per picture, its coding tree block rows coded as a
+# wavefront, I and P pictures with short-term references. Anything else is
+# refused by name rather than decoded wrong.
+#
+# The decoding arithmetic was transcribed from rusty_h265 0.6.0
+# (https://github.com/Remade-With-Rust/rusty_h265, Apache-2.0); see LICENSE.
+[package]
+name = "hevc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+# Decode a picture's rows on rayon's pool: the page's workers, or threads of the
+# native harness's. Without it the rows decode one after another on the caller.
+threads = ["dep:rayon"]
+
+[dependencies]
+rayon = { version = "1", optional = true }
+
+
+[lints.clippy]
+too_many_arguments = "allow"
+needless_range_loop = "allow"

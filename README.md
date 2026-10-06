@@ -125,6 +125,52 @@ node build/out/bench.js capture.h265 8
 prints a digest per picture on stdout, to compare with
 `ffmpeg -threads 1 -i capture.h265 -f framemd5 -`, and the timing on stderr.
 
+## The pure-Rust decoder (experimental)
+
+`rust/` holds a second decoder, written in Rust for the one shape of stream the
+Mac sends and nothing else of HEVC: 4:4:4 at 8 bits, one slice per picture with
+its coding tree block rows coded as a wavefront, I and P pictures with
+short-term references. Any other stream is refused by name (tiles, B pictures,
+weighted prediction, PCM, scaling lists, transform skip, long-term references,
+other chroma formats or bit depths). Its decoding arithmetic was transcribed
+from [rusty_h265](https://github.com/Remade-With-Rust/rusty_h265) 0.6.0
+(Apache-2.0, `rust/hevc/LICENSE`), which decodes 4:2:0 only; the 4:4:4 handling,
+the byte planes and the threading are this repository's.
+
+- `rust/hevc` is the decoder: one access unit in, its picture out as three
+  planes of bytes at the coded size, with the window to show and the colour the
+  stream states. A picture's rows decode on rayon's pool, each two coding tree
+  blocks behind the row above; the deblocking and SAO passes run a row per
+  thread after. Every sample loop is plain Rust for now.
+- `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
+  wasm-bindgen, a pool whose threads are seats the page's workers take
+  (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
+  `picture`. `picture` describes the picture in the same sixteen numbers
+  `hevc_picture` does, so the paint worker uploads the planes to WebGL from the
+  module's shared memory as it does now (remotex's `hevcPicture.ts`), and only the
+  loader differs from the FFmpeg module's.
+- `rust/hevc-bench` decodes a file natively and prints each picture's MD5 as
+  `ffmpeg -f framemd5` does: `cargo run --release -p hevc-bench -- FILE THREADS`
+  from `rust/`.
+
+```sh
+./build-rust.sh              # rust/hevc-web/pkg, on the pinned nightly, via wasm-pack
+bun test test/rust.test.ts   # the mac-* fixtures, bit for bit against FFmpeg
+```
+
+It decodes every picture of the seven High Performance Mac captures tried
+(2,833 pictures, 1600×1000 and 1600×256, including the long-term-refresh ones)
+bit-identically to FFmpeg, on one thread and on six. The `mac-*` fixtures in
+`test/data` are x265's nearest shape to the Mac's. Native, without SIMD, on a
+six-core x86 workstation, milliseconds per 1600×1000 picture:
+
+| | 1 thread | 6 threads |
+|---|---|---|
+| this decoder, scalar, median | 57 | 22 |
+| native FFmpeg 9, for scale | 21 | 8 |
+
+Next are the SIMD128 kernels and the profile of what remains.
+
 ## Requirements
 
 The page must be cross-origin isolated for `SharedArrayBuffer`, the threads'

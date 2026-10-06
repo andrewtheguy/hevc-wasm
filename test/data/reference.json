@@ -1,148 +1,188 @@
 {
-  "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
   "fixtures": {
     "yuv444p-330x194": {
-      "sha256": "17739cecef5c3cb8e8b02219bf36dd5c78358deb48fade9bddf3239821662ad7",
+      "sha256": "7186cad8b48eb3a43c51333a521b5ce8ec050b2f18e283bb96978fa65b5ddea6",
       "width": 330,
       "height": 194,
       "pixFmt": "yuv444p",
       "md5s": [
-        "01171fb512707844f78dfacfe6053306",
-        "4791943d9c0cd3abae53b1de46e29d33",
-        "2fc01aedb624e0aabf9111d7b83610cf",
-        "85bd7916288c814a6cf38d84e04405a5",
-        "376baf1e03fd59fdaf46b54f47340848",
-        "97b1ba21e39c241edfbc6918de038b5d",
-        "0b4b6f7ff60c3eb723835ad9452d48e3",
-        "b01af929e4e49dbe36e4f2e4df749f27",
-        "c87502b161a9351cbe98612ca8040959",
-        "f167c943cbb6a9930bd00e92e29540ab",
-        "a4d0e953c7a38e1cb0c3793c3e051de4",
-        "cf1574d3763f11c0bacf4e16ec8b0d80"
+        "37040ae8439a85e0be0a2a8f03999974",
+        "558c15f26692b2608c21ea421dcbbb30",
+        "5ca32a955773d5ac79d7fa1af41f3d73",
+        "ef8022c9310ecd9d4e00c57f66bc352e",
+        "6167225ecea08b91f7991d39469f5d1c",
+        "685bdc724113fc346269f69f5c141a39",
+        "eaac4af747ccc255a5a3066426471fb8",
+        "f94ad86b223bb94a9edd7d6d7c4ee666",
+        "f0650d10446aa690b381c06d90a76f75",
+        "07aaf622109359747d329db2e5523316",
+        "d95ccfa482019f87e27e6b727efe5524",
+        "9dde3999cef31ff0a4fd9901af7799d4"
+      ]
+    },
+    "mac-330x194": {
+      "sha256": "21da73f5bea0ecf166c94175562f0d0c9ddff2999f6a8d8ede4f644b3edd254b",
+      "width": 330,
+      "height": 194,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "a09e06250b5a4f91d836debbe1525949",
+        "af8ed4bf894ce3b63e34993609c87c0a",
+        "4b57e6541fa4a6bb808e104dd9e406e4",
+        "8d3308f233634103c772658a51aafeaf",
+        "a69e604454da48b129c46e43262fb3e6",
+        "41dc089c8706406e098137e794e1577a",
+        "4e9451785c6e23b9a7084390a9132710",
+        "1b3398f21a9d4c9bba36a68db10cf911",
+        "ccfbbbaafdc9a9ada015c984f8ee1054",
+        "aef193e9a3167185a06d773b4197a031",
+        "15f47907254f1128e582899058e8c1a8",
+        "46eac0d4e1d13bfcc21fc180ebb7b93c"
+      ]
+    },
+    "mac-352x256": {
+      "sha256": "159b8f1b87676f4afea6aa9500bace569941f9a735cef3a82b6d8d2985420d38",
+      "width": 352,
+      "height": 256,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "730d1fd9c75265c665c7651577969526",
+        "d0e2eae4d8bb7774a7cf4ba27851608d",
+        "d800ced4351f0c9516014a401828ccf5",
+        "256276ec4db7425731c47614a815a06f",
+        "05f2efa92aa2267134652c2688408a5b",
+        "dafc9290127f4b7c037ec6f9a7d593a0",
+        "946dd5a7ca73da7e1e980e3f4854461c",
+        "61ff58967e336a925c6820794a237eac",
+        "1093568b49b0f79c778237b86afa12e1",
+        "1978cca3e8db3a8b44e29e88ffd12d6d",
+        "c2ad4dc5a9557b1f445f1931eae7107e",
+        "afaa33ab73345de93299fff299bec9b1"
       ]
     },
     "yuv420p-330x194": {
-      "sha256": "bab6353d40b92af9327a9fb25f4573074d5208f20d706dafde81219e1db774d0",
+      "sha256": "aae6d3ba5ce1de55404f7bae94c0688e6a40fa203ee8c944e3117a43eb135d30",
       "width": 330,
       "height": 194,
       "pixFmt": "yuv420p",
       "md5s": [
-        "062f6912fe10d7e2f6da512568c8e1f8",
-        "7b0b85bad8ad6b22414ec02a155e191f",
-        "e26a0d49ba407f75e83996d96ba140bd",
-        "386a3ce7e45d1a8da592062ccbf612ad",
-        "c6527bb9c8d71595be0cec7f82d82886",
-        "7c00302e72ff65be988a8aed1454feb6",
-        "49e41e56c5ba1ef50e9d17a48157b6a0",
-        "63d9ea41588763d50e5b375163eed7d4",
-        "230d9253891dfe52c928dd1eb03d383b",
-        "bb42787121ed5618e523f6908251db1e",
-        "c1c02e5320f7c477e9a57d6c89619e55",
-        "5cb091ea7464ad6d0fdd96db220541e4"
+        "3e2984aa50c94854c4478ef0266cf7df",
+        "3790e82c353774e1636c532a57c2cf96",
+        "dc335643689f944158aa87147b347d6c",
+        "5648c0a736a3f4c40aa0c4af7897217f",
+        "053fbdf6f4dd0347f3f62b2b708268af",
+        "316f9a0f695c93a00f878f6e7db93e90",
+        "8c6f0848f8d5519b771627f4a52c0191",
+        "1929e2646071342d04d10807d9fa5f4a",
+        "638fade96ba8ae17a7126d68127f2e8f",
+        "239f4e7e901a543b8c592999664b5139",
+        "612acf24541139badd01b997ea532082",
+        "e724dabc6ef26ee906abafc8ab99eb1c"
       ]
     },
     "yuv422p-320x180": {
-      "sha256": "274178a46f7c35526c5366f066d34db69fe783930b6f7c30d5dbc89173fadcce",
+      "sha256": "cac176851344be756553f912479b3a564ac6aeeb6fb1992f410b5431eb9ef361",
       "width": 320,
       "height": 180,
       "pixFmt": "yuv422p",
       "md5s": [
-        "ca5a476f83d9017442959752c2bba40a",
-        "b0d05c84b043b7cb9b9a3f9712172f2b",
-        "b084d6c3f5aea4205dd234377295b06f",
-        "248555451470a200ea2fafca32633aa6",
-        "c9c1dfaa747b08c2634783878c19f892",
-        "fa2f6ae87f5beb2374c6a75ea21de64e",
-        "a69ab5e243bffe90bfb86c87fe591d40",
-        "c2da3ef6947671a95147470e998fc7e1",
-        "834e9bf0ed8c5110c937c5ff691447d9",
-        "a2e2eff3ed1d49b3d41b38a810e87559",
-        "f3f66344052f3785aa439f30d8c79aab",
-        "913d16a20284e7ecd08df75a9a10e43a"
+        "57f887cf3432667102bb95e814afb2ea",
+        "7864f0d8242757cce2906c28e307b71d",
+        "45251588a9101d9948707245ecfb5ae4",
+        "053554913eaeaf6c5b43522e0cb528e4",
+        "cc8e9d4aab8d68c4cfcc50ebe5b7b161",
+        "30d6f4c091536f1bd580be1f4495b2da",
+        "6ec765f4aaee0547ad30ec827b8ac1d3",
+        "2b38b71b64c6e87a2c2ee0015bc7ee77",
+        "cda0cee17a6845add4398114ee678001",
+        "46ff81838d6a45fcc2e07347c969712c",
+        "0c1e02d4e027a5423e41eef73b3b821e",
+        "dbb8d4e5aaf3c9fac833cbc886daa8fc"
       ]
     },
     "yuv444p-wpp-ctu16": {
-      "sha256": "72708b10733e921b4fe60d91088e8ae22ac0ba22e6ee1f3576cf25a765c76fe9",
+      "sha256": "0ade5c33626ac0eeb9ba75f17c1c26e8b0974f52b6f7f26a879f3e38c07abfae",
       "width": 352,
       "height": 288,
       "pixFmt": "yuv444p",
       "md5s": [
-        "92c3f0f8579bb61dba679b072eb7ae05",
-        "469eddb6821099d643e7df1a50cf7a11",
-        "057e4d6784757cc091352bab14a251a6",
-        "56eb8bbf20e7583e892015e75deee8c0",
-        "3e48d36f8751c4405f7ada37fbf939d7",
-        "514681f39430c8fffb9b0ac17c2ad496",
-        "098a817fd295ba10c5d833f85f9768a7",
-        "ac1237fb864e85a229e83fdce3e58d44",
-        "9ea8a32ce47dac1951857345b26d0e87",
-        "322598ec1beb40da910d6137792e02b5",
-        "4e9f06d2c97ecb28d01bdf051ed9f9da",
-        "f4874691995c12a01d08abd15dae21bc"
+        "cd40852a1a1b35352bc080fa1da2ca15",
+        "0dc603ef2c48bf09ef78add8462c08f2",
+        "daf065bf56328044d790f20749b0fcbc",
+        "99a1166b0cc14f3603b47162ecc47edc",
+        "a0fd99b46634bfeb474b6f9e9c75f3c8",
+        "f28cdf54df6c8030422af9c028b0d5a5",
+        "d16d293bde23eb562c6e7fc40dcc25f9",
+        "61ccd5e1fab0a4bb37257f3bbfaf537c",
+        "dd84354a1150c599bd6dece43e24c739",
+        "c68bc2634e0bb963133eb528a2b343e6",
+        "6e7663b780306b781b131ad1c132d873",
+        "20ae9d570fc2b0007cde628e9bfb1cd8"
       ]
     },
     "yuv420p-slices4": {
-      "sha256": "2117ac466bf9a59ff2ad9e538c83ed80650d60400a68ab89025e372ef159fa13",
+      "sha256": "1f00b6345473aa92238df3d12c29e65ebe980a2aca64fee86c0317d76f789208",
       "width": 320,
       "height": 240,
       "pixFmt": "yuv420p",
       "md5s": [
-        "4c47b921f31f8201c8dad8ce10369106",
-        "ac0a94dd1a85d34ed25e5160c03d9d04",
-        "469542cdb42c3d0e092f824da2e330f1",
-        "ce2c231aab418ce9d879ff963e25b34d",
-        "2228ff0a609c796444d2cebaafeb64ae",
-        "da0f61fc201370b1377b8c7a2dbd907c",
-        "50cd624fb7d557de89fe6afcb682f456",
-        "5ad79685fcc2ef99dacabd5192b8ba0a",
-        "26eaca527f07472e56e4c5d576507975",
-        "8e8d36c2c4a678ea7145ecab02447268",
-        "360149dadb413009fd9d439f2f7d190c",
-        "37776d0b6b079ee2f735dadf41d7050a"
+        "660cc682f567d21d071863645bd6fc48",
+        "6bb657732556ec98ea71bb1ea0b93833",
+        "6190f25c744dfaeeb198d9a600ff3974",
+        "d2f22657bf5dfaa7a0657c63d87c2312",
+        "9c6a51832e94e0247a81b71b6219d28c",
+        "bf735a5918904933fd816e93c8ff9338",
+        "b4d2a17ce44b79a2fd261ef0adeed4f4",
+        "8b5e1abf282b11399cabd0c1c5506bf1",
+        "013b3919093bf5838ee3794238aed3f8",
+        "40eca80828cef636ae21d934bea584d1",
+        "92ba12dbeadefa233b5ad427935449be",
+        "92420e6220f9097540c344afd88f73b2"
       ]
     },
     "yuv420p10-320x180": {
-      "sha256": "b13f7e7bbc745172bfe873b4f05959211643404fc520097452d234e8f986f2e5",
+      "sha256": "78f8bf623c2b5080e45bd159253fad87285508f5790d9d3c548665175be8946b",
       "width": 320,
       "height": 180,
       "pixFmt": "yuv420p10le",
       "md5s": [
-        "3dcd5a67351d275d9990c6adff5c0016",
-        "3c31360ce5f55a5c03e02bc987fb6aae",
-        "bfb21c9ddf53bb58b3c08218d3399cba",
-        "3d7f2f65095534232878ab9d1b4bf014"
+        "62c86d62ed8a282ece42c0e4c261a96c",
+        "a447a2234e44c818aaf0067c8f2bf365",
+        "47847dd410f232d8351e86885467bf78",
+        "e383a76c0cab3bbb974fb6fe7379de89"
       ]
     },
     "yuv420p-160x96": {
-      "sha256": "dc0b058ac7479f59c081e23c85ff49d0443078d95e6a24b45a0fca42466710d0",
+      "sha256": "c7750cecd36f904b65b31d053f8d28f67f63d952c087df85788c8ed7b3a5975b",
       "width": 160,
       "height": 96,
       "pixFmt": "yuv420p",
       "md5s": [
-        "74e90a10cb95842ff3759119d09ccd45",
-        "a03188f2a4bc3649f5443faae62413e7",
-        "a9c5c4287dfa1be02d11fcc75c1a2678",
-        "c0a036aab88a279dadfed009f592b32f"
+        "6b5a45419cb485bbb253c9f288ccef7d",
+        "c37464f4604583b9ad78c38f3c8a6cee",
+        "c139347007bc42abf4a6ba1adfdc9f13",
+        "240b0726dd0fe1f23f67b4ead2731696"
       ]
     },
     "bt709-tv": {
-      "sha256": "897b94c4e8c19ea3c92bc06ec4cfb06b11bda5211a24cd113afe7c4c4d86ebe5",
+      "sha256": "f92f35c15e7fdfb176a1e6b73cddb3bbfec769dbe334ff7d8cfcd230af333d3c",
       "width": 160,
       "height": 96,
       "pixFmt": "yuv444p",
       "md5s": [
-        "9536bf915d248b9e05556d5681b93946",
-        "f7a9f813aa7e7a7dc6c97c8efdf51788"
+        "133d26bd051e1fd2b38c1fd68ffe6a99",
+        "e8359ef813a4450f2918210472dfb2fa"
       ]
     },
     "bt601-pc": {
-      "sha256": "d1b028c43ce814f772c46cdcd51690a2651873f5d0c98e6422110b8fcdacb4e7",
+      "sha256": "ef22ed229e848a0c236925833d80f3592c1f620e4c7bb77c60f8507e334496c8",
       "width": 160,
       "height": 96,
       "pixFmt": "yuv444p",
       "md5s": [
-        "9536bf915d248b9e05556d5681b93946",
-        "f7a9f813aa7e7a7dc6c97c8efdf51788"
+        "133d26bd051e1fd2b38c1fd68ffe6a99",
+        "e8359ef813a4450f2918210472dfb2fa"
       ]
     }
   }

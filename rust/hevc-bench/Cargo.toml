@@ -1,0 +1,12 @@
+# The native harness: decodes an Annex B file and prints each picture's MD5 as
+# `ffmpeg -f framemd5` does, with the timing on stderr.
+[package]
+name = "hevc-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+hevc = { path = "../hevc", features = ["threads"] }
+rayon = "1"

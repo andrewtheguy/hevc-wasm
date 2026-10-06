@@ -1,0 +1,22 @@
+# The pure-Rust HEVC decoder for the page (hevc), and the native harness that
+# checks it against FFmpeg (hevc-bench). The page's module, hevc-web, is built
+# apart by ../build-rust.sh.
+[workspace]
+resolver = "2"
+members = ["hevc", "hevc-bench"]
+# The page's module builds alone, for wasm32 with the nightly and the flags in
+# hevc-web/.cargo/config.toml.
+exclude = ["hevc-web"]
+
+[workspace.package]
+version = "0.6.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.85"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = 1

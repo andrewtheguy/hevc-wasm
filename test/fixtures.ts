@@ -48,9 +48,24 @@ export const REFERENCE = join(DATA_DIR, "reference.json");
 
 export const KEYINT = 6;
 
+// The Mac's shape of stream, as x265 comes closest to it: 4:4:4 at 8 bits, one
+// slice per picture with its coding tree block rows as a wavefront, 32-pixel
+// coding tree blocks, I and P pictures with two short-term references, SAO and
+// per-block QP, and none of the tools the Mac leaves off. What the pure-Rust
+// decoder (rust/) takes; the FFmpeg one takes it too.
+export const MAC_X265 = [
+  "profile=main444-8", "wpp=1", "pools=4", "frame-threads=1", "ctu=32", "min-cu-size=8", "ref=2",
+  "no-weightp=1", "signhide=0", "strong-intra-smoothing=0", "amp=0", "tskip=0", "temporal-mvp=0",
+  "scenecut=0", "open-gop=0", "sao=1", "aq-mode=1", "rect=1", "tu-intra-depth=1", "tu-inter-depth=2",
+  "repeat-headers=1", "no-info=1",
+].join(":");
+
 export const SPECS = {
   // Sizes off the 8-pixel grid, so the SPS crops with a conformance window.
   "yuv444p-330x194": { size: "330x194", pixFmt: "yuv444p" },
+  // The Mac's shape: a cropped size, and one a whole number of 32-pixel rows.
+  "mac-330x194": { size: "330x194", pixFmt: "yuv444p", x265: MAC_X265 },
+  "mac-352x256": { size: "352x256", pixFmt: "yuv444p", x265: MAC_X265 },
   "yuv420p-330x194": { size: "330x194", pixFmt: "yuv420p" },
   "yuv422p-320x180": { size: "320x180", pixFmt: "yuv422p" },
   // Wavefront rows, many of them with 16-pixel CTBs, as the Mac sends.
