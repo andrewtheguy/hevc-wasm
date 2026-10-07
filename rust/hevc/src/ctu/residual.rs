@@ -210,7 +210,7 @@ impl<'a> Row<'a> {
         // wrote nothing.
         let co = &mut self.s.coeffs[..n * n];
         let mut coded = itx::Coded::default();
-        let engine = match sub_blocks(cab.engine(), cab.ctx, &blk, co, &dq, &mut coded) {
+        let engine = match sub_blocks(cab.engine(), cab.cab, &blk, co, &dq, &mut coded) {
             Ok(engine) => engine,
             Err(e) => {
                 kernels::fill_i16(co, 0);
@@ -291,8 +291,8 @@ struct SubBlock<'s> {
 /// engine's registers stay in registers across the sub-blocks that are not
 /// coded.
 #[inline(never)]
-fn sub_blocks(engine: Engine, ctx: &mut Contexts, blk: &Block, co: &mut [i16], dq: &Dequant, coded: &mut itx::Coded) -> Result<Engine> {
-    let mut v = View::new(engine, ctx);
+fn sub_blocks(engine: Engine, cab: &mut Cabac, blk: &Block, co: &mut [i16], dq: &Dequant, coded: &mut itx::Coded) -> Result<Engine> {
+    let mut v = View::new(engine, cab);
     let cab = &mut v;
     // The coded flags on a 9×9 grid with a zero border, so that a sub-block's
     // right and lower neighbours are two loads wherever it is.
@@ -320,7 +320,7 @@ fn sub_blocks(engine: Engine, ctx: &mut Contexts, blk: &Block, co: &mut [i16], d
             last_pos: if i == blk.last_sb { blk.last_pos } else { 16 },
             infer_dc,
         };
-        let (engine, c1_next) = sub_block(cab.engine(), cab.ctx, &sb, co, dq, c1, coded)?;
+        let (engine, c1_next) = sub_block(cab.engine(), cab.cab, &sb, co, dq, c1, coded)?;
         cab.restore(engine);
         c1 = c1_next;
     }
@@ -334,8 +334,8 @@ fn sub_blocks(engine: Engine, ctx: &mut Contexts, blk: &Block, co: &mut [i16], d
 /// of line, so that the engine's registers and the loops' few counters get
 /// the registers of a function of their own.
 #[inline(never)]
-fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], dq: &Dequant, c1_in: usize, coded: &mut itx::Coded) -> Result<(Engine, usize)> {
-    let mut v = View::new(engine, ctx);
+fn sub_block(engine: Engine, cab: &mut Cabac, sb: &SubBlock, co: &mut [i16], dq: &Dequant, c1_in: usize, coded: &mut itx::Coded) -> Result<(Engine, usize)> {
+    let mut v = View::new(engine, cab);
     let cab = &mut v;
     // significant_coeff_flag, highest position first, as a bit per position.
     let mut sig = 0u32;
@@ -345,13 +345,15 @@ fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], 
     } else {
         15
     };
-    if start >= 0 {
-        for np in (1..=start as usize).rev() {
-            sig |= cab.decode(sb.sig[np & 15] as usize) << np;
-        }
-        if (sb.infer_dc && sig == 0) || cab.decode(sb.sig[0] as usize) == 1 {
-            sig |= 1;
-        }
+    // Unrolled by position, so that each flag's context and bit are
+    // constants of the code rather than a counter's: the test against
+    // `start` is cheaper than the shift by it.
+    macro_rules! sig_at {
+        ($($np:literal)*) => { $( if start >= $np { sig |= cab.decode(sb.sig[$np] as usize) << $np; } )* };
+    }
+    sig_at!(15 14 13 12 11 10 9 8 7 6 5 4 3 2 1);
+    if start >= 0 && ((sb.infer_dc && sig == 0) || cab.decode(sb.sig[0] as usize) == 1) {
+        sig |= 1;
     }
     if sig == 0 {
         return Ok((cab.engine(), c1_in));

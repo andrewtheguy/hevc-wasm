@@ -11,7 +11,7 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ### The capture
 
-1. **The sub-block walk.** `sub_blocks` at 13% is 154 K sub-blocks a
+1. **The sub-block walk.** `sub_blocks` at 14% is 154 K sub-blocks a
    picture, 127 K of them not coded: a coded-sub-block flag each, at about
    75 instructions a sub-block of which the flag's decode is near half. The
    rest is the scan table, the neighbour flags and what V8 spills around the
@@ -19,18 +19,23 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
    sub-blocks alone, with few values live, measured 1% fewer instructions
    and no fewer cycles. The flags are in the stream; the floor is the bin's.
 
-2. **The per-bin floor.** The probable-symbol path of `decode` compiles to
-   about 50 x86 instructions, of which the arithmetic is a dozen; the rest is
-   V8 spilling and reloading the engine's state and the loop's invariants (the
-   context table base, the sub-block description) around the call. 645 K bins
-   at 50 instructions is over a quarter of the capture's 112 M instructions.
-   The levers left are in the shape of the code V8 sees: the sixteen
-   significance contexts as two 64-bit words rather than a byte array it
-   reloads through a pointer, the significance loop unrolled by the scan so
-   the position is a constant, and inspecting the Liftoff/TurboFan output
-   (`tmp/annot.sh`) for which values spill. There is no `inline(always)`
-   across the wasm boundary to help; this is the floor V8's register
-   allocator sets.
+2. **The per-bin floor.** What a context-coded bin costs is a dependency
+   chain, not its instruction count. The chain runs from one bin's range to
+   the next's: the quartile's shift count, the LPS byte's select, the
+   subtraction, and the renormalisation's four operations, about nine
+   cycles, with the models' store-to-load forwarding alongside it; branch
+   mispredictions are 0.11 M a picture, next to nothing. Unrolling the
+   significance flags by position, testing the refill on the low word of
+   the offset, the renormalisation as a shift and moving the data pointers
+   out of the engine's registers cut the capture from 112 M to 106 M
+   instructions and its cycles not at all; packing the four quartiles' LPS
+   of a model in one word, so the lookup by model no longer waits for the
+   range, cost 1% of the instructions and saved 4% of the cycles. Carrying
+   the model from one bin to the next in a register where the contexts
+   repeat measured nothing, and a renormalisation written as a select comes
+   out of LLVM as a shift by the flag, not a `cmov`. What is left is the
+   chain's shape: the renormalisation is four operations where a conditional
+   move would be two, and neither LLVM nor V8 produces one here.
 
 3. **The transform's floor.** 21%, nearly all of it the sparse path's row
    pass: a broadcast and eight dots per pair of coded columns per row, over
@@ -82,7 +87,7 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
    lookups for the first candidate. Not profiled to the instruction yet.
 
 9. **Four-thread scaling.** On the capture four threads are 2.6× one; on the
-   video only 1.1× (2.5 → 2.3 ms), while the cycles rise from 13 M to 15 M.
+   video no faster (2.5 ms either way), while the cycles rise from 12 M to 15 M.
    The video's picture is 2.6 ms of work spread over its few coding tree
    block rows, and the wavefront's waits (`run_rows` 2.2%, `wait_for` spinning 256
    times before it sleeps) are a visible share. Whether the loss is the waits,

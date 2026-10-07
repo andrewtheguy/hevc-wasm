@@ -128,10 +128,11 @@ the byte planes and the threading are this repository's.
   straight from their last pass, block copies, the residual add, planar and
   angular intra prediction, SAO and a 16-bit inverse transform by dot
   products, over the coded columns alone of a block with few coefficients;
-  coefficients are scaled as they are parsed, and CABAC keeps its
-  registers in locals, the walk over a block's sub-blocks and each coded
-  sub-block decoding in functions of their own, the significance contexts
-  from a table built at compile time.
+  coefficients are scaled as they are parsed, and CABAC keeps its two
+  registers in locals and its LPS table packed by model, the walk over a
+  block's sub-blocks and each coded sub-block decoding in functions of
+  their own, the significance contexts from a table built at compile time
+  and the flags unrolled by position.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
@@ -166,19 +167,19 @@ two-pass run less a one-pass one). Per picture:
 
 | 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg's module, 0.0.1 |
 |---|---|---|
-| 1 thread, median ms | 13.9 | 31.6 |
-| 1 thread, M cycles | 45 | 90 |
-| 4 threads, median ms | 5.4 | 9.9 |
-| 4 threads, M cycles | 47 | 91 |
-| M instructions | 110 | 213 |
+| 1 thread, median ms | 13.7 | 32.6 |
+| 1 thread, M cycles | 43 | 88 |
+| 4 threads, median ms | 5.2 | 9.8 |
+| 4 threads, M cycles | 45 | 90 |
+| M instructions | 105 | 213 |
 
 | 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg's module, 0.0.1 |
 |---|---|---|
 | 1 thread, median ms | 2.5 | 6.2 |
-| 1 thread, M cycles | 13 | 23 |
-| 4 threads, median ms | 2.3 | 3.2 |
+| 1 thread, M cycles | 12 | 23 |
+| 4 threads, median ms | 2.5 | 3.4 |
 | 4 threads, M cycles | 15 | 25 |
-| M instructions | 22 | 54 |
+| M instructions | 21 | 54 |
 
 On the Mac's dense screen content this decoder is half ahead of the FFmpeg
 module in cycles,
@@ -228,11 +229,16 @@ registers, which it does not for a value live across a call; the walk over a
 block's sub-blocks, most of them not coded, and each coded sub-block decode
 in small functions of their own, since V8 spills what a large one holds, the
 sub-block's significance contexts coming from a table built at compile
-time; the merge list is built only as far as the index, which is
-nearly always zero; the neighbours to the left and above, decoded before the
-block wherever they are, are not looked up in the z-order map; and a block's
-motion is one word, written once per 4×4. A sixth of the capture's cycles and
-an eighth of the video's.
+time and its flags decoded unrolled by position; the merge list is built
+only as far as the index, which is nearly always zero; the neighbours to
+the left and above, decoded before the block wherever they are, are not
+looked up in the z-order map; and a block's motion is one word, written
+once per 4×4. A sixth of the capture's cycles and an eighth of the video's.
+And since what a bin costs is the chain from its range to the next bin's,
+not its instructions, the LPS of a model's four range quartiles packed in
+one word, so that the lookup by model starts before the range is known and
+the range selects a byte by a shift: 4% of the capture's cycles, where
+cutting a twentieth of its instructions had saved none.
 Natively the decoder runs its scalar fallbacks, since the kernels are written
 for wasm32. How it is put together, and where its time goes, is in
 [docs/architecture.md](docs/architecture.md); what it does not do yet, in
