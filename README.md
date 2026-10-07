@@ -154,19 +154,21 @@ bit-identically to FFmpeg, natively on one thread and on six, and as the
 WebAssembly module on one and four. The `mac-*` fixtures in `test/data` are
 x265's nearest shape to the Mac's.
 
-The comparison is between two builds of this decoder's module under Bun: the
-module as it is, and the release before it, 0.0.4. Both ran on a six-core x86
+The comparison is between builds of this decoder's module under Bun: the
+module as it is, the release before it, 0.0.4, and for the capture the one
+before that, 0.0.3, since the capture's last large step, the transform of a
+block with few coefficients, came with 0.0.4. They ran on a six-core x86
 workstation, alternately on the same four cores, and the medians of three
 rounds are shown. The instruction and cycle counts are `perf stat`'s for the
 whole process and do not depend on the load. Per picture:
 
-| 1600×1000 Mac capture, 236 pictures | this decoder | release 0.0.4 |
-|---|---|---|
-| 1 thread, median ms | 13.8 | 14.8 |
-| 1 thread, M cycles | 43.3 | 45.2 |
-| 4 threads, median ms | 5.7 | 5.7 |
-| 4 threads, M cycles | 45.4 | 47.6 |
-| M instructions | 106 | 110 |
+| 1600×1000 Mac capture, 236 pictures | this decoder | release 0.0.4 | release 0.0.3 |
+|---|---|---|---|
+| 1 thread, median ms | 13.5 | 14.3 | 17.5 |
+| 1 thread, M cycles | 43.2 | 45.1 | 53.9 |
+| 4 threads, median ms | 5.7 | 6.2 | 6.9 |
+| 4 threads, M cycles | 45.7 | 47.7 | 56.2 |
+| M instructions | 106 | 110 | 146 |
 
 | 1080p video in the Mac's shape, 2,896 pictures | this decoder | release 0.0.4 |
 |---|---|---|
