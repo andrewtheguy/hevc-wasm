@@ -17,7 +17,8 @@
 # repositories: on the private one, as the
 # release holding the archive, and on this one, as the git tag of the commit it
 # was built from, with a release of the source alone whose notes give the
-# archive's digest.
+# archive's digest, above what GitHub generates from the pull requests merged
+# since the release before.
 set -euo pipefail
 
 ARCHIVES_REPO=andrewtheguy/hevc-wasm-archives
@@ -88,7 +89,7 @@ git push origin "refs/tags/$tag"
 gh release edit "$tag" --repo "$ARCHIVES_REPO" --draft=false
 
 # This repository's release is of the source: the binary is on the private one.
-gh release create "$tag" --verify-tag --title "$tag" --notes "$(printf '%s\n\n    %s\n' \
+gh release create "$tag" --verify-tag --title "$tag" --generate-notes --notes "$(printf '%s\n\n    %s\n' \
   "This repository publishes the source of the build and no binary of it. The archive, \`$archive\`, is on the private $ARCHIVES_REPO release of the same tag, whose \`SHA256SUMS\` reads:" \
   "$(cat "$out/SHA256SUMS")")"
 echo ">> published $tag; remotex pins it in src/hevc_wasm.rs by $(cut -d' ' -f1 "$out/SHA256SUMS")"
