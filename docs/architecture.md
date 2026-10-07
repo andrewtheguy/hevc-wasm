@@ -6,7 +6,8 @@ compiled to WebAssembly with SIMD128 and threads for
 [remotex](https://github.com/andrewtheguy/remotex)'s browser client. It
 decodes bit for bit as FFmpeg does. The [README](../README.md) is the
 operator's and builder's view of the same thing: building, testing,
-releasing and the measurements against FFmpeg's decoder.
+releasing and the measurements against FFmpeg's decoder compiled to
+WebAssembly.
 [What remains](remaining.md) is the list of what it does not do yet.
 
 ## Data path

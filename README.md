@@ -151,17 +151,18 @@ bit-identically to FFmpeg, natively on one thread and on six, and as the
 WebAssembly module on one and four. The `mac-*` fixtures in `test/data` are
 x265's nearest shape to the Mac's.
 
-Measured under Node on a six-core x86 workstation against the module this
-repository released before it, FFmpeg's libavcodec configured down to the HEVC
-decoder and compiled with Emscripten, with SIMD128 kernels and slice threads
-(release 0.0.1, from FFmpeg 9.0.2). The host was busy with other work, so the
-two modules ran alternately on the same four cores and the medians of three
-rounds are shown. The instruction and cycle
+The comparison is between two WebAssembly modules under Node, not with
+native FFmpeg: this decoder's module, and the module this repository released
+before it, FFmpeg's libavcodec configured down to the HEVC decoder and
+compiled with Emscripten, with SIMD128 kernels and slice threads (release
+0.0.1, from FFmpeg 9.0.2). Both ran on a six-core x86 workstation. The host
+was busy with other work, so the two modules ran alternately on the same four
+cores and the medians of three rounds are shown. The instruction and cycle
 counts are `perf stat`'s for the whole process and do not depend on the load
 (the FFmpeg bench hashes every picture of its first pass, so its counts are a
 two-pass run less a one-pass one). Per picture:
 
-| 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg's, 0.0.1 |
+| 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg's module, 0.0.1 |
 |---|---|---|
 | 1 thread, median ms | 13.9 | 31.6 |
 | 1 thread, M cycles | 45 | 90 |
@@ -169,7 +170,7 @@ two-pass run less a one-pass one). Per picture:
 | 4 threads, M cycles | 47 | 91 |
 | M instructions | 110 | 213 |
 
-| 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg's, 0.0.1 |
+| 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg's module, 0.0.1 |
 |---|---|---|
 | 1 thread, median ms | 2.5 | 6.2 |
 | 1 thread, M cycles | 13 | 23 |
@@ -177,12 +178,13 @@ two-pass run less a one-pass one). Per picture:
 | 4 threads, M cycles | 15 | 25 |
 | M instructions | 22 | 54 |
 
-On the Mac's dense screen content this decoder is half ahead in cycles,
+On the Mac's dense screen content this decoder is half ahead of the FFmpeg
+module in cycles,
 and both spend their time where the stream does: CABAC residual parsing and
 the 32×32 inverse transforms, of which the capture has some three thousand a
 picture, each with a handful of coefficients scattered to the far corners,
 which the transform runs over alone. On ordinary video, where motion compensation
-dominates, this decoder is nearly half ahead, and what leads its profile is the copy
+dominates, this decoder is nearly half ahead of it, and what leads its profile is the copy
 of the first reference that each row starts as: bound by memory, the reference
 and the picture being written not fitting the cache together. Of the steps that
 got here:

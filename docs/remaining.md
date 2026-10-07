@@ -2,7 +2,7 @@
 
 What the decoder does today is in [the architecture](architecture.md), with
 where its time goes; how it is built and what it measures against FFmpeg's
-decoder are in the [README](../README.md). This is the list of what it does
+decoder compiled to WebAssembly are in the [README](../README.md). This is the list of what it does
 not do yet, in the order the work would go. Numbers are from the module
 under Node on one thread of the x86 workstation, profiled with `perf record`
 of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
@@ -92,11 +92,11 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ### Elsewhere
 
-- **The target machine.** All of the Rust module's numbers are from an x86
-  workstation under Node. The FFmpeg module's table in the README is from an
-  M2 Max. The Rust module has not been run on Apple silicon, where V8 lowers
-  SIMD128 to NEON differently and the memory system differs; the capture's
-  transform and the video's memory-bound copy may rank differently there.
+- **The target machine.** All of the README's numbers, this module's and
+  the FFmpeg module's, are from an x86 workstation under Node. Neither has
+  been run on Apple silicon, where V8 lowers SIMD128 to NEON differently and
+  the memory system differs; the capture's transform and the video's
+  memory-bound copy may rank differently there.
 - **The native build runs scalar fallbacks**: the kernels are written for
   `core::arch::wasm32`. `hevc-bench` is for correctness, not speed. A native
   SIMD port is not a goal unless the decoder gets a native user.
