@@ -42,7 +42,7 @@ remotex refuses until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.1.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.2.tar.gz"
 ```
 
 ## Testing
@@ -165,7 +165,7 @@ the byte planes and the threading are this repository's.
   names. Profiles and logs go under `tmp/`.
 
 ```sh
-./build-rust.sh              # rust/hevc-web/pkg, on the pinned nightly, via wasm-pack
+./build-rust.sh              # rust/hevc-web/pkg, on nightly, via wasm-pack
 bun test test/rust.test.ts   # the mac-* fixtures, bit for bit against FFmpeg
 ```
 

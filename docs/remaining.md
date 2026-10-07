@@ -223,7 +223,7 @@ numbers) but is not yet what the page loads. To get there:
    both modules and the page picks, or the Rust module replaces the FFmpeg one
    once it covers what the Mac sends, is the decision to make first; the
    archive's reproducibility (byte-identical to the release's) must hold for a
-   wasm-pack build on the pinned nightly, which has not been checked.
+   wasm-pack build on nightly, which has not been checked.
 3. **Fixtures.** `bun test test/rust.test.ts` decodes the two `mac-*` fixtures
    (330×194 and 352×256) on one thread and the pool's; the real captures and
    the video are checked by hand with `hevc-bench` and the Node bench. A

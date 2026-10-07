@@ -75,10 +75,10 @@ fn main() {
                         }
                         println!("{}", m.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>());
                         // HEVC_DUMP=path:index writes picture `index` as raw planar 4:4:4.
-                        if let Some((path, idx)) = std::env::var("HEVC_DUMP").ok().and_then(|v| v.split_once(':').map(|(p, i)| (p.to_string(), i.parse::<usize>().unwrap_or(0)))) {
-                            if idx + 1 == n {
-                                std::fs::write(path, &raw).expect("dump");
-                            }
+                        if let Some((path, idx)) = std::env::var("HEVC_DUMP").ok().and_then(|v| v.split_once(':').map(|(p, i)| (p.to_string(), i.parse::<usize>().unwrap_or(0))))
+                            && idx + 1 == n
+                        {
+                            std::fs::write(path, &raw).expect("dump");
                         }
                     }
                 }

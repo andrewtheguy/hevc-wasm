@@ -169,7 +169,8 @@ pub fn fill_i16(dst: &mut [i16], v: i16) {
 /// `w` samples are readable at `p`.
 #[inline(always)]
 unsafe fn samples_at(p: *const u8, w: usize) -> v128 {
-    u16x8_extend_low_u8x16(if w >= 8 { v128_load64_zero(p as *const u64) } else { v128_load32_zero(p as *const u32) })
+    // SAFETY: the caller's.
+    unsafe { u16x8_extend_low_u8x16(if w >= 8 { v128_load64_zero(p as *const u64) } else { v128_load32_zero(p as *const u32) }) }
 }
 
 /// Eight (or four) 16-bit values at `p`.
@@ -178,10 +179,13 @@ unsafe fn samples_at(p: *const u8, w: usize) -> v128 {
 /// `w` values are readable at `p`.
 #[inline(always)]
 unsafe fn i16s_at(p: *const i16, w: usize) -> v128 {
-    if w >= 8 {
-        v128_load(p as *const v128)
-    } else {
-        v128_load64_zero(p as *const u64)
+    // SAFETY: the caller's.
+    unsafe {
+        if w >= 8 {
+            v128_load(p as *const v128)
+        } else {
+            v128_load64_zero(p as *const u64)
+        }
     }
 }
 
@@ -192,10 +196,13 @@ unsafe fn i16s_at(p: *const i16, w: usize) -> v128 {
 #[inline(always)]
 unsafe fn store_uni(p: *mut u8, w: usize, v: v128) {
     let b = u8x16_narrow_i16x8(i16x8_shr(i16x8_add(v, i16x8_splat(32)), 6), v);
-    if w >= 8 {
-        v128_store64_lane::<0>(b, p as *mut u64);
-    } else {
-        v128_store32_lane::<0>(b, p as *mut u32);
+    // SAFETY: the caller's.
+    unsafe {
+        if w >= 8 {
+            v128_store64_lane::<0>(b, p as *mut u64);
+        } else {
+            v128_store32_lane::<0>(b, p as *mut u32);
+        }
     }
 }
 
