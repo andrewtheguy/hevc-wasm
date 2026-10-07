@@ -1,0 +1,35 @@
+# The page's HEVC decoder: the `hevc` crate behind the few calls remotex's decode
+# worker makes, built to WebAssembly with threads and SIMD.
+#
+# Built by ../../build-rust.sh with wasm-pack, into pkg/. Not a member of the
+# workspace above, which names it in `exclude`: it builds for
+# `wasm32-unknown-unknown` alone, with the profile, the lockfile and the toolchain
+# here. The toolchain is a nightly (rust-toolchain.toml), for the threads the
+# module decodes on (.cargo/config.toml).
+[package]
+name = "hevc-web"
+version = "0.0.2"
+license = "Apache-2.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+hevc = { path = "../hevc", features = ["threads"] }
+rayon = "1"
+wasm-bindgen = "0.2"
+
+# For speed, not size: this decodes a desktop's every picture.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.wasm-pack.profile.release]
+# LLVM's output as it is: after wasm-opt -O3 the residual parser ran a
+# twentieth slower under V8 (the capture, 71M cycles a picture against 68M), for
+# a module 45 KB smaller. The function names stay, for `perf` under Node.
+wasm-opt = false

@@ -53,14 +53,13 @@ if gh release view "$tag" --repo "$ARCHIVES_REPO" >/dev/null 2>&1; then
   exit 1
 fi
 
-# The commit, and only the commit, built beside this checkout's build/ so the
-# FFmpeg tarball downloaded once is reused.
+# The commit, and only the commit, with this checkout's wasm-pack.
 work="$here/tmp/publish-$tag"
 rm -rf "$work"
-mkdir -p "$work/build"
+mkdir -p "$work"
 trap 'rm -rf "$work"' EXIT
 git archive "$sha" | tar -x -C "$work"
-cp build/ffmpeg-*.tar.gz "$work/build/" 2>/dev/null || true
+ln -s "$here/node_modules" "$work/node_modules"
 "$work/build.sh"
 
 out="$work/dist"
