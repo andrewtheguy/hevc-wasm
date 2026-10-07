@@ -80,11 +80,19 @@ impl Rbsp {
     }
 }
 
+/// Whether a non-VCL NAL unit of this type may start an access unit
+/// (§7.4.2.4.4): the parameter sets, a delimiter, a prefix SEI and the
+/// reserved types before the picture. A suffix SEI, an end of sequence or
+/// bitstream and filler data follow their picture.
+fn opens_access_unit(nal_type: u8) -> bool {
+    matches!(nal_type, 32..=35 | 39 | 41..=44 | 48..=55)
+}
+
 /// The access units of an Annex B byte stream (§7.4.2.4.4), each what
 /// [`Decoder::decode`](crate::Decoder::decode) takes: a unit starts at each
 /// VCL NAL unit with `first_slice_segment_in_pic_flag`, with the non-VCL
-/// units before it. Bytes before the first unit, and a stream with no slice
-/// in it, are no unit.
+/// units before it that may open one. Bytes before the first unit, and a
+/// stream with no slice in it, are no unit.
 pub fn access_units(data: &[u8]) -> Vec<&[u8]> {
     let mut starts = Vec::new();
     let mut i = 0;
@@ -98,7 +106,7 @@ pub fn access_units(data: &[u8]) -> Vec<&[u8]> {
                 if first {
                     starts.push(pending_start.take().unwrap_or(start));
                 }
-            } else if pending_start.is_none() {
+            } else if opens_access_unit(nal_type) && pending_start.is_none() {
                 pending_start = Some(start);
             }
             i += 3;
@@ -162,5 +170,20 @@ mod tests {
         assert_eq!(split_annex_b(&s), vec![&[0x42u8, 1, 0xAA][..], &[0x44u8, 1, 0xBB][..]]);
         let h = NalHeader::parse(&[0x42, 0x01]).unwrap();
         assert_eq!((h.nal_type, h.layer_id, h.temporal_id), (SPS, 0, 0));
+    }
+
+    #[test]
+    fn suffix_units_stay_with_their_picture() {
+        // SPS, a first slice, a suffix SEI, an end of sequence, then a PPS
+        // and a first slice: two units, the second starting at the PPS.
+        let s = [
+            0, 0, 0, 1, 0x42, 1, 0xAA, // SPS
+            0, 0, 1, 0x26, 1, 0x80, 0xBB, // IDR, first slice segment
+            0, 0, 1, 0x50, 1, 0xCC, // suffix SEI
+            0, 0, 1, 0x48, 1, // end of sequence
+            0, 0, 0, 1, 0x44, 1, 0xDD, // PPS
+            0, 0, 1, 0x26, 1, 0x80, 0xEE, // IDR, first slice segment
+        ];
+        assert_eq!(access_units(&s), vec![&s[..25], &s[25..]]);
     }
 }
