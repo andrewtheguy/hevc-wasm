@@ -15,9 +15,15 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
    picture, 127 K of them not coded: a coded-sub-block flag each, at about
    75 instructions a sub-block of which the flag's decode is near half. The
    rest is the scan table, the neighbour flags and what V8 spills around the
-   call to `sub_block` for the coded ones. An inner loop over the uncoded
-   sub-blocks alone, with few values live, measured 1% fewer instructions
-   and no fewer cycles. The flags are in the stream; the floor is the bin's.
+   call to `sub_block` for the coded ones, the range among them, reloaded
+   on the bin's chain. Three shapes measured no faster: an inner loop over
+   the uncoded sub-blocks alone; a function of their own with the grid
+   index from the scan table and nothing live but what a flag needs, which
+   keeps the range in a register and saves 1% of the instructions, 44.5 M
+   cycles against 43.7 M; and that function carrying the two contexts'
+   models along the run in registers, which V8 compiles to conditional
+   moves, 44.2 M. The flag's chain is the range's, as the per-bin item
+   says, and the walk is at its floor.
 
 2. **The per-bin floor.** What a context-coded bin costs is a dependency
    chain, not its instruction count. The chain runs from one bin's range to
