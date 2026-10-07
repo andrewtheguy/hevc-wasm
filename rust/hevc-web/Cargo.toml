@@ -1,7 +1,7 @@
 # The page's HEVC decoder: the `hevc` crate behind the few calls remotex's decode
 # worker makes, built to WebAssembly with threads and SIMD.
 #
-# Built by ../../build-rust.sh with wasm-pack, into pkg/. Not a member of the
+# Built by ../../build.sh with wasm-pack. Not a member of the
 # workspace above, which names it in `exclude`: it builds for
 # `wasm32-unknown-unknown` alone, with the profile, the lockfile and the toolchain
 # here. The toolchain is a nightly (rust-toolchain.toml), for the threads the

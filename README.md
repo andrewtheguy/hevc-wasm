@@ -201,8 +201,9 @@ block wherever they are, are not looked up in the z-order map; and a block's
 motion is one word, written once per 4×4. A sixth of the capture's cycles and
 an eighth of the video's.
 Natively the decoder runs its scalar fallbacks, since the kernels are written
-for wasm32. What it does not do yet, and where its time still goes, is listed
-in [docs/remaining.md](docs/remaining.md).
+for wasm32. How it is put together, and where its time goes, is in
+[docs/architecture.md](docs/architecture.md); what it does not do yet, in
+[docs/remaining.md](docs/remaining.md).
 
 To benchmark on a busy host, pin both runs to the same cores (`taskset`),
 alternate them, and read `perf stat -e instructions:u,cycles:u` rather than

@@ -1,55 +1,11 @@
 # What remains of the pure-Rust decoder
 
-What the decoder does today, how it is built and what it measures are in the [README](../README.md); this is the list
-of what it does not do yet, in the order the work would go. Numbers are from
-the module under Node on one thread of the x86 workstation, profiled with
-`perf record` of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
-
-## Where the time goes
-
-The 1600×1000 Mac capture (`cap5`, 236 pictures), 21.6 ms a picture under the
-profiler:
-
-| share | function | what it is |
-|---|---|---|
-| 45.5% | `inverse_transform` | the 32×32 transforms, run dense on sparse blocks |
-| 17.4% | `residual_block` | the loop over a block's 4×4 sub-blocks: coded-sub-block flags and the per-sub-block setup |
-| 16.1% | `sub_block` | one sub-block's significance flags, levels and signs |
-| 2.7% | libc `memmove` | the copy of the first reference each row starts as |
-| 1.4% | `edge_strengths` | deblocking boundary strengths |
-| 1.2% | `intra_predict` | |
-| 1.2% | `coding_quadtree` | |
-| 0.9% | deblock `edges` | |
-| 0.8% | `memory_fill_wrapper` | `memory.fill` calls into V8 for the map fills |
-
-The 1080p camera video in the Mac's shape (`sample`, 2,896 pictures), 4.4 ms a
-picture under the profiler:
-
-| share | function |
-|---|---|
-| 13.1% | `sub_block` |
-| 16.8% | libc `memmove` (two symbols: the row-start copy and the stripe copies) |
-| 9.3% | `coding_quadtree` |
-| 8.3% | `intra_predict` |
-| 6.5% | `prediction_unit` |
-| 6.3% | `edge_strengths` |
-| 10.6% | deblock `edges` (luma 5.6%, chroma 5.0%) |
-| 4.8% | `copy_block` |
-| 3.2% | `residual_block` |
-| 2.9% | SAO `component` |
-| 2.8% | `inverse_transform` |
-| 2.2% | `run_rows` (the wavefront's waits) |
-| 1.9% | `merge_motion` |
-| 1.8% | `filter_after` |
-
-Per picture of the capture, counted once with temporary counters: 4,060
-residual blocks, 3,022 of them 32×32, 28.8 K coefficients in all (about seven
-per 32×32 block), 645 K context-coded bins and 46 K bypass bins, so about 160
-bins per 32×32 block, nearly all of them coded-sub-block and significance
-flags. The video: 551 blocks, 8,244 coefficients, 45 K context bins, 19.6 K
-bypass bins, 4,029 coding units of which 3,642 are skipped, 3,880 prediction
-units of which 3,774 are merges and 3,202 are still blocks from the first
-reference.
+What the decoder does today is in [the architecture](architecture.md), with
+where its time goes; how it is built and what it measures against FFmpeg's
+decoder are in the [README](../README.md). This is the list of what it does
+not do yet, in the order the work would go. Numbers are from the module
+under Node on one thread of the x86 workstation, profiled with `perf record`
+of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ## Speed
 
@@ -92,10 +48,9 @@ reference.
 
 4. **The row-start copy.** The largest item at 17%, and memory-bound: each row
    begins as a copy of the first reference's rows, and the reference and the
-   picture being written do not fit the cache together. It replaced
-   per-block copies and was a seventh of the cycles cheaper, so the remaining
-   lever is not to touch the memory twice. Candidates: copying the reference's
-   row into the picture a stripe ahead of the decode rather than whole rows
+   picture being written do not fit the cache together. The remaining lever
+   is not to touch the memory twice. Candidates: copying the reference's row
+   into the picture a stripe ahead of the decode rather than whole rows
    ahead, so the written lines are still cached when the blocks that are not
    still overwrite them; and reusing, as the next picture's buffer, the one
    the first reference was copied from last, so its lines are the warmest.
@@ -103,11 +58,11 @@ reference.
 
 5. **`coding_quadtree`**, 9.3%, is a 20 KB function with no hot spot: the
    recursion, the skip and merge flags, the map fills. Moving the coding unit
-   out into a function of its own made no measurable difference. What is left
-   is the fills: the `memory.fill` calls into V8 (`memory_fill_wrapper`) are
-   not free even at the word size, and the 4×4-granular maps (prediction mode,
-   motion, QP, transform depth) could shrink to the 8×8 the smallest coding
-   unit has where nothing reads them finer.
+   out into a function of its own makes no measurable difference. What is
+   left is the fills: the `memory.fill` calls into V8 (`memory_fill_wrapper`)
+   are not free even at the word size, and the 4×4-granular maps (prediction
+   mode, motion, QP, transform depth) could shrink to the 8×8 the smallest
+   coding unit has where nothing reads them finer.
 
 6. **Intra prediction's reference gathering**, 8.3%: about 950 cycles a call
    for 1,166 calls a picture, most of it collecting the neighbouring samples
@@ -119,14 +74,14 @@ reference.
 7. **The in-loop filters**, about 22% together (`edge_strengths` 6.3%, the
    edge filters 10.6%, SAO 2.9%, `filter_after` 1.8%). The boundary strengths
    are settled as blocks decode and scanned eight at a time, and the edge
-   filter runs its four lines in the lanes; what remains is the visit itself: every
-   edge of every block is scanned, strengths zero or not. Summarising the
-   strengths per coding tree block (any non-zero at all) so that a still block
-   costs one check, as SAO's blocks already do, is the untried lever.
+   filter runs its four lines in the lanes; what remains is the visit itself:
+   every edge of every block is scanned, strengths zero or not. Summarising
+   the strengths per coding tree block (any non-zero at all) so that a still
+   block costs one check, as SAO's blocks already do, is the untried lever.
 
 8. **`prediction_unit` and `merge_motion`**, 8.4% together: for 3,880
    prediction units, mostly merge index zero on a still block. The parsing is
-   now a few bins; the cost is the per-unit motion fill and the availability
+   a few bins; the cost is the per-unit motion fill and the availability
    lookups for the first candidate. Not profiled to the instruction yet.
 
 9. **Four-thread scaling.** On the capture four threads are 2.75× one; on the
@@ -152,84 +107,46 @@ reference.
 
 ## Coverage
 
-The decoder refuses, by name, anything outside the Mac's shape. From the
-parameter sets: a chroma format other than 4:4:4, separate colour planes, a
-bit depth other than 8, picture reordering, scaling lists, asymmetric motion
-partitions, PCM, long-term reference pictures, strong intra smoothing, SPS and
-PPS extensions, dependent slice segments, `pic_output_flag`, sign data
-hiding, `cabac_init_flag`, constrained intra prediction, transform skip,
-weighted prediction, transquant bypass, tiles, and a stream without the
-wavefront (`entropy_coding_sync_enabled_flag` 0), reference list
-modification. From the slice header: more than one slice per picture, B
-slices, temporal motion vector prediction, and a slice whose entry points are
-not one per coding tree block row. From the NAL header: any picture type
-other than the two IDR types and the two trailing types (so no CRA, which the
-Mac's stream does not use).
-
-None of the seven captures or the x265 video trip these. What is not known is
-whether the Mac ever does: in particular whether it emits more than one slice
-when a picture is large, uses long-term references in a shape other than the
-`ltr-*` captures' (which decode), or ever sends a B picture. The refusal
-makes the page fall back, so a wrong guess costs a frame, not a crash; the
-list is the one to revisit against a wider set of captures (other
-resolutions, other macOS versions, external displays).
-
-Mid-stream changes: a new SPS of another size takes a new picture buffer
-(the pool is filtered by size); the tests cover joining before a keyframe and
-garbage units but not a size change for the Rust module, which the FFmpeg
-module's tests do cover (`test/decoder.test.ts`).
+None of the seven captures or the x265 video trip the refusals listed in the
+architecture. What is not known is whether the Mac ever does: in particular
+whether it emits more than one slice when a picture is large, uses long-term
+references in a shape other than the `ltr-*` captures' (which decode), or
+ever sends a B picture. The refusal makes the page fall back, so a wrong
+guess costs a frame, not a crash; the list is the one to revisit against a
+wider set of captures (other resolutions, other macOS versions, external
+displays).
 
 ## Robustness
 
-- **Malformed input must return an error, never trap.** A WebAssembly trap
-  (a Rust panic, an out-of-bounds index, an `assert!`) is fatal to the module
-  instance, and the page would have to reload it, whereas an `Err` from
-  `decode` is recovered by waiting for the next keyframe. The decoder has
+- **Malformed input must return an error, never trap.** The decoder has
   about twenty `assert!`/`unwrap` sites and relies on slice indexing being
-  in bounds, and the review of this round found an arithmetic wraparound in
-  the new CABAC refill that could have read past the buffer on a corrupt
-  stream. Nothing fuzzes it. A `cargo fuzz` target over `Decoder::decode`
+  in bounds. Nothing fuzzes it. A `cargo fuzz` target over `Decoder::decode`
   seeded with the test fixtures' access units, run natively, is the next
   step; the panics it finds are then turned into errors, and the bounds the
   CABAC engine and bit reader rely on (`end`, the RBSP padding) get tests of
   their own.
-- **A panic on a pool thread.** The pool's seats are behind mutexes that
-  `expect` no thread panics while holding one; a panic there poisons the pool
-  for every decoder sharing it. Whether the page can recover a wedged pool, or
-  must reload the module, is not decided.
-- **Memory.** Picture buffers are pooled (at most four spare) and sized by the
-  sequence; the input buffer grows to the largest access unit. The shared
-  memory's maximum is 1 GiB (`rust/hevc-web/.cargo/config.toml`); a 2880×1800 capture
-  at 4:4:4 holds 15.5 MB a picture and the DPB keeps `max_dec_pic_buffering`
-  of them. Peak memory against the Mac's largest display has not been
+- **A failed thread.** A pool thread that does not start fails the module's
+  load, and so every decoder. The pool's seats are behind mutexes that
+  `expect` no thread panics while holding one; a thread that panics later
+  poisons the pool for every decoder sharing the module, and the page's only
+  recovery is a new decode worker, which nothing does yet. Whether the page
+  can recover a wedged pool, or must reload the module, is not decided.
+- **Memory.** Peak memory against the Mac's largest display has not been
   measured.
 
-## Integration into remotex
+## Verification
 
-remotex's `pure-rust-hevc` branch loads this module: the gateway pins release
-0.0.2 by SHA-256 and serves `hevc.js` and `hevc.wasm` at `/hevc/`, the decode
-worker imports the glue from there and seats the pool's threads as workers of
-the page's bundle (`hevcWasm.worker.ts`, `hevcPool.worker.ts`), and the paint
-worker reads the planes from the module's memory. What is left:
-
-1. **In the browser.** Both sides are checked under Bun and Node only: the
-   module's tests here, remotex's unit tests there, and the worker itself runs
-   in no test. The Playwright spec `tests/playwright/software-hevc.spec.ts`
-   needs a gateway with a live High Performance Mac and the archive beside its
-   config; it asserts the files loaded and the first passed keyframe
-   acknowledged without a decoder failure, and is the first thing to run.
-   Nested workers (the pool's threads are started by the decode worker, itself
-   a worker) are what the compositor's pool relies on already.
-2. **A failed thread.** A pool thread that does not start fails the module's
-   load, and so every decoder; one that panics later poisons the pool's seats
-   for every decoder sharing the module, and the page's only recovery is a new
-   decode worker, which nothing does yet.
-3. **Fixtures.** `bun test` decodes the two `mac-*` fixtures (330×194 and
-   352×256) on one thread and four; the real captures and the video are checked
-   by hand with `hevc-bench` and the Node bench under `tmp/`. A fixture nearer
-   the Mac's size, and a size change at an IDR mid-stream, belong in `test/`.
-4. **Two modules of one shape.** The decode worker's loader mirrors the
-   compositor's (`egfxPool.worker.ts`), differing only in where the glue comes
-   from, and will go on doing so: the licence that keeps the decoder out of
-   every remotex build keeps it out of the bundle, so the archive, the pin and
-   `[hevc_wasm]` stay, and the two loaders stay two.
+- **In the browser.** Both sides are checked under Bun and Node only: the
+  module's tests here, remotex's unit tests there, and the worker itself
+  runs in no test. The Playwright spec
+  `tests/playwright/software-hevc.spec.ts` needs a gateway with a live High
+  Performance Mac and the archive beside its config; it asserts the files
+  loaded and the first passed keyframe acknowledged without a decoder
+  failure, and is the first thing to run. Nested workers (the pool's threads
+  are started by the decode worker, itself a worker) are what the
+  compositor's pool relies on already.
+- **Fixtures.** `bun test` decodes the two `mac-*` fixtures (330×194 and
+  352×256) on one thread and four; the real captures and the video are
+  checked by hand with `hevc-bench` and the Node bench under `tmp/`. A
+  fixture nearer the Mac's size, and a size change at an IDR mid-stream,
+  belong in `test/`.
