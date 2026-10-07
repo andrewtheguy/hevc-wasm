@@ -106,6 +106,39 @@ pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usi
     unsafe { copy(dst.as_mut_ptr(), dst_stride, src.as_ptr(), src_stride, w, h) }
 }
 
+/// `dst = src`, `w`×`h`, a row at a time: for a block many vectors wide, whose
+/// rows are each a run of memory.
+pub fn copy_rows(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
+    holds(dst, dst_stride, w, h);
+    holds(src, src_stride, w, h);
+    let whole = w & !15;
+    let (d, s) = (dst.as_mut_ptr(), src.as_ptr());
+    for y in 0..h {
+        // SAFETY: both blocks checked.
+        unsafe {
+            let (dr, sr) = (d.add(y * dst_stride), s.add(y * src_stride));
+            let mut x = 0;
+            while x + 64 <= whole {
+                let (a, b) = (v128_load(sr.add(x) as *const v128), v128_load(sr.add(x + 16) as *const v128));
+                let (c, e) = (v128_load(sr.add(x + 32) as *const v128), v128_load(sr.add(x + 48) as *const v128));
+                v128_store(dr.add(x) as *mut v128, a);
+                v128_store(dr.add(x + 16) as *mut v128, b);
+                v128_store(dr.add(x + 32) as *mut v128, c);
+                v128_store(dr.add(x + 48) as *mut v128, e);
+                x += 64;
+            }
+            while x < whole {
+                v128_store(dr.add(x) as *mut v128, v128_load(sr.add(x) as *const v128));
+                x += 16;
+            }
+        }
+    }
+    if whole < w {
+        // SAFETY: the rest of the same blocks.
+        unsafe { copy(d.add(whole), dst_stride, s.add(whole), src_stride, w - whole, h) }
+    }
+}
+
 /// # Safety
 /// See `kernels::copy_block_from`.
 pub unsafe fn copy_block_from(dst: &mut [u8], dst_stride: usize, src: *const u8, src_stride: usize, w: usize, h: usize) {

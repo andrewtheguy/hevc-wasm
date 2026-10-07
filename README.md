@@ -175,11 +175,11 @@ two-pass run less a one-pass one). Per picture:
 
 | 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg's module, 0.0.1 |
 |---|---|---|
-| 1 thread, median ms | 2.5 | 6.2 |
-| 1 thread, M cycles | 12 | 23 |
-| 4 threads, median ms | 2.5 | 3.4 |
-| 4 threads, M cycles | 15 | 25 |
-| M instructions | 21 | 54 |
+| 1 thread, median ms | 1.9 | 6.2 |
+| 1 thread, M cycles | 11 | 23 |
+| 4 threads, median ms | 2.3 | 3.4 |
+| 4 threads, M cycles | 14 | 25 |
+| M instructions | 22 | 54 |
 
 On the Mac's dense screen content this decoder is half ahead of the FFmpeg
 module in cycles,
@@ -187,9 +187,10 @@ and both spend their time where the stream does: CABAC residual parsing and
 the 32×32 inverse transforms, of which the capture has some three thousand a
 picture, each with a handful of coefficients scattered to the far corners,
 which the transform runs over alone. On ordinary video, where motion compensation
-dominates, this decoder is nearly half ahead of it, and what leads its profile is the copy
+dominates, this decoder is half ahead of it, and what led its profile was the copy
 of the first reference that each row starts as: bound by memory, the reference
-and the picture being written not fitting the cache together. Of the steps that
+and the picture being written not fitting the cache together, and now made
+only for the blocks that changed. Of the steps that
 got here:
 running the filters inside the wavefront rather than as passes over the whole
 picture was worth a fifth of the cycles on four threads, where the passes had
@@ -218,6 +219,12 @@ a hundredth of the capture's, so each row's thread starts the row as one
 sequential copy of the first reference's rows, before it waits on the row
 above, and such a block costs nothing; the copy by the row moves the bytes
 sooner than the copies by the block did, a seventh of the video's cycles again.
+And most of that copy is not made: a free buffer still holds the picture it
+was decoded as, each picture knows which coding tree blocks it left as the
+picture its rows started as, two thirds of the video's, and so the buffer
+holding a picture the first reference descends from is that reference already
+but for the blocks changed since, the only ones a row copies: a twelfth of
+the video's cycles and a sixth of its time on one thread.
 And the parsing, which on the capture is some six hundred thousand context
 bins a picture for thirty thousand coefficients, nearly all of them the
 flags of sparse 32×32 blocks: the arithmetic decoder's most probable symbol,

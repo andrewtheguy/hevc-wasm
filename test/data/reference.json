@@ -61,6 +61,26 @@
         "afaa33ab73345de93299fff299bec9b1"
       ]
     },
+    "mac-still-352x256": {
+      "sha256": "547756911f46d13d651b483ee77057a85eda7174c1df332f937c6703d0d7d1df",
+      "width": 352,
+      "height": 256,
+      "pixFmt": "yuv444p",
+      "md5s": [
+        "c4112da9adbb1208ef71df05015ccc49",
+        "d12cbafba6c822be25292adc9762c6b6",
+        "7ee6e2e793e4b775a52c34e14d1c9744",
+        "341d2e13e662337dbaa171d1842c9d9b",
+        "d098daa537ea12c67253f0d646c8f12f",
+        "6804ea92d5d6f2d0f6b22f78a85592d0",
+        "4a827b024737e032fa727d491d79a7aa",
+        "fa37fa885ee9ad3c83ba287584d02390",
+        "13cc92d622e0d0108980ed8a229afc9c",
+        "ad3b048c96fa762c5158608be22dc708",
+        "67a1841fc9517cc9891087c3b6c760cf",
+        "968eb127cba621987439167cf1eefd36"
+      ]
+    },
     "yuv420p-330x194": {
       "sha256": "aae6d3ba5ce1de55404f7bae94c0688e6a40fa203ee8c944e3117a43eb135d30",
       "width": 330,

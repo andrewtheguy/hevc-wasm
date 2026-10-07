@@ -21,6 +21,19 @@ pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usi
     }
 }
 
+/// `dst = src`, `w`×`h`, each at its stride, for a block far wider than a
+/// prediction block: a run of coding tree blocks.
+pub fn copy_rows(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return simd128::copy_rows(dst, dst_stride, src, src_stride, w, h);
+    }
+    #[allow(unreachable_code)]
+    for y in 0..h {
+        dst[y * dst_stride..y * dst_stride + w].copy_from_slice(&src[y * src_stride..y * src_stride + w]);
+    }
+}
+
 /// `dst = src`, `w`×`h`, `src` by pointer: a block of the picture whose rows
 /// other threads' blocks share.
 ///

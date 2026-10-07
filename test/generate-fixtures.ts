@@ -25,7 +25,7 @@ async function make(name: string, spec: FixtureSpec): Promise<Reference> {
   const x265 = ["bframes=0", `keyint=${KEYINT}`, "log-level=error", spec.x265].filter(Boolean).join(":");
   await run([
     "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-    "-f", "lavfi", "-i", `testsrc2=size=${spec.size}:rate=30`,
+    "-f", "lavfi", "-i", spec.source ?? `testsrc2=size=${spec.size}:rate=30`,
     "-frames:v", String(spec.frames ?? 12),
     "-pix_fmt", spec.pixFmt,
     "-c:v", "libx265", "-preset", "fast", "-x265-params", x265,

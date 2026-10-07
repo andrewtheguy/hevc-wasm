@@ -14,6 +14,8 @@ export interface FixtureSpec {
   size: string;
   pixFmt: string;
   frames?: number;
+  // A lavfi graph of the size to encode, in place of testsrc2 at that size.
+  source?: string;
   // Extra x265 parameters, after bframes=0 and keyint=6.
   x265?: string;
 }
@@ -66,6 +68,15 @@ export const SPECS = {
   // The Mac's shape: a cropped size, and one a whole number of 32-pixel rows.
   "mac-330x194": { size: "330x194", pixFmt: "yuv444p", x265: MAC_X265 },
   "mac-352x256": { size: "352x256", pixFmt: "yuv444p", x265: MAC_X265 },
+  // A screen mostly still: a patch moves across one frozen picture, and the
+  // rest is skipped from the picture before, which the decoder leaves in the
+  // buffer it reuses rather than copy.
+  "mac-still-352x256": {
+    size: "352x256",
+    pixFmt: "yuv444p",
+    source: "testsrc2=size=352x256:rate=30,trim=end_frame=1,loop=loop=-1:size=1[bg];testsrc2=size=44x36:rate=30[fg];[bg][fg]overlay=x=37+9*n:y=50+5*n",
+    x265: MAC_X265,
+  },
   "yuv420p-330x194": { size: "330x194", pixFmt: "yuv420p" },
   "yuv422p-320x180": { size: "320x180", pixFmt: "yuv422p" },
   // Wavefront rows, many of them with 16-pixel CTBs, as the Mac sends.
