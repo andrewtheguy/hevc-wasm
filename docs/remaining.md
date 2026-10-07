@@ -1,7 +1,6 @@
 # What remains of the pure-Rust decoder
 
-As of commit `38da479` on `pure-rust`. What the decoder does today, how it is
-built and what it measures are in the [README](../README.md); this is the list
+What the decoder does today, how it is built and what it measures are in the [README](../README.md); this is the list
 of what it does not do yet, in the order the work would go. Numbers are from
 the module under Node on one thread of the x86 workstation, profiled with
 `perf record` of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
@@ -207,36 +206,29 @@ module's tests do cover (`test/decoder.test.ts`).
 
 ## Integration into remotex
 
-The page's decode worker loads this module as of remotex's `pure-rust-hevc`
-branch: the archive carries `hevc.js` and `hevc.wasm` as before, the gateway
-pins release 0.0.2 by SHA-256 and serves the two at `/hevc/`, the worker
-imports the glue from there and seats the pool's threads as workers of the
-page's bundle (`hevcWasm.worker.ts`, `hevcPool.worker.ts`), and the paint
-worker reads the planes as it did. What is left:
+remotex's `pure-rust-hevc` branch loads this module: the gateway pins release
+0.0.2 by SHA-256 and serves `hevc.js` and `hevc.wasm` at `/hevc/`, the decode
+worker imports the glue from there and seats the pool's threads as workers of
+the page's bundle (`hevcWasm.worker.ts`, `hevcPool.worker.ts`), and the paint
+worker reads the planes from the module's memory. What is left:
 
-1. **The release.** `publish-private.sh` has not run for 0.0.2: remotex's pin
-   is the digest of a local `./build.sh`, which a second build reproduced, and
-   the published archive's `SHA256SUMS` must agree with it before remotex's
-   branch merges.
-2. **In the browser.** Both sides are checked under Bun and Node only: the
-   module's tests here, remotex's unit tests there (the worker itself runs in
-   no test, as the FFmpeg one did not). The Playwright spec
-   `tests/playwright/software-hevc.spec.ts` needs a gateway with a live
-   High Performance Mac and the archive beside its config; it asserts the files
-   loaded and the first passed keyframe acknowledged without a decoder failure,
-   and is the first thing to run. Nested workers (the pool's threads are
-   started by the decode worker, itself a worker) are what the compositor's
-   pool relies on already.
-3. **A failed thread.** A pool thread that does not start fails the module's
-   load, and so every decoder, as a failed worker did before; one that panics
-   later poisons the pool's seats for every decoder sharing the module, and the
-   page's only recovery is a new decode worker, which nothing does yet.
-4. **Fixtures.** `bun test` decodes the two `mac-*` fixtures (330×194 and
+1. **In the browser.** Both sides are checked under Bun and Node only: the
+   module's tests here, remotex's unit tests there, and the worker itself runs
+   in no test. The Playwright spec `tests/playwright/software-hevc.spec.ts`
+   needs a gateway with a live High Performance Mac and the archive beside its
+   config; it asserts the files loaded and the first passed keyframe
+   acknowledged without a decoder failure, and is the first thing to run.
+   Nested workers (the pool's threads are started by the decode worker, itself
+   a worker) are what the compositor's pool relies on already.
+2. **A failed thread.** A pool thread that does not start fails the module's
+   load, and so every decoder; one that panics later poisons the pool's seats
+   for every decoder sharing the module, and the page's only recovery is a new
+   decode worker, which nothing does yet.
+3. **Fixtures.** `bun test` decodes the two `mac-*` fixtures (330×194 and
    352×256) on one thread and four; the real captures and the video are checked
    by hand with `hevc-bench` and the Node bench under `tmp/`. A fixture nearer
-   the Mac's size, and a size change mid-stream, which the FFmpeg module's tests
-   covered and this module's do not, belong in `test/`.
-5. **Two modules of one shape.** The decode worker's loader now mirrors the
+   the Mac's size, and a size change at an IDR mid-stream, belong in `test/`.
+4. **Two modules of one shape.** The decode worker's loader mirrors the
    compositor's (`egfxPool.worker.ts`), differing only in where the glue comes
    from, and will go on doing so: the licence that keeps the decoder out of
    every remotex build keeps it out of the bundle, so the archive, the pin and
