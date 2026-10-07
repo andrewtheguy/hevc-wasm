@@ -93,7 +93,9 @@ run decode fuzz/artifacts/decode/<file>` replays it.
 
 ## Releasing
 
-Bump `VERSION`, commit, push, and run `./publish-private.sh`, logged in to `gh`
+Bump the version in `rust/hevc-web/Cargo.toml` (the module's crate: the archive
+and the tag take their number from it, through `cargo metadata` and `jq`),
+commit, push, and run `./publish-private.sh`, logged in to `gh`
 with an account that can write to hevc-wasm-archives. It builds `git archive HEAD`
 on this machine, not in a workflow, since a public repository's workflow
 artifacts are anyone's to download; attaches the archive and its `SHA256SUMS` to
