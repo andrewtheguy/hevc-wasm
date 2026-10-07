@@ -118,13 +118,15 @@ displays).
 
 ## Robustness
 
-- **Malformed input must return an error, never trap.** The decoder has
-  about twenty `assert!`/`unwrap` sites and relies on slice indexing being
-  in bounds. Nothing fuzzes it. A `cargo fuzz` target over `Decoder::decode`
-  seeded with the test fixtures' access units, run natively, is the next
-  step; the panics it finds are then turned into errors, and the bounds the
-  CABAC engine and bit reader rely on (`end`, the RBSP padding) get tests of
-  their own.
+- **Malformed input must return an error, never trap.** The fuzz target
+  (`rust/hevc/fuzz`, see the README) has had forty minutes on five workers,
+  about 110,000 inputs, on one thread alone, and ten minutes, about 16,000
+  inputs, since it decodes each input on the pool as well and compares:
+  without a panic, a sanitizer report, a timeout or a disagreement, with the
+  coverage still growing when it stopped. A run of hours, and one from a
+  corpus of the real captures' access units (under `tmp/`), is what would
+  say more. The module's SIMD loops have only the damaged fixtures of
+  `bun test` against them.
 - **A failed thread.** A pool thread that does not start fails the module's
   load, and so every decoder. The pool's seats are behind mutexes that
   `expect` no thread panics while holding one; a thread that panics later
@@ -136,15 +138,6 @@ displays).
 
 ## Verification
 
-- **In the browser.** Both sides are checked under Bun and Node only: the
-  module's tests here, remotex's unit tests there, and the worker itself
-  runs in no test. The Playwright spec
-  `tests/playwright/software-hevc.spec.ts` needs a gateway with a live High
-  Performance Mac and the archive beside its config; it asserts the files
-  loaded and the first passed keyframe acknowledged without a decoder
-  failure, and is the first thing to run. Nested workers (the pool's threads
-  are started by the decode worker, itself a worker) are what the
-  compositor's pool relies on already.
 - **Fixtures.** `bun test` decodes the two `mac-*` fixtures (330×194 and
   352×256) on one thread and four; the real captures and the video are
   checked by hand with `hevc-bench` and the Node bench under `tmp/`. A

@@ -126,8 +126,13 @@ impl<'a> Row<'a> {
             if gt0[c] {
                 let mut abs = 1;
                 if gt1[c] {
-                    abs = 2 + self.eg_k(1)? as i32;
+                    abs = 2 + self.eg_k(1)?;
+                    // §7.4.9.9: within 16 bits, as the vector is.
+                    if abs > 1 << 15 {
+                        return Err(Error::invalid("a motion vector difference beyond 16 bits"));
+                    }
                 }
+                let mut abs = abs as i32;
                 if self.cab.bypass() == 1 {
                     abs = -abs;
                 }

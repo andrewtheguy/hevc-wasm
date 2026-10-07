@@ -46,7 +46,7 @@ until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.2.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.3.tar.gz"
 ```
 
 ## Testing
@@ -69,6 +69,27 @@ its keyframe, two decoders side by side, and garbage units.
 A run needs no ffmpeg. `bun run fixtures` regenerates the streams and their
 reference with the host's ffmpeg and libx265 from the specs in
 `test/fixtures.ts`; commit what it writes.
+
+The decoder must return an error on any input and never trap, since a trap
+takes the module down for every decoder in it. `rust/hevc/fuzz` holds a
+[cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) target that feeds a
+stream access unit by access unit to two decoders, one on the calling thread
+and one on a pool of three, and requires the same picture or the same
+failure of both. It is built natively, with the sanitizer and the debug
+assertions on, so that it catches a bounds the rows' shared accessors take
+on trust and a race in the wavefront as well as a panic. The SIMD loops are
+the module's alone (natively the decoder runs their scalar counterparts), so
+`bun test` also feeds damaged copies of the fixtures to the module, on one
+thread and on four, and requires that nothing traps and that the two agree.
+
+```sh
+cd rust/hevc
+mkdir -p fuzz/corpus/decode && cp ../../test/data/*.h265 fuzz/corpus/decode/
+cargo +nightly fuzz run decode -- -max_len=65536 -jobs=5 -workers=5
+```
+
+An input that fails lands in `fuzz/artifacts/decode/`; `cargo +nightly fuzz
+run decode fuzz/artifacts/decode/<file>` replays it.
 
 ## Releasing
 

@@ -130,3 +130,84 @@ describe("what it refuses", () => {
     });
   });
 });
+
+describe("a damaged stream", () => {
+  // The module's SIMD loops run nowhere else than here: the Rust fuzz target
+  // (rust/hevc/fuzz) runs their scalar counterparts. So the fixtures are
+  // damaged the ways a stream gets damaged, the same ways every run, and the
+  // module must throw an error rather than trap, and decode each unit alike
+  // on one thread and on the pool.
+  const ROUNDS = 64;
+
+  /** xorshift32, as a draw of `0..n`. */
+  function rng(seed: number): (n: number) => number {
+    let s = seed >>> 0 || 1;
+    return (n) => {
+      s ^= s << 13;
+      s >>>= 0;
+      s ^= s >>> 17;
+      s ^= s << 5;
+      s >>>= 0;
+      return s % n;
+    };
+  }
+
+  /** A copy of `stream` with flipped bits, a run of random bytes, a cut, or a unit dropped. */
+  function damage(stream: Uint8Array, draw: (n: number) => number): Uint8Array {
+    const out = stream.slice();
+    switch (draw(4)) {
+      case 0:
+        for (let n = draw(8) + 1; n > 0; n--) {
+          const at = draw(out.length);
+          out[at] = (out[at] ?? 0) ^ (1 << draw(8));
+        }
+        return out;
+      case 1: {
+        const at = draw(out.length);
+        const end = Math.min(at + draw(64) + 1, out.length);
+        for (let i = at; i < end; i++) out[i] = draw(256);
+        return out;
+      }
+      case 2:
+        return out.subarray(0, draw(out.length));
+      default: {
+        const units = accessUnits(out);
+        const unit = units[draw(units.length)]!.data;
+        const start = unit.byteOffset;
+        const rest = new Uint8Array(out.length - unit.length);
+        rest.set(out.subarray(0, start));
+        rest.set(out.subarray(start + unit.length), start);
+        return rest;
+      }
+    }
+  }
+
+  /** The picture's digest, null for none, or "error": what the two decoders must agree on. */
+  function outcome(decoder: RustDecoder, unit: Uint8Array): string | null {
+    try {
+      const picture = decodeUnit(loaded, decoder, unit);
+      return picture && rustPictureMd5(loaded, picture);
+    } catch (error) {
+      expect(error).not.toBeInstanceOf(WebAssembly.RuntimeError);
+      return "error";
+    }
+  }
+
+  for (const name of ["mac-330x194", "mac-352x256"] as const) {
+    test(`${name} never traps, and decodes alike on one thread and ${POOL}`, () => {
+      const draw = rng(name.length);
+      for (let round = 0; round < ROUNDS; round++) {
+        const stream = damage(fixtures[name].stream, draw);
+        const units = accessUnits(stream).map((u) => u.data);
+        if (units.length === 0) units.push(stream);
+        withDecoder(1, (one) =>
+          withDecoder(POOL, (many) => {
+            for (const unit of units) {
+              expect([round, outcome(many, unit)]).toEqual([round, outcome(one, unit)]);
+            }
+          }),
+        );
+      }
+    });
+  }
+});

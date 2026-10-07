@@ -44,7 +44,10 @@ impl<'a> Row<'a> {
                 v += 1;
             }
             if v == 5 {
-                v += self.eg_k(0)?;
+                v = v.saturating_add(self.eg_k(0)?);
+            }
+            if v > 26 {
+                return Err(Error::invalid("CuQpDeltaVal"));
             }
             let mut delta = v as i32;
             if delta != 0 && self.cab.bypass() == 1 {
@@ -368,7 +371,9 @@ fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], 
         };
         let mut abs = base;
         if base == threshold {
-            abs += coeff_remaining(cab, rice)?;
+            // The level is clipped to 16 bits (§7.4.9.11); a magnitude past
+            // that clips the same wherever past it is.
+            abs = (abs as u32).saturating_add(coeff_remaining(cab, rice)?).min(32768) as i32;
             if abs > 3 * (1 << rice) {
                 rice = (rice + 1).min(4);
             }
@@ -387,19 +392,19 @@ fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], 
 
 /// `coeff_abs_level_remaining` (§9.3.3.11).
 #[inline(always)]
-fn coeff_remaining(cab: &mut View, rice: u32) -> Result<i32> {
+fn coeff_remaining(cab: &mut View, rice: u32) -> Result<u32> {
     let prefix = cab.bypass_ones(32);
     if prefix >= 32 {
         return Err(Error::invalid("a coefficient prefix too long"));
     }
     if prefix < 3 {
-        Ok(((prefix << rice) + cab.bypass_bits(rice)) as i32)
+        Ok((prefix << rice) + cab.bypass_bits(rice))
     } else {
         let l = prefix - 3;
         if l + rice > 31 {
             return Err(Error::invalid("a coefficient suffix too long"));
         }
-        Ok(((((1u32 << l) + 2) << rice) + cab.bypass_bits(l + rice)) as i32)
+        Ok((((1u32 << l) + 2) << rice).saturating_add(cab.bypass_bits(l + rice)))
     }
 }
 
