@@ -7,6 +7,7 @@ measurements, and build details belong in the [README](README.md).
 
 - Strict no backward-compatibility or legacy paths.
 - No squash merges
+- No change logs
 - After test changes, run `bun test` and `bun run typecheck`, once each.
 - Run `bun run fixtures` only when a spec in `test/fixtures.ts` changes, and
   commit what it writes to `test/data`.
