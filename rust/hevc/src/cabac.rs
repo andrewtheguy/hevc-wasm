@@ -94,40 +94,39 @@ static INIT_VALUES: [[u8; NUM_CTX]; 2] = [
     ],
 ];
 
-/// Per (model byte, range quartile): `lps | transMps << 8 | transLps << 16`,
-/// with a model byte being `pStateIdx * 2 + valMps` and the state-0 flip of the
-/// MPS folded in. Sized for any byte, so the index needs no check; the upper
-/// half is never read.
-const fn build_fused() -> [u32; 256 * 4] {
-    let mut t = [0u32; 256 * 4];
+/// The tables by model byte, a model byte being `pStateIdx * 2 + valMps`:
+/// `rangeTabLps` for the four quartiles of the range, a byte each in one
+/// word, and the model after an MPS and after an LPS, with the state-0 flip
+/// of the MPS folded in. A bin's range depends on the one before through
+/// the LPS it looks up; with the quartiles packed, the lookup by model
+/// starts before the range is known, and the range selects a byte of the
+/// word by a shift. Sized for any byte, so the index needs no check; the
+/// upper half is never read.
+const fn build_tables() -> ([u32; 256], [u16; 256]) {
+    let mut lps = [0u32; 256];
+    let mut trans = [0u16; 256];
     let mut s = 0;
     while s < 128 {
         let p = s >> 1;
         let mps = (s & 1) as u8;
-        let mut q = 0;
-        while q < 4 {
-            let lps = RANGE_LPS[p][q] as u32;
-            let tm = ((STATE_TRANS[p][1] << 1) | mps) as u32;
-            let new_mps = if p == 0 { 1 - mps } else { mps };
-            let tl = ((STATE_TRANS[p][0] << 1) | new_mps) as u32;
-            t[s * 4 + q] = lps | (tm << 8) | (tl << 16);
-            q += 1;
-        }
+        lps[s] = (RANGE_LPS[p][0] as u32) | (RANGE_LPS[p][1] as u32) << 8 | (RANGE_LPS[p][2] as u32) << 16 | (RANGE_LPS[p][3] as u32) << 24;
+        let tm = ((STATE_TRANS[p][1] << 1) | mps) as u16;
+        let new_mps = if p == 0 { 1 - mps } else { mps };
+        let tl = ((STATE_TRANS[p][0] << 1) | new_mps) as u16;
+        trans[s] = tm | (tl << 8);
         s += 1;
     }
-    t
+    (lps, trans)
 }
-static FUSED: [u32; 256 * 4] = build_fused();
+static TABLES: ([u32; 256], [u16; 256]) = build_tables();
 
 /// Bit position of `ivlOffset` inside [`Cabac::low`]. Under it sit the bits
 /// read ahead, a 1 just under the last of them, and zeros under that: the
-/// marker rises as the bits are used, and when it is within `REFILL_AT` of
-/// `OFF` nothing is set under `MARK`, which is the test for a refill. One
-/// register fewer than a count of the bits, and the arithmetic above `OFF`
-/// never sees the marker.
+/// marker rises as the bits are used, and when it reaches the upper half of
+/// the word the lower half is zero, which is the test for a refill: eight
+/// bits remain then, one more than a bin consumes. One register fewer than
+/// a count of the bits, and the arithmetic above `OFF` never sees the marker.
 const OFF: u32 = 41;
-const REFILL_AT: u32 = 8;
-const MARK: u64 = (1 << (OFF - REFILL_AT)) - 1;
 /// `low` with no bits read ahead.
 const EMPTY: u64 = 1 << (OFF - 1);
 
@@ -156,14 +155,11 @@ impl Contexts {
 }
 
 /// The arithmetic decoder's registers (§9.3.2.5), a value: what a function
-/// decodes with, in locals of its own, through a [`View`].
+/// decodes with, in locals of its own, through a [`View`]. Two registers:
+/// what a bin touches, and no more, so that a loop of bins keeps them and
+/// its own few values in registers.
 #[derive(Clone, Copy)]
 pub struct Engine {
-    /// The next byte of the data to read ahead, by address: one register,
-    /// where the data and an index would be three.
-    next: *const u8,
-    /// The end of the data.
-    end: *const u8,
     /// `ivlOffset << OFF`, with the bits read ahead and their marker below.
     low: u64,
     range: u32,
@@ -172,6 +168,12 @@ pub struct Engine {
 /// The arithmetic decoder over one substream of a slice's data.
 pub struct Cabac<'a> {
     data: &'a [u8],
+    /// The next byte of the data to read ahead, by address, and the end of
+    /// the data. The refill alone touches them, once per word of bins, so
+    /// they stay here in memory beside the models rather than in registers
+    /// of the loops'.
+    next: *const u8,
+    end: *const u8,
     engine: Engine,
     pub ctx: Contexts,
 }
@@ -179,7 +181,7 @@ pub struct Cabac<'a> {
 impl<'a> Cabac<'a> {
     /// The engine at byte `start` of `data` (§9.3.2.5), with the models `ctx`.
     pub fn new(data: &'a [u8], start: usize, ctx: Contexts) -> Self {
-        let mut e = Cabac { data, engine: Engine { next: data.as_ptr(), end: data.as_ptr_range().end, low: EMPTY, range: 510 }, ctx };
+        let mut e = Cabac { data, next: data.as_ptr(), end: data.as_ptr_range().end, engine: Engine { low: EMPTY, range: 510 }, ctx };
         e.reinit_at(start);
         e
     }
@@ -187,7 +189,8 @@ impl<'a> Cabac<'a> {
     /// Restart the arithmetic registers at byte `byte`, keeping the models.
     pub fn reinit_at(&mut self, byte: usize) {
         assert!(byte <= self.data.len());
-        self.engine = Engine { next: self.data[byte..].as_ptr(), end: self.data.as_ptr_range().end, low: EMPTY, range: 510 };
+        self.next = self.data[byte..].as_ptr();
+        self.engine = Engine { low: EMPTY, range: 510 };
         let mut v = self.view();
         v.refill();
         v.low <<= 9;
@@ -199,7 +202,7 @@ impl<'a> Cabac<'a> {
     /// back with [`Self::restore`].
     #[inline(always)]
     pub fn view(&mut self) -> View<'_, 'a> {
-        View::new(self.engine, &mut self.ctx)
+        View::new(self.engine, self)
     }
 
     #[inline(always)]
@@ -250,30 +253,27 @@ impl<'a> Cabac<'a> {
 
 /// The decoder with its registers in hand: see [`Cabac::view`]. A local of
 /// the function decoding, whose address never leaves it, so that the
-/// registers are locals too.
+/// registers are locals too; the models and the data are reached through
+/// the decoder it views.
 pub struct View<'v, 'a> {
-    next: *const u8,
-    end: *const u8,
-    pub ctx: &'v mut Contexts,
     low: u64,
     range: u32,
-    _data: std::marker::PhantomData<&'a [u8]>,
+    pub cab: &'v mut Cabac<'a>,
 }
 
 impl<'v, 'a> View<'v, 'a> {
     #[inline(always)]
-    pub fn new(e: Engine, ctx: &'v mut Contexts) -> Self {
-        View { next: e.next, end: e.end, ctx, low: e.low, range: e.range, _data: std::marker::PhantomData }
+    pub fn new(e: Engine, cab: &'v mut Cabac<'a>) -> Self {
+        View { low: e.low, range: e.range, cab }
     }
 
     #[inline(always)]
     pub fn engine(&self) -> Engine {
-        Engine { next: self.next, end: self.end, low: self.low, range: self.range }
+        Engine { low: self.low, range: self.range }
     }
 
     #[inline(always)]
     pub fn restore(&mut self, e: Engine) {
-        self.next = e.next;
         self.low = e.low;
         self.range = e.range;
     }
@@ -284,24 +284,25 @@ impl<'v, 'a> View<'v, 'a> {
     /// without a call, so that the registers stay in registers around it.
     #[inline(always)]
     fn refill(&mut self) {
-        let v = if self.next as usize + 4 <= self.end as usize {
+        let next = self.cab.next;
+        let v = if next as usize + 4 <= self.cab.end as usize {
             // SAFETY: `next` starts inside the data and `next..next + 4` ends
             // by its end.
-            u32::from_be(unsafe { self.next.cast::<u32>().read_unaligned() })
+            u32::from_be(unsafe { next.cast::<u32>().read_unaligned() })
         } else {
             0
         };
         let p = self.low.trailing_zeros();
         self.low ^= 1 << p;
         self.low |= ((v as u64) << 1 | 1) << (p - 32);
-        self.next = self.next.wrapping_add(4);
+        self.cab.next = next.wrapping_add(4);
     }
 
     /// `low` shifted up by `n` with the refill it may need.
     #[inline(always)]
     fn consume(&mut self, n: u32) {
         self.low <<= n;
-        if self.low & MARK == 0 {
+        if self.low as u32 == 0 {
             self.refill();
         }
     }
@@ -312,28 +313,27 @@ impl<'v, 'a> View<'v, 'a> {
     #[inline(always)]
     pub fn decode(&mut self, ctx_idx: usize) -> u32 {
         let ctx_idx = ctx_idx & (CTX_PAD - 1);
-        let s = self.ctx.0[ctx_idx] as u32;
-        let q = (self.range >> 6) & 3;
-        let e = FUSED[((s << 2) | q) as usize];
-        let lps = e & 0xFF;
+        let s = self.cab.ctx.0[ctx_idx] as usize;
+        let lps = (TABLES.0[s] >> ((self.range >> 3) & 24)) & 0xFF;
+        let t = TABLES.1[s] as u32;
         let range = self.range - lps;
         let scaled = (range as u64) << OFF;
         if self.low < scaled {
-            self.ctx.0[ctx_idx] = (e >> 8) as u8;
-            let under = ((range as i32 - 256) >> 31) as u32;
-            self.range = range + (range & under);
-            self.low += self.low & (under as i32 as i64 as u64);
-            if self.low & MARK == 0 {
+            self.cab.ctx.0[ctx_idx] = t as u8;
+            let n = range.wrapping_sub(256) >> 31;
+            self.range = range << n;
+            self.low <<= n;
+            if self.low as u32 == 0 {
                 self.refill();
             }
-            s & 1
+            (s & 1) as u32
         } else {
             self.low -= scaled;
-            self.ctx.0[ctx_idx] = (e >> 16) as u8;
+            self.cab.ctx.0[ctx_idx] = (t >> 8) as u8;
             let n = lps.leading_zeros() - 23;
             self.range = lps << n;
             self.consume(n);
-            (s & 1) ^ 1
+            (s & 1) as u32 ^ 1
         }
     }
 
