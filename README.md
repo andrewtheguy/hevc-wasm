@@ -11,7 +11,8 @@ A release is `hevc-wasm-vX.Y.Z.tar.gz`, holding the two files the page loads:
 `hevc.js`, wasm-bindgen's ES module glue, and `hevc.wasm`. This repository
 publishes the source of the build and no binary of it: releases go to the
 private [andrewtheguy/hevc-wasm-archives](https://github.com/andrewtheguy/hevc-wasm-archives),
-for whoever can see it. No remotex build holds it either, while it is BETA:
+for whoever can see it. No remotex build holds it either, since its licence
+keeps it out of every remotex artifact:
 remotex pins one by version and SHA-256 (`src/hevc_wasm.rs`), an operator
 downloads that archive from there and names it in the gateway's `[hevc_wasm]`
 table, and the gateway reads it at start-up and serves its two files at

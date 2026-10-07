@@ -238,7 +238,6 @@ worker reads the planes as it did. What is left:
    covered and this module's do not, belong in `test/`.
 5. **Two modules of one shape.** The decode worker's loader now mirrors the
    compositor's (`egfxPool.worker.ts`), differing only in where the glue comes
-   from. Once the decoder leaves BETA, the archive, the pin and `[hevc_wasm]`
-   could go and the module join the bundle as a third under `frontend/wasm`,
-   which the architecture's constraints currently forbid; that is a decision
-   for then.
+   from, and will go on doing so: the licence that keeps the decoder out of
+   every remotex build keeps it out of the bundle, so the archive, the pin and
+   `[hevc_wasm]` stay, and the two loaders stay two.
