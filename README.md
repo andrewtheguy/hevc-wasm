@@ -76,8 +76,9 @@ Bump `VERSION`, commit, push, and run `./publish-private.sh`, logged in to `gh`
 with an account that can write to hevc-wasm-archives. It builds `git archive HEAD`
 on this machine, not in a workflow, since a public repository's workflow
 artifacts are anyone's to download; attaches the archive and its `SHA256SUMS` to
-hevc-wasm-archives' release `vX.Y.Z`; and tags the commit `vX.Y.Z` here. remotex
-then takes it as a new version and checksum in `src/hevc_wasm.rs`.
+hevc-wasm-archives' release `vX.Y.Z`; tags the commit `vX.Y.Z` here, with a
+release of the source alone whose notes give the archive's digest. remotex then
+takes it as a new version and checksum in `src/hevc_wasm.rs`.
 
 ## The decoder
 
