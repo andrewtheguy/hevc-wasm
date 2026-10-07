@@ -4,6 +4,9 @@
 use crate::bits::BitReader;
 use crate::error::{Error, Result};
 
+/// `MaxLumaPs` of level 6.2 (Table A.8), the largest of any level.
+const MAX_LUMA_PS: u64 = 35_651_584;
+
 fn unsupported(what: &str) -> Error {
     Error::unsupported(format!("the stream uses {what}, which is not the Mac's shape"))
 }
@@ -286,9 +289,10 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<Sps> {
     }
     let width = r.read_ue_max(16888)?;
     let height = r.read_ue_max(16888)?;
-    // The largest picture any level allows (A.4.1, level 6.2): what a
-    // picture's planes and maps are allocated for at most.
-    if u64::from(width) * u64::from(height) > 35_651_584 {
+    // The largest picture any level allows: what a picture's planes and
+    // maps are allocated for at most.
+    let luma_ps = u64::from(width) * u64::from(height);
+    if luma_ps > MAX_LUMA_PS {
         return Err(Error::unsupported("a picture larger than level 6.2 allows"));
     }
     let mut conf_win = [0u32; 4];
@@ -312,6 +316,21 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<Sps> {
             return Err(unsupported("picture reordering"));
         }
         r.read_ue()?; // max latency increase
+    }
+    // A.4.2: the pictures a DPB holds, fewer the larger they are, against
+    // the largest any level allows. What a reference picture set may ask
+    // the decoder to allocate (`decoder`) is bounded by it.
+    let max_dpb_size = if luma_ps <= MAX_LUMA_PS / 4 {
+        16
+    } else if luma_ps <= MAX_LUMA_PS / 2 {
+        12
+    } else if luma_ps <= MAX_LUMA_PS * 3 / 4 {
+        8
+    } else {
+        6
+    };
+    if max_dec_pic_buffering > max_dpb_size {
+        return Err(Error::invalid("sps_max_dec_pic_buffering beyond the level's DPB"));
     }
     let log2_min_cb_size = r.read_ue_max(3)? as u8 + 3;
     let log2_ctb_size = log2_min_cb_size + r.read_ue_max(3)? as u8;

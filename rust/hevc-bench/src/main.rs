@@ -8,45 +8,13 @@ mod md5;
 
 use std::time::Instant;
 
-/// Splits an Annex B stream into access units: a unit starts at each VCL NAL
-/// unit with `first_slice_segment_in_pic_flag`, with the parameter sets before
-/// it.
-fn access_units(data: &[u8]) -> Vec<&[u8]> {
-    let mut starts = Vec::new();
-    let mut i = 0;
-    let mut pending_start: Option<usize> = None;
-    while i + 3 < data.len() {
-        if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 {
-            let nal_type = (data[i + 3] >> 1) & 0x3f;
-            let start = if i > 0 && data[i - 1] == 0 { i - 1 } else { i };
-            if nal_type < 32 {
-                let first = i + 5 < data.len() && data[i + 5] & 0x80 != 0;
-                if first {
-                    starts.push(pending_start.take().unwrap_or(start));
-                }
-            } else if pending_start.is_none() {
-                pending_start = Some(start);
-            }
-            i += 3;
-        } else {
-            i += 1;
-        }
-    }
-    let mut units = Vec::new();
-    for (k, &s) in starts.iter().enumerate() {
-        let e = starts.get(k + 1).copied().unwrap_or(data.len());
-        units.push(&data[s..e]);
-    }
-    units
-}
-
 fn main() {
     let mut args = std::env::args().skip(1);
     let path = args.next().expect("usage: hevc-bench FILE [THREADS] [REPEATS]");
     let threads: usize = args.next().map_or(1, |s| s.parse().expect("THREADS"));
     let repeats: usize = args.next().map_or(1, |s| s.parse().expect("REPEATS"));
     let data = std::fs::read(&path).expect("read input");
-    let units = access_units(&data);
+    let units = hevc::access_units(&data);
     if units.is_empty() {
         eprintln!("{path}: no access units");
         std::process::exit(1);

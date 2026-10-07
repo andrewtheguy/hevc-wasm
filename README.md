@@ -70,6 +70,22 @@ A run needs no ffmpeg. `bun run fixtures` regenerates the streams and their
 reference with the host's ffmpeg and libx265 from the specs in
 `test/fixtures.ts`; commit what it writes.
 
+The decoder must return an error on any input and never trap, since a trap
+takes the module down for every decoder in it. `rust/hevc/fuzz` holds a
+[cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) target that feeds a
+stream to a decoder access unit by access unit, built with the sanitizer and
+the debug assertions on, so that it catches a bounds the kernels take on
+trust as well as a panic:
+
+```sh
+cd rust/hevc
+mkdir -p fuzz/corpus/decode && cp ../../test/data/*.h265 fuzz/corpus/decode/
+cargo +nightly fuzz run decode -- -max_len=65536 -jobs=5 -workers=5
+```
+
+An input that fails lands in `fuzz/artifacts/decode/`; `cargo +nightly fuzz
+run decode fuzz/artifacts/decode/<file>` replays it.
+
 ## Releasing
 
 Bump `VERSION`, commit, push, and run `./publish-private.sh`, logged in to `gh`

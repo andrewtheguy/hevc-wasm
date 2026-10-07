@@ -185,19 +185,19 @@ impl Decoder {
                 self.release(gone.pic);
             }
         }
-        // A missing reference is a grey picture (§8.3.3.2), as FFmpeg makes one.
-        for &(p, used) in &wanted {
-            if used && !self.dpb.iter().any(|e| e.poc == p) {
-                let mut pic = self.take_buffer(&sps);
-                for plane in &mut pic.planes {
-                    plane.data.fill(128);
-                }
-                pic.poc = p;
-                self.dpb.push(Reference { pic: Arc::new(pic), poc: p });
-            }
-        }
-        if self.dpb.len() > sps.max_dec_pic_buffering as usize {
+        // A missing reference is a grey picture (§8.3.3.2), as FFmpeg makes
+        // one; counted before any is made, since each is a picture's memory.
+        let missing: Vec<i32> = wanted.iter().filter(|&&(p, used)| used && !self.dpb.iter().any(|e| e.poc == p)).map(|&(p, _)| p).collect();
+        if self.dpb.len() + missing.len() > sps.max_dec_pic_buffering as usize {
             return Err(Error::invalid("more reference pictures than the stream allows"));
+        }
+        for p in missing {
+            let mut pic = self.take_buffer(&sps);
+            for plane in &mut pic.planes {
+                plane.data.fill(128);
+            }
+            pic.poc = p;
+            self.dpb.push(Reference { pic: Arc::new(pic), poc: p });
         }
         // RefPicList0 (§8.3.4): the earlier pictures, then the later, repeated.
         let mut refs: Vec<RefPic> = Vec::new();
@@ -227,7 +227,8 @@ impl Decoder {
         let mut substreams = vec![sh.data_offset];
         let mut esc = rbsp.rbsp_to_escaped(sh.data_offset);
         for &off in &sh.entry_point_offsets {
-            esc += off as usize;
+            // Past the data is past the data, however far (`decode_row`).
+            esc = esc.saturating_add(off as usize);
             substreams.push(rbsp.escaped_to_rbsp(esc));
         }
 

@@ -80,6 +80,40 @@ impl Rbsp {
     }
 }
 
+/// The access units of an Annex B byte stream (§7.4.2.4.4), each what
+/// [`Decoder::decode`](crate::Decoder::decode) takes: a unit starts at each
+/// VCL NAL unit with `first_slice_segment_in_pic_flag`, with the non-VCL
+/// units before it. Bytes before the first unit, and a stream with no slice
+/// in it, are no unit.
+pub fn access_units(data: &[u8]) -> Vec<&[u8]> {
+    let mut starts = Vec::new();
+    let mut i = 0;
+    let mut pending_start: Option<usize> = None;
+    while i + 3 < data.len() {
+        if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 {
+            let nal_type = (data[i + 3] >> 1) & 0x3f;
+            let start = if i > 0 && data[i - 1] == 0 { i - 1 } else { i };
+            if nal_type < 32 {
+                let first = i + 5 < data.len() && data[i + 5] & 0x80 != 0;
+                if first {
+                    starts.push(pending_start.take().unwrap_or(start));
+                }
+            } else if pending_start.is_none() {
+                pending_start = Some(start);
+            }
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    let mut units = Vec::new();
+    for (k, &s) in starts.iter().enumerate() {
+        let e = starts.get(k + 1).copied().unwrap_or(data.len());
+        units.push(&data[s..e]);
+    }
+    units
+}
+
 /// The NAL units of an Annex B byte stream, header and escaped payload each,
 /// start codes and trailing zeros removed.
 pub fn split_annex_b(stream: &[u8]) -> Vec<&[u8]> {

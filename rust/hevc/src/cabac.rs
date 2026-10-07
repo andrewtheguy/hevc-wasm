@@ -412,4 +412,22 @@ mod tests {
         let mut e = Cabac::new(&[0xFF, 0xFF, 0xFF, 0xFF], 0, Contexts::init(0, 30));
         assert!(e.terminate());
     }
+
+    /// The engine reads zeros past the data, however many bins are asked of
+    /// it, from wherever in the data it starts: the end included.
+    #[test]
+    fn runs_out_of_data_into_zeros() {
+        let data = [0x5A; 11];
+        for start in [0, 3, 9, 10, 11] {
+            let mut e = Cabac::new(&data, start, Contexts::init(1, 26));
+            for i in 0..10_000 {
+                e.decode(i % NUM_CTX);
+                e.bypass_bits(7);
+                e.bypass_ones(32);
+                e.terminate();
+            }
+            // Past the end, the next word is whole zeros: every bypass bin 0.
+            assert_eq!(e.bypass_bits(32), 0);
+        }
+    }
 }
