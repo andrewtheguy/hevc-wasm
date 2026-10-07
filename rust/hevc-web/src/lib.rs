@@ -107,9 +107,10 @@ impl Decoder {
     }
 
     /// The picture the last unit decoded to, in sixteen numbers: its width and
-    /// height, `2` for 4:4:4, the colour range (`2` full, `1` limited, `0`
-    /// unstated), the matrix, primaries and transfer as the stream codes them
-    /// (`2` for unstated), each plane's start in this module's memory, each
+    /// height, `2` for 4:4:4, the colour range (`2` full, `1` limited, which
+    /// an unstated one means), the matrix, primaries and transfer as the
+    /// stream codes them (`2` for unstated), each plane's start in this
+    /// module's memory, each
     /// plane's stride, and whether it is a keyframe. The planes are good until
     /// the next [`Self::input`].
     pub fn picture(&mut self) -> *const i32 {

@@ -78,6 +78,16 @@ impl Decoder {
     /// picture if it has one. A unit that fails leaves the stream waiting for
     /// an IDR.
     pub fn decode(&mut self, unit: &[u8]) -> Result<Option<Decoded>> {
+        let r = self.unit(unit);
+        if r.is_err() {
+            // Whatever the unit left half done, the next IDR starts over.
+            self.started = false;
+            self.release_all();
+        }
+        r
+    }
+
+    fn unit(&mut self, unit: &[u8]) -> Result<Option<Decoded>> {
         let mut out = None;
         for nal in nal::split_annex_b(unit) {
             let hdr = NalHeader::parse(nal).ok_or_else(|| Error::invalid("a NAL unit header"))?;
@@ -105,13 +115,7 @@ impl Decoder {
                     rbsp.unescape(&nal[2..]);
                     let r = self.picture(&hdr, &rbsp);
                     self.rbsp = rbsp;
-                    match r {
-                        Ok(decoded) => out = decoded,
-                        Err(e) => {
-                            self.started = false;
-                            return Err(e);
-                        }
-                    }
+                    out = r?;
                 }
                 t if t < 32 => return Err(Error::unsupported(format!("a picture of NAL unit type {t}"))),
                 _ => {}

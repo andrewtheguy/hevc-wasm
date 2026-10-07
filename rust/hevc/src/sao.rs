@@ -65,18 +65,19 @@ impl SaoCtx {
         let prm = unsafe { m.sao.at(cy * m.ctb_w + cx) }[c];
         let pl = self.planes[c];
         let stride = pl.stride;
-        // SAFETY: this block and the deblocked samples round it are final
-        // and nothing else touches them now (see `shared`).
-        let frame = unsafe { pl.block_mut(0, 0, pw, ph) };
+        // SAFETY: this block is final and nothing else touches it now; the
+        // deblocked line below and column to the right it reads are too
+        // (see `shared`).
+        let block = unsafe { pl.block_mut(x0, y0, w, h) };
         // The last line and column as deblocked, for the neighbours.
         // SAFETY: this block's own entries.
         let (last_row, last_col) = unsafe { (m.sao_rows.slice_mut((c * m.ctb_h + cy) * pw + x0, w), m.sao_cols.slice_mut((c * m.ctb_w + cx) * ph + y0, h)) };
         if below {
-            last_row.copy_from_slice(&frame[(y1 - 1) * stride + x0..(y1 - 1) * stride + x1]);
+            last_row.copy_from_slice(&block[(h - 1) * stride..(h - 1) * stride + w]);
         }
         if right {
             for (k, v) in last_col.iter_mut().enumerate() {
-                *v = frame[(y0 + k) * stride + x1 - 1];
+                *v = block[k * stride + w - 1];
             }
         }
         match prm.type_idx {
@@ -85,7 +86,7 @@ impl SaoCtx {
                 for k in 0..4usize {
                     band[(k + prm.aux as usize) & 31] = prm.offset[k];
                 }
-                kernels::sao_band(&mut frame[y0 * stride + x0..], stride, w, h, &band);
+                kernels::sao_band(block, stride, w, h, &band);
             }
             2 => {
                 let (da, db) = match prm.aux {
@@ -105,7 +106,7 @@ impl SaoCtx {
                 // and the column to the left from what those blocks saved,
                 // the rest from the picture.
                 const S: usize = SRC_STRIDE;
-                kernels::copy_block(&mut src[S + 1..], S, &frame[y0 * stride + x0..], stride, w, h);
+                kernels::copy_block(&mut src[S + 1..], S, &block[..], stride, w, h);
                 let (l, r) = ((x0 > 0) as usize, (x1 < pw) as usize);
                 if y0 > 0 {
                     // SAFETY: the row above's entries, saved before this.
@@ -113,7 +114,10 @@ impl SaoCtx {
                     src[1 - l..1 + w + r].copy_from_slice(above);
                 }
                 if y1 < ph {
-                    src[(h + 1) * S + 1 - l..(h + 1) * S + 1 + w + r].copy_from_slice(&frame[y1 * stride + x0 - l..y1 * stride + x1 + r]);
+                    // SAFETY: the line below, deblocked, which its own
+                    // block has yet to reach.
+                    let line = unsafe { pl.row(x0 - l, y1, w + l + r) };
+                    src[(h + 1) * S + 1 - l..(h + 1) * S + 1 + w + r].copy_from_slice(line);
                 }
                 if l == 1 {
                     // SAFETY: the column to the left's entries, saved before this.
@@ -124,11 +128,12 @@ impl SaoCtx {
                 }
                 if r == 1 {
                     for k in 0..h {
-                        src[(k + 1) * S + w + 1] = frame[(y0 + k) * stride + x1];
+                        // SAFETY: the column to the right, as the line below.
+                        src[(k + 1) * S + w + 1] = unsafe { pl.get(x1, y0 + k) };
                     }
                 }
                 let origin = (iy0 - y0 + 1) * S + (ix0 - x0 + 1);
-                kernels::sao_edge(&mut frame[iy0 * stride + ix0..], stride, src, origin, S, ix1 - ix0, iy1 - iy0, da.1 * S as isize + da.0, db.1 * S as isize + db.0, &prm.offset);
+                kernels::sao_edge(&mut block[(iy0 - y0) * stride + ix0 - x0..], stride, src, origin, S, ix1 - ix0, iy1 - iy0, da.1 * S as isize + da.0, db.1 * S as isize + db.0, &prm.offset);
             }
             _ => {}
         }

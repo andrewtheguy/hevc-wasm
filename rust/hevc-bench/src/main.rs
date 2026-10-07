@@ -47,6 +47,10 @@ fn main() {
     let repeats: usize = args.next().map_or(1, |s| s.parse().expect("REPEATS"));
     let data = std::fs::read(&path).expect("read input");
     let units = access_units(&data);
+    if units.is_empty() {
+        eprintln!("{path}: no access units");
+        std::process::exit(1);
+    }
     if threads > 1 {
         rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().expect("pool");
     }
@@ -83,7 +87,10 @@ fn main() {
                     }
                 }
                 Ok(None) => {}
-                Err(e) => eprintln!("unit {}: {e}", times.len() - 1),
+                Err(e) => {
+                    eprintln!("unit {}: {e}", times.len() - 1);
+                    std::process::exit(1);
+                }
             }
         }
         let _ = t;

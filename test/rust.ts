@@ -62,15 +62,21 @@ export async function loadRust(threads: number): Promise<LoadedRust> {
   const { memory } = await glue.default({ module_or_path: bytes });
   const seat: PoolSeat = { js, module: glue.module(), memory };
   const workers: Worker[] = [];
-  await Promise.all(
-    Array.from({ length: threads }, () => new Promise<void>((resolve, reject) => {
-      const worker = new Worker(new URL("./rust-pool.worker.ts", import.meta.url), { type: "module" });
-      workers.push(worker);
-      worker.onmessage = ({ data }: MessageEvent<string | null>) => (data === null ? resolve() : reject(new Error(data)));
-      worker.onerror = (event) => reject(new Error(event.message || "a pool worker did not start"));
-      worker.postMessage(seat);
-    })),
-  );
+  try {
+    await Promise.all(
+      Array.from({ length: threads }, () => new Promise<void>((resolve, reject) => {
+        const worker = new Worker(new URL("./rust-pool.worker.ts", import.meta.url), { type: "module" });
+        workers.push(worker);
+        worker.onmessage = ({ data }: MessageEvent<string | null>) => (data === null ? resolve() : reject(new Error(data)));
+        worker.onerror = (event) => reject(new Error(event.message || "a pool worker did not start"));
+        worker.postMessage(seat);
+      })),
+    );
+  } catch (error) {
+    // A seat not taken: the others would keep the process alive.
+    for (const worker of workers) worker.terminate();
+    throw error;
+  }
   glue.startPool(threads);
   return {
     glue,

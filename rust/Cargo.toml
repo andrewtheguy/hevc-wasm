@@ -1,6 +1,6 @@
 # The pure-Rust HEVC decoder for the page (hevc), and the native harness that
 # checks it against FFmpeg (hevc-bench). The page's module, hevc-web, is built
-# apart by ../build-rust.sh.
+# apart by ../build.sh.
 [workspace]
 resolver = "2"
 members = ["hevc", "hevc-bench"]

@@ -286,6 +286,11 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<Sps> {
     }
     let width = r.read_ue_max(16888)?;
     let height = r.read_ue_max(16888)?;
+    // The largest picture any level allows (A.4.1, level 6.2): what a
+    // picture's planes and maps are allocated for at most.
+    if u64::from(width) * u64::from(height) > 35_651_584 {
+        return Err(Error::unsupported("a picture larger than level 6.2 allows"));
+    }
     let mut conf_win = [0u32; 4];
     if r.read_flag()? {
         for o in conf_win.iter_mut() {
