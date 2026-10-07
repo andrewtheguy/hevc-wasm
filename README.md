@@ -73,9 +73,14 @@ reference with the host's ffmpeg and libx265 from the specs in
 The decoder must return an error on any input and never trap, since a trap
 takes the module down for every decoder in it. `rust/hevc/fuzz` holds a
 [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) target that feeds a
-stream to a decoder access unit by access unit, built with the sanitizer and
-the debug assertions on, so that it catches a bounds the kernels take on
-trust as well as a panic:
+stream access unit by access unit to two decoders, one on the calling thread
+and one on a pool of three, and requires the same picture or the same
+failure of both. It is built natively, with the sanitizer and the debug
+assertions on, so that it catches a bounds the rows' shared accessors take
+on trust and a race in the wavefront as well as a panic. The SIMD loops are
+the module's alone (natively the decoder runs their scalar counterparts), so
+`bun test` also feeds damaged copies of the fixtures to the module, on one
+thread and on four, and requires that nothing traps and that the two agree.
 
 ```sh
 cd rust/hevc

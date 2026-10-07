@@ -13,7 +13,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-hevc = { path = ".." }
+hevc = { path = "..", features = ["threads"] }
+rayon = "1"
 
 [[bin]]
 name = "decode"

@@ -120,10 +120,13 @@ displays).
 
 - **Malformed input must return an error, never trap.** The fuzz target
   (`rust/hevc/fuzz`, see the README) has had forty minutes on five workers,
-  about 110,000 inputs, without a panic, a sanitizer report or a timeout,
-  with the coverage still growing when it stopped. A run of hours, and one
-  from a corpus of the real captures' access units (under `tmp/`), is what
-  would say more.
+  about 110,000 inputs, on one thread alone, and ten minutes, about 16,000
+  inputs, since it decodes each input on the pool as well and compares:
+  without a panic, a sanitizer report, a timeout or a disagreement, with the
+  coverage still growing when it stopped. A run of hours, and one from a
+  corpus of the real captures' access units (under `tmp/`), is what would
+  say more. The module's SIMD loops have only the damaged fixtures of
+  `bun test` against them.
 - **A failed thread.** A pool thread that does not start fails the module's
   load, and so every decoder. The pool's seats are behind mutexes that
   `expect` no thread panics while holding one; a thread that panics later
