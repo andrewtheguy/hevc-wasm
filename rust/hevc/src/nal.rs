@@ -27,10 +27,16 @@ impl NalHeader {
     }
 }
 
+/// Zero bytes [`Rbsp::unescape`] leaves after the payload, so that a reader
+/// may take whole words up to its end and read zeros past it, as the
+/// standard has it read, without a byte-wise tail.
+pub const RBSP_PAD: usize = 8;
+
 /// A NAL payload with its emulation-prevention bytes removed, and where they
 /// were: a slice's entry points count them (§7.4.7.1).
 #[derive(Default)]
 pub struct Rbsp {
+    /// The payload, then [`RBSP_PAD`] zeros.
     pub data: Vec<u8>,
     /// Index in the escaped payload of each removed `03`, ascending.
     epb_pos: Vec<usize>,
@@ -41,7 +47,7 @@ impl Rbsp {
     pub fn unescape(&mut self, ebsp: &[u8]) {
         self.data.clear();
         self.epb_pos.clear();
-        self.data.reserve(ebsp.len());
+        self.data.reserve(ebsp.len() + RBSP_PAD);
         let mut zeros = 0usize;
         for (i, &b) in ebsp.iter().enumerate() {
             if zeros >= 2 && b == 3 {
@@ -52,6 +58,7 @@ impl Rbsp {
             self.data.push(b);
             zeros = if b == 0 { zeros + 1 } else { 0 };
         }
+        self.data.extend_from_slice(&[0; RBSP_PAD]);
     }
 
     /// An offset into the escaped payload as an offset into `data`.
@@ -113,7 +120,8 @@ mod tests {
         let esc = [0u8, 0, 3, 1, 5, 0, 0, 3, 0, 9];
         let mut r = Rbsp::default();
         r.unescape(&esc);
-        assert_eq!(r.data, [0, 0, 1, 5, 0, 0, 0, 9]);
+        assert_eq!(r.data[..8], [0, 0, 1, 5, 0, 0, 0, 9]);
+        assert_eq!(r.data[8..], [0; RBSP_PAD]);
         assert_eq!(r.escaped_to_rbsp(9), 7);
         assert_eq!(r.rbsp_to_escaped(7), 9);
         let s = [0, 0, 0, 1, 0x42, 1, 0xAA, 0, 0, 1, 0x44, 1, 0xBB, 0, 0];

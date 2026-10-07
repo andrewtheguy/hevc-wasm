@@ -47,22 +47,6 @@ struct Mv {
     ref_idx: i32,
 }
 
-/// The merge candidates: at most five.
-#[derive(Default)]
-struct Cands {
-    buf: [Mv; 5],
-    len: usize,
-}
-
-impl Cands {
-    fn push(&mut self, m: Mv) {
-        if self.len < 5 {
-            self.buf[self.len] = m;
-            self.len += 1;
-        }
-    }
-}
-
 impl Mv {
     fn of(m: Motion) -> Self {
         Mv { mv: [m.mv[0] as i32, m.mv[1] as i32], ref_idx: m.ref_idx as i32 }
@@ -154,15 +138,16 @@ impl<'a> Row<'a> {
     }
 
     /// §6.4.2: the inter neighbour at (`xn`, `yn`) a prediction block may use,
-    /// as its 4×4 index.
-    fn pb_avail(&self, xcb: usize, ycb: usize, ncb: usize, xp: usize, yp: usize, w: usize, h: usize, part_idx: usize, xn: i32, yn: i32) -> Option<usize> {
+    /// as its 4×4 index; `before` when it is to the left or above, in a row
+    /// or column of the block, and so decoded before it wherever it is.
+    fn pb_avail(&self, xcb: usize, ycb: usize, ncb: usize, xp: usize, yp: usize, w: usize, h: usize, part_idx: usize, xn: i32, yn: i32, before: bool) -> Option<usize> {
         let m = self.pic.maps;
-        if xn < 0 || yn < 0 || xn as usize >= m.width || yn as usize >= m.height {
+        if !self.in_picture(xn, yn) {
             return None;
         }
         let (xnu, ynu) = (xn as usize, yn as usize);
         let same_cb = xnu >= xcb && xnu < xcb + ncb && ynu >= ycb && ynu < ycb + ncb;
-        let avail = if same_cb { !(w * 2 == ncb && h * 2 == ncb && part_idx == 1 && ycb + h <= ynu && xcb + w > xnu) } else { self.available(xp, yp, xn, yn) };
+        let avail = if same_cb { !(w * 2 == ncb && h * 2 == ncb && part_idx == 1 && ycb + h <= ynu && xcb + w > xnu) } else { before || self.available(xp, yp, xn, yn) };
         if !avail {
             return None;
         }
@@ -176,71 +161,73 @@ impl<'a> Row<'a> {
     }
 
     /// The merge candidate at `merge_idx` (§8.5.3.2.2 to §8.5.3.2.5), of a P
-    /// slice: spatial, then zero vectors.
+    /// slice: spatial, then zero vectors. The list is built only as far as
+    /// the index, since each candidate is found and pruned on its own, and
+    /// the index is nearly always 0.
+    #[inline(never)]
     fn merge_motion(&mut self, xcb: usize, ycb: usize, ncb: usize, xp0: usize, yp0: usize, w0: usize, h0: usize, part_idx0: usize, merge_idx: usize) -> Result<Mv> {
         let plevel = self.pic.pps.log2_parallel_merge_level as usize;
         let (xp, yp, w, h, part_idx) = if plevel > 2 && ncb == 8 { (xcb, ycb, ncb, ncb, 0) } else { (xp0, yp0, w0, h0, part_idx0) };
         let pm = self.part_mode;
         let same_mer = |xn: i32, yn: i32| -> bool { (xp >> plevel) as i32 == xn >> plevel && (yp >> plevel) as i32 == yn >> plevel };
         let (xi, yi, wi, hi) = (xp as i32, yp as i32, w as i32, h as i32);
-        let mut cands = Cands::default();
-        let at = |s: &Self, xn: i32, yn: i32| s.pb_avail(xcb, ycb, ncb, xp, yp, w, h, part_idx, xn, yn).map(|i| s.motion_at(i));
+        // The candidates found so far: the next one that survives the
+        // pruning is number `found`.
+        let mut found = 0usize;
+        let at = |s: &Self, xn: i32, yn: i32, before: bool| s.pb_avail(xcb, ycb, ncb, xp, yp, w, h, part_idx, xn, yn, before).map(|i| s.motion_at(i));
         // A1
         let (xa1, ya1) = (xi - 1, yi + hi - 1);
-        let a1 = if !same_mer(xa1, ya1) && !(part_idx == 1 && pm == PartMode::PartNx2N) { at(self, xa1, ya1) } else { None };
+        let a1 = if !same_mer(xa1, ya1) && !(part_idx == 1 && pm == PartMode::PartNx2N) { at(self, xa1, ya1, true) } else { None };
         if let Some(m) = a1 {
-            cands.push(m);
+            if found == merge_idx {
+                return Ok(m);
+            }
+            found += 1;
         }
         // B1
         let (xb1, yb1) = (xi + wi - 1, yi - 1);
-        let b1 = if !same_mer(xb1, yb1) && !(part_idx == 1 && pm == PartMode::Part2NxN) { at(self, xb1, yb1) } else { None };
-        if let Some(m) = b1 {
-            if a1 != Some(m) {
-                cands.push(m);
+        let b1 = if !same_mer(xb1, yb1) && !(part_idx == 1 && pm == PartMode::Part2NxN) { at(self, xb1, yb1, true) } else { None };
+        if let Some(m) = b1.filter(|&m| a1 != Some(m)) {
+            if found == merge_idx {
+                return Ok(m);
             }
+            found += 1;
         }
         // B0
         let (xb0, yb0) = (xi + wi, yi - 1);
-        if !same_mer(xb0, yb0) {
-            if let Some(m) = at(self, xb0, yb0) {
-                if b1 != Some(m) {
-                    cands.push(m);
-                }
+        let b0 = if !same_mer(xb0, yb0) { at(self, xb0, yb0, false) } else { None };
+        if let Some(m) = b0.filter(|&m| b1 != Some(m)) {
+            if found == merge_idx {
+                return Ok(m);
             }
+            found += 1;
         }
         // A0
         let (xa0, ya0) = (xi - 1, yi + hi);
-        if !same_mer(xa0, ya0) {
-            if let Some(m) = at(self, xa0, ya0) {
-                if a1 != Some(m) {
-                    cands.push(m);
-                }
+        let a0 = if !same_mer(xa0, ya0) { at(self, xa0, ya0, false) } else { None };
+        if let Some(m) = a0.filter(|&m| a1 != Some(m)) {
+            if found == merge_idx {
+                return Ok(m);
             }
+            found += 1;
         }
         // B2, only while fewer than four survived.
-        if cands.len != 4 {
-            let (xb2, yb2) = (xi - 1, yi - 1);
-            if !same_mer(xb2, yb2) {
-                if let Some(m) = at(self, xb2, yb2) {
-                    if a1 != Some(m) && b1 != Some(m) {
-                        cands.push(m);
-                    }
-                }
+        let (xb2, yb2) = (xi - 1, yi - 1);
+        let b2 = if found != 4 && !same_mer(xb2, yb2) { at(self, xb2, yb2, true) } else { None };
+        if let Some(m) = b2.filter(|&m| a1 != Some(m) && b1 != Some(m)) {
+            if found == merge_idx {
+                return Ok(m);
             }
+            found += 1;
         }
+        // Zero vectors, each reference in turn, then the first again.
         let max = self.pic.sh.max_num_merge_cand as usize;
         let num_ref = self.pic.refs.len();
-        let mut zero_idx = 0;
-        while cands.len < max {
-            let r = if zero_idx < num_ref { zero_idx as i32 } else { 0 };
-            cands.push(Mv { mv: [0, 0], ref_idx: r });
-            zero_idx += 1;
-        }
-        let len = cands.len;
-        if merge_idx >= len {
+        if merge_idx >= max {
             return Err(Error::invalid("merge_idx beyond the candidates"));
         }
-        Ok(cands.buf[merge_idx])
+        let zero_idx = merge_idx - found;
+        Ok(Mv { mv: [0, 0], ref_idx: if zero_idx < num_ref { zero_idx as i32 } else { 0 } })
     }
 
     /// The motion vector predictor (§8.5.3.2.6, §8.5.3.2.7) for `ref_idx`.
@@ -248,9 +235,9 @@ impl<'a> Row<'a> {
         let refs = self.pic.refs;
         let target_poc = refs[ref_idx as usize].poc;
         let (xi, yi, wi, hi) = (xp as i32, yp as i32, w as i32, h as i32);
-        let a_pos = [(xi - 1, yi + hi), (xi - 1, yi + hi - 1)];
-        let b_pos = [(xi + wi, yi - 1), (xi + wi - 1, yi - 1), (xi - 1, yi - 1)];
-        let avail = |p: (i32, i32)| self.pb_avail(xcb, ycb, ncb, xp, yp, w, h, part_idx, p.0, p.1).map(|i| self.motion_at(i));
+        let a_pos = [(xi - 1, yi + hi, false), (xi - 1, yi + hi - 1, true)];
+        let b_pos = [(xi + wi, yi - 1, false), (xi + wi - 1, yi - 1, true), (xi - 1, yi - 1, true)];
+        let avail = |p: (i32, i32, bool)| self.pb_avail(xcb, ycb, ncb, xp, yp, w, h, part_idx, p.0, p.1, p.2).map(|i| self.motion_at(i));
         // The same picture, unscaled; or any, scaled by POC distance.
         let direct = |m: &Mv| -> Option<[i32; 2]> { (refs[m.ref_idx as usize].poc == target_poc).then_some(m.mv) };
         let scaled = |m: &Mv| -> Option<[i32; 2]> {

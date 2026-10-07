@@ -51,7 +51,10 @@ pub const PRED_INTER: u8 = 2;
 pub const PRED_SKIP: u8 = 3;
 
 /// A 4×4 block's motion: its vector in quarter samples and its reference.
+/// Eight bytes, so that a prediction block fills its entries a word at a
+/// time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(C, align(8))]
 pub struct Motion {
     pub mv: [i16; 2],
     pub ref_idx: i8,
@@ -81,7 +84,8 @@ pub struct PicState {
     /// is what decides a neighbour's availability.
     pub zs: Arc<[u32]>,
     pub pred_mode: Vec<u8>,
-    /// Luma intra mode.
+    /// Luma intra mode, where the block is intra: what reads it looks at
+    /// `pred_mode` first.
     pub intra_mode: Vec<u8>,
     pub qp_y: Vec<i8>,
     pub ct_depth: Vec<u8>,

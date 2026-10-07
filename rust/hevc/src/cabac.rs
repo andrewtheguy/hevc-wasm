@@ -119,9 +119,17 @@ const fn build_fused() -> [u32; 256 * 4] {
 }
 static FUSED: [u32; 256 * 4] = build_fused();
 
-/// Bit position of `ivlOffset` inside [`Cabac::low`].
+/// Bit position of `ivlOffset` inside [`Cabac::low`]. Under it sit the bits
+/// read ahead, a 1 just under the last of them, and zeros under that: the
+/// marker rises as the bits are used, and when it is within `REFILL_AT` of
+/// `OFF` nothing is set under `MARK`, which is the test for a refill. One
+/// register fewer than a count of the bits, and the arithmetic above `OFF`
+/// never sees the marker.
 const OFF: u32 = 41;
-const REFILL_AT: i32 = 8;
+const REFILL_AT: u32 = 8;
+const MARK: u64 = (1 << (OFF - REFILL_AT)) - 1;
+/// `low` with no bits read ahead.
+const EMPTY: u64 = 1 << (OFF - 1);
 
 /// The allocated length of the models, so an index masked to it needs no
 /// bounds check: the pad is never read or written.
@@ -147,13 +155,17 @@ impl Contexts {
     }
 }
 
-/// The arithmetic decoder's registers (§9.3.2.5).
+/// The arithmetic decoder's registers (§9.3.2.5), a value: what a function
+/// decodes with, in locals of its own, through a [`View`].
 #[derive(Clone, Copy)]
 pub struct Engine {
-    byte_pos: usize,
-    /// `ivlOffset << 41`, with the bits not yet consumed below.
+    /// The next byte of the data to read ahead, by address: one register,
+    /// where the data and an index would be three.
+    next: *const u8,
+    /// The end of the data.
+    end: *const u8,
+    /// `ivlOffset << OFF`, with the bits read ahead and their marker below.
     low: u64,
-    cnt: i32,
     range: u32,
 }
 
@@ -167,18 +179,18 @@ pub struct Cabac<'a> {
 impl<'a> Cabac<'a> {
     /// The engine at byte `start` of `data` (§9.3.2.5), with the models `ctx`.
     pub fn new(data: &'a [u8], start: usize, ctx: Contexts) -> Self {
-        let mut e = Cabac { data, engine: Engine { byte_pos: start, low: 0, cnt: 0, range: 510 }, ctx };
+        let mut e = Cabac { data, engine: Engine { next: data.as_ptr(), end: data.as_ptr_range().end, low: EMPTY, range: 510 }, ctx };
         e.reinit_at(start);
         e
     }
 
     /// Restart the arithmetic registers at byte `byte`, keeping the models.
     pub fn reinit_at(&mut self, byte: usize) {
-        self.engine = Engine { byte_pos: byte, low: 0, cnt: 0, range: 510 };
+        assert!(byte <= self.data.len());
+        self.engine = Engine { next: self.data[byte..].as_ptr(), end: self.data.as_ptr_range().end, low: EMPTY, range: 510 };
         let mut v = self.view();
         v.refill();
         v.low <<= 9;
-        v.cnt -= 9;
         self.engine = v.engine();
     }
 
@@ -187,7 +199,7 @@ impl<'a> Cabac<'a> {
     /// back with [`Self::restore`].
     #[inline(always)]
     pub fn view(&mut self) -> View<'_, 'a> {
-        View { data: self.data, ctx: &mut self.ctx, byte_pos: self.engine.byte_pos, low: self.engine.low, cnt: self.engine.cnt, range: self.engine.range }
+        View::new(self.engine, &mut self.ctx)
     }
 
     #[inline(always)]
@@ -236,69 +248,93 @@ impl<'a> Cabac<'a> {
     }
 }
 
-/// The decoder with its registers in hand: see [`Cabac::view`].
+/// The decoder with its registers in hand: see [`Cabac::view`]. A local of
+/// the function decoding, whose address never leaves it, so that the
+/// registers are locals too.
 pub struct View<'v, 'a> {
-    data: &'a [u8],
+    next: *const u8,
+    end: *const u8,
     pub ctx: &'v mut Contexts,
-    byte_pos: usize,
     low: u64,
-    cnt: i32,
     range: u32,
+    _data: std::marker::PhantomData<&'a [u8]>,
 }
 
 impl<'v, 'a> View<'v, 'a> {
     #[inline(always)]
-    pub fn engine(&self) -> Engine {
-        Engine { byte_pos: self.byte_pos, low: self.low, cnt: self.cnt, range: self.range }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn refill_tail(&self) -> u32 {
-        let b = |i: usize| self.data.get(self.byte_pos + i).copied().unwrap_or(0) as u32;
-        (b(0) << 24) | (b(1) << 16) | (b(2) << 8) | b(3)
-    }
-
-    #[inline]
-    fn refill(&mut self) {
-        let v = match self.data.get(self.byte_pos..self.byte_pos + 4) {
-            Some(c) => u32::from_be_bytes([c[0], c[1], c[2], c[3]]),
-            None => self.refill_tail(),
-        };
-        self.low |= (v as u64) << ((OFF as i32 - 32 - self.cnt) as u32);
-        self.byte_pos += 4;
-        self.cnt += 32;
+    pub fn new(e: Engine, ctx: &'v mut Contexts) -> Self {
+        View { next: e.next, end: e.end, ctx, low: e.low, range: e.range, _data: std::marker::PhantomData }
     }
 
     #[inline(always)]
-    fn renorm(&mut self) {
-        let n = self.range.leading_zeros() - 23;
-        self.range <<= n;
+    pub fn engine(&self) -> Engine {
+        Engine { next: self.next, end: self.end, low: self.low, range: self.range }
+    }
+
+    #[inline(always)]
+    pub fn restore(&mut self, e: Engine) {
+        self.next = e.next;
+        self.low = e.low;
+        self.range = e.range;
+    }
+
+    /// The next word of the data under the bits in hand, the marker moved
+    /// under it. The data ends in [`RBSP_PAD`](crate::nal::RBSP_PAD) zeros,
+    /// so a word is whole up to the end, and past it the standard's zeros;
+    /// without a call, so that the registers stay in registers around it.
+    #[inline(always)]
+    fn refill(&mut self) {
+        let v = if self.next as usize + 4 <= self.end as usize {
+            // SAFETY: `next` starts inside the data and `next..next + 4` ends
+            // by its end.
+            u32::from_be(unsafe { self.next.cast::<u32>().read_unaligned() })
+        } else {
+            0
+        };
+        let p = self.low.trailing_zeros();
+        self.low ^= 1 << p;
+        self.low |= ((v as u64) << 1 | 1) << (p - 32);
+        self.next = self.next.wrapping_add(4);
+    }
+
+    /// `low` shifted up by `n` with the refill it may need.
+    #[inline(always)]
+    fn consume(&mut self, n: u32) {
         self.low <<= n;
-        self.cnt -= n as i32;
-        if self.cnt < REFILL_AT {
+        if self.low & MARK == 0 {
             self.refill();
         }
     }
 
-    /// A context-coded bin (§9.3.4.3.2).
+    /// A context-coded bin (§9.3.4.3.2). The most probable symbol is the
+    /// one most bins are, and its path is short: the range shrinks by the
+    /// other symbol's share, and doubling it at most puts it back.
     #[inline(always)]
     pub fn decode(&mut self, ctx_idx: usize) -> u32 {
         let ctx_idx = ctx_idx & (CTX_PAD - 1);
-        let s = self.ctx.0[ctx_idx] as usize;
-        let q = ((self.range >> 6) & 3) as usize;
-        let e = FUSED[(s << 2) | q];
+        let s = self.ctx.0[ctx_idx] as u32;
+        let q = (self.range >> 6) & 3;
+        let e = FUSED[((s << 2) | q) as usize];
         let lps = e & 0xFF;
-        self.range -= lps;
-        let scaled = (self.range as u64) << OFF;
-        let mask64 = ((scaled as i64 - self.low as i64 - 1) >> 63) as u64;
-        let mask = mask64 as u32;
-        self.low -= scaled & mask64;
-        self.range = self.range.wrapping_add(lps.wrapping_sub(self.range) & mask);
-        self.ctx.0[ctx_idx] = (if mask == 0 { e >> 8 } else { e >> 16 }) as u8;
-        let bin = (s as u32 ^ mask) & 1;
-        self.renorm();
-        bin
+        let range = self.range - lps;
+        let scaled = (range as u64) << OFF;
+        if self.low < scaled {
+            self.ctx.0[ctx_idx] = (e >> 8) as u8;
+            let under = ((range as i32 - 256) >> 31) as u32;
+            self.range = range + (range & under);
+            self.low += self.low & (under as i32 as i64 as u64);
+            if self.low & MARK == 0 {
+                self.refill();
+            }
+            s & 1
+        } else {
+            self.low -= scaled;
+            self.ctx.0[ctx_idx] = (e >> 16) as u8;
+            let n = lps.leading_zeros() - 23;
+            self.range = lps << n;
+            self.consume(n);
+            (s & 1) ^ 1
+        }
     }
 
     #[inline(always)]
@@ -311,11 +347,7 @@ impl<'v, 'a> View<'v, 'a> {
     /// A bypass bin (§9.3.4.3.4).
     #[inline(always)]
     pub fn bypass(&mut self) -> u32 {
-        self.low <<= 1;
-        self.cnt -= 1;
-        if self.cnt < REFILL_AT {
-            self.refill();
-        }
+        self.consume(1);
         let (low, bin) = Self::bypass_cmp(self.low, (self.range as u64) << OFF);
         self.low = low;
         bin
@@ -324,28 +356,14 @@ impl<'v, 'a> View<'v, 'a> {
     /// `n` bypass bins, most significant first.
     #[inline]
     pub fn bypass_bits(&mut self, n: u32) -> u32 {
-        if n == 0 {
-            return 0;
-        }
         let scaled = (self.range as u64) << OFF;
-        let (mut low, mut cnt) = (self.low, self.cnt);
         let mut v = 0u32;
         for _ in 0..n {
-            low <<= 1;
-            cnt -= 1;
-            if cnt < REFILL_AT {
-                self.low = low;
-                self.cnt = cnt;
-                self.refill();
-                low = self.low;
-                cnt = self.cnt;
-            }
-            let (l, bin) = Self::bypass_cmp(low, scaled);
-            low = l;
+            self.consume(1);
+            let (l, bin) = Self::bypass_cmp(self.low, scaled);
+            self.low = l;
             v = (v << 1) | bin;
         }
-        self.low = low;
-        self.cnt = cnt;
         v
     }
 
@@ -353,26 +371,15 @@ impl<'v, 'a> View<'v, 'a> {
     #[inline]
     pub fn bypass_ones(&mut self, max: u32) -> u32 {
         let scaled = (self.range as u64) << OFF;
-        let (mut low, mut cnt) = (self.low, self.cnt);
         let mut k = 0;
         while k < max {
-            low <<= 1;
-            cnt -= 1;
-            if cnt < REFILL_AT {
-                self.low = low;
-                self.cnt = cnt;
-                self.refill();
-                low = self.low;
-                cnt = self.cnt;
-            }
-            if low < scaled {
+            self.consume(1);
+            if self.low < scaled {
                 break;
             }
-            low -= scaled;
+            self.low -= scaled;
             k += 1;
         }
-        self.low = low;
-        self.cnt = cnt;
         k
     }
 
@@ -383,7 +390,9 @@ impl<'v, 'a> View<'v, 'a> {
         if self.low >= (self.range as u64) << OFF {
             true
         } else {
-            self.renorm();
+            let n = self.range.leading_zeros() - 23;
+            self.range <<= n;
+            self.consume(n);
             false
         }
     }

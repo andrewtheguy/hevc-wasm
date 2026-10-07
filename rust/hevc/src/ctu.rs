@@ -302,11 +302,17 @@ impl<'a> Row<'a> {
     /// (`xc`, `yc`) to use: inside the picture and decoded before it.
     #[inline]
     fn available(&self, xc: usize, yc: usize, xn: i32, yn: i32) -> bool {
+        self.in_picture(xn, yn) && self.pic.zs[self.pic.maps.idx4(xn as usize, yn as usize)] <= self.pic.zs[self.pic.maps.idx4(xc, yc)]
+    }
+
+    /// §6.4.1 for a neighbour to the left of or above the block, in a row
+    /// or column of it: such a one is decoded before it wherever it is, by
+    /// the z order within a coding tree block and the wavefront's lag
+    /// between rows, so being inside the picture is all.
+    #[inline]
+    fn in_picture(&self, xn: i32, yn: i32) -> bool {
         let m = &self.pic.maps;
-        if xn < 0 || yn < 0 || xn as usize >= m.width || yn as usize >= m.height {
-            return false;
-        }
-        self.pic.zs[m.idx4(xn as usize, yn as usize)] <= self.pic.zs[m.idx4(xc, yc)]
+        xn >= 0 && yn >= 0 && (xn as usize) < m.width && (yn as usize) < m.height
     }
 
     // ---- coding tree unit (§7.3.8.2) ----
@@ -384,7 +390,7 @@ impl<'a> Row<'a> {
         let size = 1usize << log2cb;
         let min_cb = self.pic.sps.log2_min_cb_size as usize;
         let split = if x0 + size <= m.width && y0 + size <= m.height && log2cb > min_cb {
-            let deeper = |s: &Self, xn: i32, yn: i32| s.available(x0, y0, xn, yn) && s.map_get(m.ct_depth, m.idx4(xn as usize, yn as usize)) > depth;
+            let deeper = |s: &Self, xn: i32, yn: i32| s.in_picture(xn, yn) && s.map_get(m.ct_depth, m.idx4(xn as usize, yn as usize)) > depth;
             let cond_l = deeper(self, x0 as i32 - 1, y0 as i32) as usize;
             let cond_a = deeper(self, x0 as i32, y0 as i32 - 1) as usize;
             self.cab.decode(CTX_SPLIT_CU + cond_l + cond_a) == 1
@@ -403,8 +409,8 @@ impl<'a> Row<'a> {
             self.qp_prev_reset = false;
             let cur_ctb = (y0 >> m.log2_ctb) * m.ctb_w + (x0 >> m.log2_ctb);
             let in_ctb = |x: usize, y: usize| (y >> m.log2_ctb) * m.ctb_w + (x >> m.log2_ctb) == cur_ctb;
-            let qp_a = if x0 > 0 && in_ctb(x0 - 1, y0) && self.available(x0, y0, x0 as i32 - 1, y0 as i32) { self.map_get(m.qp_y, m.idx4(x0 - 1, y0)) as i32 } else { qp_prev };
-            let qp_b = if y0 > 0 && in_ctb(x0, y0 - 1) && self.available(x0, y0, x0 as i32, y0 as i32 - 1) { self.map_get(m.qp_y, m.idx4(x0, y0 - 1)) as i32 } else { qp_prev };
+            let qp_a = if x0 > 0 && in_ctb(x0 - 1, y0) { self.map_get(m.qp_y, m.idx4(x0 - 1, y0)) as i32 } else { qp_prev };
+            let qp_b = if y0 > 0 && in_ctb(x0, y0 - 1) { self.map_get(m.qp_y, m.idx4(x0, y0 - 1)) as i32 } else { qp_prev };
             self.qp_y_pred = (qp_a + qp_b + 1) >> 1;
         }
         if split {
@@ -510,7 +516,7 @@ impl<'a> Row<'a> {
         self.cu_size = n;
         let mut skip = false;
         if !self.pic.sh.intra {
-            let skipped = |s: &Self, xn: i32, yn: i32| s.available(x0, y0, xn, yn) && s.map_get(m.pred_mode, m.idx4(xn as usize, yn as usize)) == PRED_SKIP;
+            let skipped = |s: &Self, xn: i32, yn: i32| s.in_picture(xn, yn) && s.map_get(m.pred_mode, m.idx4(xn as usize, yn as usize)) == PRED_SKIP;
             let cond_l = skipped(self, x0 as i32 - 1, y0 as i32) as usize;
             let cond_a = skipped(self, x0 as i32, y0 as i32 - 1) as usize;
             skip = self.cab.decode(CTX_CU_SKIP + cond_l + cond_a) == 1;
@@ -520,7 +526,6 @@ impl<'a> Row<'a> {
         self.set_cu_qp();
         if skip {
             self.fill4(m.pred_mode, x0, y0, n, n, PRED_SKIP);
-            self.fill4(m.intra_mode, x0, y0, n, n, 1);
             self.cu_intra = false;
             self.part_mode = PartMode::Part2Nx2N;
             self.prediction_unit(x0, y0, n, x0, y0, n, n, 0, true)?;
@@ -541,7 +546,6 @@ impl<'a> Row<'a> {
             self.parse_intra_modes(x0, y0, n)?;
         } else {
             merge_2nx2n = self.inter_prediction_units(x0, y0, n)?;
-            self.fill4(m.intra_mode, x0, y0, n, n, 1);
         }
         let rqt_root_cbf = self.cu_intra || (self.part_mode == PartMode::Part2Nx2N && merge_2nx2n) || self.cab.decode(CTX_RQT_ROOT_CBF) == 1;
         if rqt_root_cbf {
@@ -633,7 +637,7 @@ impl<'a> Row<'a> {
     fn mpm_candidates(&self, xp: usize, yp: usize) -> [u8; 3] {
         let m = self.pic.maps;
         let cand = |xn: i32, yn: i32, above: bool| -> u8 {
-            if !self.available(xp, yp, xn, yn) {
+            if !self.in_picture(xn, yn) {
                 return 1;
             }
             let i = m.idx4(xn as usize, yn as usize);

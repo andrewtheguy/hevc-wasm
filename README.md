@@ -150,7 +150,7 @@ the byte planes and the threading are this repository's.
   straight from their last pass, block copies, the residual add, planar and
   angular intra prediction, SAO and a 16-bit inverse transform by dot
   products; coefficients are scaled as they are parsed, and CABAC keeps its
-  registers in locals for a whole residual block.
+  registers in locals, each coded sub-block decoding in a function of its own.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
@@ -185,25 +185,26 @@ two-pass run less a one-pass one). Per picture:
 
 | 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| 1 thread, median ms | 21.7 | 30.8 |
-| 1 thread, M cycles | 64 | 88 |
-| 4 threads, median ms | 7.5 | 9.7 |
-| 4 threads, M cycles | 66 | 90 |
-| M instructions | 167 | 213 |
+| 1 thread, median ms | 19.3 | 34.4 |
+| 1 thread, M cycles | 54 | 90 |
+| 4 threads, median ms | 7.0 | 10.9 |
+| 4 threads, M cycles | 57 | 91 |
+| M instructions | 146 | 213 |
 
 | 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg module |
 |---|---|---|
-| 1 thread, median ms | 2.9 | 5.9 |
-| 1 thread, M cycles | 14 | 23 |
-| 4 threads, median ms | 2.3 | 3.1 |
-| 4 threads, M cycles | 17 | 25 |
-| M instructions | 26 | 54 |
+| 1 thread, median ms | 2.6 | 6.2 |
+| 1 thread, M cycles | 13 | 23 |
+| 4 threads, median ms | 2.4 | 3.1 |
+| 4 threads, M cycles | 15 | 25 |
+| M instructions | 22 | 54 |
 
-On the Mac's dense screen content this decoder is a quarter ahead in cycles,
+On the Mac's dense screen content this decoder is two fifths ahead in cycles,
 and both spend their time where the stream does: CABAC residual parsing and
 the 32×32 inverse transforms, of which the capture has some three thousand a
-picture, nearly all dense. On ordinary video, where motion compensation
-dominates, this decoder is two fifths ahead, and what leads its profile is the copy
+picture, each with a handful of coefficients scattered to the far corners, so
+that the transform runs dense. On ordinary video, where motion compensation
+dominates, this decoder is nearly half ahead, and what leads its profile is the copy
 of the first reference that each row starts as: bound by memory, the reference
 and the picture being written not fitting the cache together. Of the steps that
 got here:
@@ -231,6 +232,20 @@ a hundredth of the capture's, so each row's thread starts the row as one
 sequential copy of the first reference's rows, before it waits on the row
 above, and such a block costs nothing; the copy by the row moves the bytes
 sooner than the copies by the block did, a seventh of the video's cycles again.
+And the parsing, which on the capture is some six hundred thousand context
+bins a picture for thirty thousand coefficients, nearly all of them the
+flags of sparse 32×32 blocks: the arithmetic decoder's most probable symbol,
+which most bins are, takes a short path, the range shrinking by the other
+symbol's share and doubling at most to put it back; the bits read ahead carry
+their own end marker instead of a count, and the slice data is padded so a
+refill is one whole word with no call, so that V8 keeps the registers in
+registers, which it does not for a value live across a call; each coded
+sub-block decodes in a small function of its own, since V8 spills what a
+large one holds; the merge list is built only as far as the index, which is
+nearly always zero; the neighbours to the left and above, decoded before the
+block wherever they are, are not looked up in the z-order map; and a block's
+motion is one word, written once per 4×4. A sixth of the capture's cycles and
+an eighth of the video's.
 Natively the decoder runs its scalar fallbacks, since the kernels are written
 for wasm32.
 

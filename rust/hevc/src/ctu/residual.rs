@@ -6,7 +6,7 @@ use super::{PartMode, Row};
 use crate::cabac::*;
 use crate::error::{Error, Result};
 use crate::intra;
-use crate::itx;
+use crate::itx::{self, Dequant};
 use crate::kernels;
 use crate::tables::scan_set;
 
@@ -90,14 +90,20 @@ impl<'a> Row<'a> {
     fn intra_predict(&mut self, c: usize, xb: usize, yb: usize, n: usize, mode: u8) {
         let plane = self.pic.planes[c];
         let n2 = 2 * n;
-        // Availability is per 4×4 block, so it is asked once per four samples.
+        // Availability is per 4×4 block, so it is asked once per four samples;
+        // beside and above the block it is a matter of the picture's edge,
+        // below and to the right of it one of decoding order too.
         let mut left_ok = [false; 16];
         let mut top_ok = [false; 16];
-        for k in 0..n2 / 4 {
+        for k in 0..n / 4 {
+            left_ok[k] = self.in_picture(xb as i32 - 1, (yb + 4 * k) as i32);
+            top_ok[k] = self.in_picture((xb + 4 * k) as i32, yb as i32 - 1);
+        }
+        for k in n / 4..n2 / 4 {
             left_ok[k] = self.available(xb, yb, xb as i32 - 1, (yb + 4 * k) as i32);
             top_ok[k] = self.available(xb, yb, (xb + 4 * k) as i32, yb as i32 - 1);
         }
-        let corner_ok = self.available(xb, yb, xb as i32 - 1, yb as i32 - 1);
+        let corner_ok = self.in_picture(xb as i32 - 1, yb as i32 - 1);
         let refs = &mut self.s.iref;
         refs.reset(n);
         for k in 0..n2 / 4 {
@@ -194,7 +200,7 @@ impl<'a> Row<'a> {
         let co = &mut self.s.coeffs[..n * n];
         kernels::fill_i16(&mut co[..fh * n], 0);
         let mut csbf = 0u64;
-        let (mut nz_w, mut nz_h) = (0usize, 0usize);
+        let mut nz = [0usize; 2];
         let mut c1: usize = 1;
         let sig_base = CTX_SIG + if c_idx == 0 { 0 } else { 27 };
         let gt1_base = CTX_GT1 + if c_idx == 0 { 0 } else { 16 };
@@ -203,13 +209,12 @@ impl<'a> Row<'a> {
             let (xs, ys) = (sc.sb[i].0 as usize, sc.sb[i].1 as usize);
             let right = xs + 1 < nsb && (csbf >> ((xs + 1) * 8 + ys)) & 1 != 0;
             let below = ys + 1 < nsb && (csbf >> (xs * 8 + ys + 1)) & 1 != 0;
-            let infer_sb_dc = i < last_sb && i > 0;
-            let coded = if infer_sb_dc {
-                cab.decode(CTX_CSBF + (right || below) as usize + if c_idx == 0 { 0 } else { 2 }) == 1
-            } else {
-                true
-            };
-            csbf |= (coded as u64) << (xs * 8 + ys);
+            let infer_dc = i < last_sb && i > 0;
+            // coded_sub_block_flag: inferred for the first and last sub-blocks.
+            if infer_dc && cab.decode(CTX_CSBF + (right || below) as usize + if c_idx == 0 { 0 } else { 2 }) == 0 {
+                continue;
+            }
+            csbf |= 1 << (xs * 8 + ys);
             let prev_csbf = right as usize | ((below as usize) << 1);
             let (sig_row, sig_off) = if log2 == 2 {
                 (sc.sig_4x4, 0usize)
@@ -230,110 +235,28 @@ impl<'a> Row<'a> {
                 }
                 (&sc.sig_nb[prev_csbf & 3], o)
             };
-            let dc_sb = xs == 0 && ys == 0;
-            // significant_coeff_flag
-            let mut sig_pos = [0u8; 16];
-            let mut nsig = 0usize;
-            let start: i32 = if i == last_sb {
-                sig_pos[0] = last_pos as u8;
-                nsig = 1;
-                last_pos as i32 - 1
-            } else {
-                15
+            let sig_ctx = sig_base + sig_off;
+            let sb = SubBlock {
+                sig_ctx: std::array::from_fn(|k| sig_row[k].wrapping_add(sig_ctx as u8)),
+                dc_ctx: if xs == 0 && ys == 0 { sig_base } else { sig_ctx + sig_row[0] as usize },
+                gt1_set: gt1_base + if i == 0 || c_idx > 0 { 0 } else { 8 },
+                gt2_set: gt2_base + if i == 0 || c_idx > 0 { 0 } else { 2 },
+                pos: sc.pos,
+                x: xs << 2,
+                y: ys << 2,
+                n,
+                last_pos: if i == last_sb { last_pos } else { 16 },
+                infer_dc,
             };
-            if coded && start >= 0 {
-                for np in (1..=start as usize).rev() {
-                    if cab.decode(sig_base + sig_row[np & 15] as usize + sig_off) == 1 {
-                        sig_pos[nsig & 15] = np as u8;
-                        nsig += 1;
-                    }
-                }
-                // Position 0: inferred when the sub-block's flag was coded
-                // and nothing else in it was; its own context in the DC
-                // sub-block.
-                let dc = (infer_sb_dc && nsig == 0) || cab.decode(sig_base + if dc_sb { 0 } else { sig_row[0] as usize + sig_off }) == 1;
-                if dc {
-                    sig_pos[nsig & 15] = 0;
-                    nsig += 1;
-                }
-            }
-            if nsig == 0 {
-                continue;
-            }
-            // coeff_abs_level_greater1_flag (§9.3.4.2.6)
-            let ctx_set = (if i == 0 || c_idx > 0 { 0 } else { 2 }) + (c1 == 0) as usize;
-            c1 = 1;
-            let mut g1 = 0u16;
-            let mut first_g2: usize = 16;
-            let g1_ctx = gt1_base + ctx_set * 4;
-            for &np in sig_pos.iter().take(nsig.min(8)) {
-                let b = cab.decode(g1_ctx + c1) == 1;
-                g1 |= (b as u16) << np;
-                if b {
-                    c1 = 0;
-                    if first_g2 == 16 {
-                        first_g2 = np as usize;
-                    }
-                } else if (1..3).contains(&c1) {
-                    c1 += 1;
-                }
-            }
-            let g2 = first_g2 != 16 && cab.decode(gt2_base + ctx_set) == 1;
-            // The signs, aligned so each coefficient reads the top bit.
-            let mut sbits = cab.bypass_bits(nsig as u32).wrapping_shl(32 - nsig as u32);
-            // coeff_abs_level_remaining
-            let mut rice = 0u32;
-            for k in 0..nsig {
-                let np = sig_pos[k & 15] as usize;
-                let is_g2_pos = first_g2 == np;
-                let base = 1 + ((g1 >> np) & 1) as i32 + (is_g2_pos && g2) as i32;
-                let threshold = if k < 8 {
-                    if is_g2_pos {
-                        3
-                    } else {
-                        2
-                    }
-                } else {
-                    1
-                };
-                let mut abs = base;
-                if base == threshold {
-                    abs += Self::coeff_remaining(cab, rice)?;
-                    if abs > 3 * (1 << rice) {
-                        rice = (rice + 1).min(4);
-                    }
-                }
-                let neg = (sbits as i32) < 0;
-                sbits <<= 1;
-                let v = if neg { -abs } else { abs };
-                let (xp, yp) = (sc.pos[np & 15].0 as usize, sc.pos[np & 15].1 as usize);
-                let (xc, yc) = ((xs << 2) + xp, (ys << 2) + yp);
-                nz_w = nz_w.max(xc + 1);
-                nz_h = nz_h.max(yc + 1);
-                co[yc * n + xc] = dq.apply(v.clamp(-32768, 32767));
-            }
+            let (engine, c1_next) = sub_block(cab.engine(), cab.ctx, &sb, co, &dq, c1, &mut nz)?;
+            cab.restore(engine);
+            c1 = c1_next;
         }
+        let (nz_w, nz_h) = (nz[0], nz[1]);
         let engine = cab.engine();
         self.cab.restore(engine);
         self.reconstruct_residual(x0, y0, log2, c_idx, nz_w, nz_h);
         Ok(())
-    }
-
-    /// `coeff_abs_level_remaining` (§9.3.3.11).
-    fn coeff_remaining(cab: &mut View, rice: u32) -> Result<i32> {
-        let prefix = cab.bypass_ones(32);
-        if prefix >= 32 {
-            return Err(Error::invalid("a coefficient prefix too long"));
-        }
-        if prefix < 3 {
-            Ok(((prefix << rice) + cab.bypass_bits(rice)) as i32)
-        } else {
-            let l = prefix - 3;
-            if l + rice > 31 {
-                return Err(Error::invalid("a coefficient suffix too long"));
-            }
-            Ok(((((1u32 << l) + 2) << rice) + cab.bypass_bits(l + rice)) as i32)
-        }
     }
 
     /// §8.6.4 over the scaled coefficients, added to the picture.
@@ -348,3 +271,135 @@ impl<'a> Row<'a> {
         kernels::add_residual(out, plane.stride, &s.res[..n * n], n, n);
     }
 }
+
+/// What one sub-block's syntax is decoded against.
+struct SubBlock<'s> {
+    /// The significance context of each position after the first; that of
+    /// the first is `dc_ctx`.
+    sig_ctx: [u8; 16],
+    dc_ctx: usize,
+    /// The greater-than contexts of the sub-block, before the previous
+    /// sub-block's say.
+    gt1_set: usize,
+    gt2_set: usize,
+    /// The scan inside the sub-block.
+    pos: &'s [(u8, u8); 16],
+    /// The sub-block's top left in the block, and the block's width.
+    x: usize,
+    y: usize,
+    n: usize,
+    /// The scan position of the block's last coefficient, when it is in
+    /// this sub-block; 16 otherwise.
+    last_pos: usize,
+    /// Whether the first position is significant when none other is.
+    infer_dc: bool,
+}
+
+/// One coded sub-block after its flag (§7.3.8.11): the significance flags,
+/// the levels and the signs, each coefficient scaled as it lands in `co`;
+/// `nz` grows to cover them. `c1` is the greater-than-1 context the previous
+/// sub-block left, and the one this leaves is returned with the engine. Out
+/// of line, so that the engine's registers and the loops' few counters get
+/// the registers of a function of their own.
+#[inline(never)]
+fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], dq: &Dequant, c1_in: usize, nz: &mut [usize; 2]) -> Result<(Engine, usize)> {
+    let mut v = View::new(engine, ctx);
+    let cab = &mut v;
+    // significant_coeff_flag, highest position first, as a bit per position.
+    let mut sig = 0u32;
+    let start: i32 = if sb.last_pos < 16 {
+        sig = 1 << sb.last_pos;
+        sb.last_pos as i32 - 1
+    } else {
+        15
+    };
+    if start >= 0 {
+        for np in (1..=start as usize).rev() {
+            sig |= cab.decode(sb.sig_ctx[np & 15] as usize) << np;
+        }
+        if (sb.infer_dc && sig == 0) || cab.decode(sb.dc_ctx) == 1 {
+            sig |= 1;
+        }
+    }
+    if sig == 0 {
+        return Ok((cab.engine(), c1_in));
+    }
+    let nsig = sig.count_ones() as usize;
+    // coeff_abs_level_greater1_flag (§9.3.4.2.6), for the first eight.
+    let g1_ctx = sb.gt1_set + ((c1_in == 0) as usize) * 4;
+    let mut c1: usize = 1;
+    let mut g1 = 0u32;
+    let mut first_g2: usize = 16;
+    let mut rest = sig;
+    for _ in 0..nsig.min(8) {
+        let np = (31 - rest.leading_zeros()) as usize;
+        rest &= !(1 << np);
+        let b = cab.decode(g1_ctx + c1);
+        g1 |= b << np;
+        if b == 1 {
+            c1 = 0;
+            if first_g2 == 16 {
+                first_g2 = np;
+            }
+        } else if (1..3).contains(&c1) {
+            c1 += 1;
+        }
+    }
+    let g2 = first_g2 != 16 && cab.decode(sb.gt2_set + (c1_in == 0) as usize) == 1;
+    // The signs, aligned so each coefficient reads the top bit.
+    let mut sbits = cab.bypass_bits(nsig as u32).wrapping_shl(32 - nsig as u32);
+    // coeff_abs_level_remaining
+    let mut rice = 0u32;
+    let (mut nz_w, mut nz_h) = (nz[0], nz[1]);
+    let mut rest = sig;
+    for k in 0..nsig {
+        let np = (31 - rest.leading_zeros()) as usize;
+        rest &= !(1 << np);
+        let is_g2_pos = first_g2 == np;
+        let base = 1 + ((g1 >> np) & 1) as i32 + (is_g2_pos && g2) as i32;
+        let threshold = if k < 8 {
+            if is_g2_pos {
+                3
+            } else {
+                2
+            }
+        } else {
+            1
+        };
+        let mut abs = base;
+        if base == threshold {
+            abs += coeff_remaining(cab, rice)?;
+            if abs > 3 * (1 << rice) {
+                rice = (rice + 1).min(4);
+            }
+        }
+        let neg = (sbits as i32) < 0;
+        sbits <<= 1;
+        let v = if neg { -abs } else { abs };
+        let (xc, yc) = (sb.x + sb.pos[np & 15].0 as usize, sb.y + sb.pos[np & 15].1 as usize);
+        nz_w = nz_w.max(xc + 1);
+        nz_h = nz_h.max(yc + 1);
+        co[yc * sb.n + xc] = dq.apply(v.clamp(-32768, 32767));
+    }
+    *nz = [nz_w, nz_h];
+    Ok((cab.engine(), c1))
+}
+
+/// `coeff_abs_level_remaining` (§9.3.3.11).
+#[inline(always)]
+fn coeff_remaining(cab: &mut View, rice: u32) -> Result<i32> {
+    let prefix = cab.bypass_ones(32);
+    if prefix >= 32 {
+        return Err(Error::invalid("a coefficient prefix too long"));
+    }
+    if prefix < 3 {
+        Ok(((prefix << rice) + cab.bypass_bits(rice)) as i32)
+    } else {
+        let l = prefix - 3;
+        if l + rice > 31 {
+            return Err(Error::invalid("a coefficient suffix too long"));
+        }
+        Ok(((((1u32 << l) + 2) << rice) + cab.bypass_bits(l + rice)) as i32)
+    }
+}
+
