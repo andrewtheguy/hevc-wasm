@@ -1,51 +1,31 @@
 #!/usr/bin/env bash
-# Build the HEVC WebAssembly decoder: FFmpeg's libavcodec configured down to the
-# HEVC decoder, with its SIMD128 kernels and slice threads, behind src/decoder.c.
+# Build the HEVC WebAssembly decoder for remotex's page: rust/hevc-web, the `hevc`
+# crate behind the few calls the page's decode worker makes, with threads and
+# SIMD, through wasm-pack. Writes build/out/hevc.js (wasm-bindgen's ES module
+# glue) and build/out/hevc.wasm, and the release archive
+# dist/hevc-wasm-v$VERSION.tar.gz holding the two.
 #
-# FFmpeg comes from andrewtheguy/FFmpeg's remotex-wasm branch, FFmpeg's release
-# with this decoder's SIMD128 kernels as a commit of their own, pinned here by
-# that commit and its archive's SHA-256. A kernel changes there, rebased onto a
-# new release tag when FFmpeg moves, and reaches here as a new pin.
-#
-# Runs Emscripten in its pinned container, so nothing but Docker (or Podman, as
-# CONTAINER=podman) is needed on the host. Writes build/out/hevc.js and hevc.wasm,
-# build/out/bench.js, and the release archive dist/hevc-wasm-v$VERSION.tar.gz.
+# The nightly rust/hevc-web/rust-toolchain.toml names is installed by rustup on
+# the first build; wasm-pack comes from `bun install`, run here where it is
+# missing.
 #
 #   ./build.sh
 set -euo pipefail
-
 cd "$(dirname "$0")"
 
-EMSDK_IMAGE=docker.io/emscripten/emsdk:6.0.10
-# Tag n9.0.2-remotex.1: FFmpeg 9.0.2 and the kernels.
-FFMPEG_COMMIT=5b81e18029e561cf13395588ae7353b4d68ec905
-FFMPEG_SHA256=395fda1223dd224d3bd281bfc1ec4616012e9409a76b5d3b533e7d962d1c4c68
-CONTAINER=${CONTAINER:-docker}
 VERSION=$(cat VERSION)
+[ -x node_modules/.bin/wasm-pack ] || bun install --frozen-lockfile
 
-mkdir -p build
-tarball=build/ffmpeg-$FFMPEG_COMMIT.tar.gz
-if [[ ! -f $tarball ]]; then
-  curl -fsSL -o "$tarball.part" "https://github.com/andrewtheguy/FFmpeg/archive/$FFMPEG_COMMIT.tar.gz"
-  mv "$tarball.part" "$tarball"
-fi
-echo "$FFMPEG_SHA256  $tarball" | shasum -a 256 -c -
+rm -rf build/pkg build/out dist
+node_modules/.bin/wasm-pack build rust/hevc-web --release --target web --no-pack \
+  --out-name hevc --out-dir "$PWD/build/pkg"
+mkdir -p build/out dist
+cp build/pkg/hevc.js build/out/hevc.js
+cp build/pkg/hevc_bg.wasm build/out/hevc.wasm
 
-# The build runs as this user, so what it writes under build/ is this user's:
-# Docker takes the ids, rootless Podman keeps them through its user namespace.
-if [[ $CONTAINER == podman ]]; then
-  as_user=(--userns=keep-id)
-else
-  as_user=(-u "$(id -u):$(id -g)")
-fi
-
-"$CONTAINER" run --rm \
-  -v "$PWD:/src" -w /src \
-  -e FFMPEG_COMMIT="$FFMPEG_COMMIT" \
-  -e VERSION="$VERSION" \
-  "${as_user[@]}" \
-  -e HOME=/src/build/home \
-  -e EM_CACHE=/src/build/emcache \
-  "$EMSDK_IMAGE" bash /src/build-in-container.sh
-
+# The release: the two files the page loads, and nothing else. GNU tar with fixed
+# names, owners and times, so one build's archive is byte for byte the next's
+# from the same toolchain.
+tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 \
+  -C build/out -cf - hevc.js hevc.wasm | gzip -9n >"dist/hevc-wasm-v$VERSION.tar.gz"
 ls -l build/out dist

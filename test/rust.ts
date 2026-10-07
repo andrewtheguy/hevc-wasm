@@ -1,12 +1,12 @@
-// Loads the pure-Rust decoder's module (rust/hevc-web, built by ./build-rust.sh)
-// under Bun as remotex's decode worker would: the module instantiated on a
-// shared memory, its pool's threads started as workers that each run an instance
-// of it, and a picture read from where the decoder left its planes.
+// Loads the decoder's module as released (build/out, built by ./build.sh) under
+// Bun as remotex's decode worker loads it: the module instantiated on a shared
+// memory, its pool's threads started as workers that each run an instance of it,
+// and a picture read from where the decoder left its planes.
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const PKG_DIR = resolve(process.env.HEVC_RUST_DIR ?? `${import.meta.dir}/../rust/hevc-web/pkg`);
+export const OUT_DIR = resolve(process.env.HEVC_WASM_DIR ?? `${import.meta.dir}/../build/out`);
 
 /** What rust/hevc-web/src/lib.rs exports, as wasm-bindgen's glue presents it. */
 interface Glue {
@@ -43,23 +43,24 @@ export interface LoadedRust {
   close(): void;
 }
 
-/** What each pool worker is told: the compiled module, and the one memory. */
+/** What each pool worker is told: the glue to import, the compiled module, and the one memory. */
 export interface PoolSeat {
+  js: string;
   module: WebAssembly.Module;
   memory: WebAssembly.Memory;
 }
 
 /** Instantiates the module and starts a pool of `threads` workers. Once per process. */
 export async function loadRust(threads: number): Promise<LoadedRust> {
-  const js = `${PKG_DIR}/hevc_web.js`;
-  const wasm = `${PKG_DIR}/hevc_web_bg.wasm`;
+  const js = `${OUT_DIR}/hevc.js`;
+  const wasm = `${OUT_DIR}/hevc.wasm`;
   if (!existsSync(js) || !existsSync(wasm)) {
-    throw new Error(`no hevc_web.js and hevc_web_bg.wasm in ${PKG_DIR}: run ./build-rust.sh, or set HEVC_RUST_DIR`);
+    throw new Error(`no hevc.js and hevc.wasm in ${OUT_DIR}: run ./build.sh, or set HEVC_WASM_DIR`);
   }
   const glue = (await import(js)) as Glue;
   const bytes = new Uint8Array(await Bun.file(wasm).arrayBuffer());
   const { memory } = await glue.default({ module_or_path: bytes });
-  const seat: PoolSeat = { module: glue.module(), memory };
+  const seat: PoolSeat = { js, module: glue.module(), memory };
   const workers: Worker[] = [];
   await Promise.all(
     Array.from({ length: threads }, () => new Promise<void>((resolve, reject) => {

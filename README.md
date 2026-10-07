@@ -3,41 +3,44 @@
 A software decoder for a High Performance Mac's HEVC, for
 [remotex](https://github.com/andrewtheguy/remotex)'s browser client where the
 browser's `VideoDecoder` does not take HEVC Range Extensions 4:4:4 — Chrome on a
-GPU without it, for one. It is FFmpeg's libavcodec, configured down to the HEVC
-decoder, compiled to WebAssembly with Emscripten, behind the small C surface in
-`src/decoder.c`.
+GPU without it, for one. It is written in Rust for the one shape of stream the
+Mac sends and nothing else of HEVC, compiled to WebAssembly with SIMD128 and
+threads, and decodes bit for bit as FFmpeg does.
 
 A release is `hevc-wasm-vX.Y.Z.tar.gz`, holding the two files the page loads:
-`hevc.js`, Emscripten's ES module glue, and `hevc.wasm`. This repository
+`hevc.js`, wasm-bindgen's ES module glue, and `hevc.wasm`. This repository
 publishes the source of the build and no binary of it: releases go to the
 private [andrewtheguy/hevc-wasm-archives](https://github.com/andrewtheguy/hevc-wasm-archives),
-for whoever can see it. No remotex build holds it either: remotex pins one by
-version and SHA-256 (`src/hevc_wasm.rs`), an operator downloads that archive
-from there and names it in the gateway's `[hevc_wasm]` table, and the
-gateway reads it at start-up and serves its two files at `/hevc/`;
-the page runs it in a worker of its own, shaped as a `VideoDecoder`
-(remotex's `frontend/src/hevcWasmDecoder.ts` and `hevcWasm.worker.ts`).
+for whoever can see it. No remotex build holds it either, while it is BETA:
+remotex pins one by version and SHA-256 (`src/hevc_wasm.rs`), an operator
+downloads that archive from there and names it in the gateway's `[hevc_wasm]`
+table, and the gateway reads it at start-up and serves its two files at
+`/hevc/`; the page runs it in a worker of its own, shaped as a `VideoDecoder`,
+with the threads as workers of the page's bundle (remotex's
+`frontend/src/hevcWasmDecoder.ts`, `hevcWasm.worker.ts` and
+`hevcPool.worker.ts`).
 
 ## Building
 
 ```sh
+bun install
 ./build.sh
 ```
 
-Docker (or `CONTAINER=podman`) runs the pinned `emscripten/emsdk:6.0.10` image;
-nothing else is needed on the host. FFmpeg is
-[andrewtheguy/FFmpeg](https://github.com/andrewtheguy/FFmpeg/tree/remotex-wasm)'s
-`remotex-wasm` branch: FFmpeg's release tag with this decoder's SIMD128 kernels
-as one commit on top, tagged `n9.0.2-remotex.1`. The script downloads that
-commit's archive, checks its SHA-256, and writes `build/out/hevc.js`,
-`build/out/hevc.wasm`, `build/out/bench.js`, and the release archive in `dist/`.
-A kernel changes on the fork's branch, which is rebased onto FFmpeg's next
-release tag when it moves, and reaches here as a new commit and checksum in
-`build.sh`.
+wasm-pack comes from `bun install`, and the compiler is the nightly
+`rust/hevc-web/rust-toolchain.toml` names, which rustup installs on the first
+build. A nightly because the module's threads share a memory, and the standard
+library as shipped for `wasm32-unknown-unknown` is built without `atomics`: it
+links, but its locks are single-thread stubs, and only a nightly Cargo builds
+it with them (`build-std`, in `rust/hevc-web/.cargo/config.toml`). The pin is
+the channel, not a date: the decoder itself builds on stable. The script writes
+`build/out/hevc.js`, `build/out/hevc.wasm`, and the release archive in
+`dist/`.
 
-The archive is reproducible, so `dist/`'s is byte-identical to the release's and
-remotex serves it as the release. A changed build has another SHA-256, which
-remotex refuses until its pin names it:
+The archive is built with fixed names, owners and times, so on the same
+toolchain one build's archive is byte for byte the next's, and remotex serves
+it as the release. A changed build has another SHA-256, which remotex refuses
+until its pin names it:
 
 ```toml
 [hevc_wasm]
@@ -53,14 +56,14 @@ bun test
 bun run typecheck
 ```
 
-The tests load `build/out/hevc.js` (or `$HEVC_WASM_DIR/hevc.js`) under Bun as
-the page loads it, pthread pool and all, and feed it access units one at a time.
-Their streams are committed in `test/data`: 4:2:0, 4:2:2 and 4:4:4, cropped
-sizes, wavefront rows with 16-pixel CTBs, multiple slices, 10-bit, and color
-descriptions. Every picture must match native FFmpeg's `-f framemd5`, recorded
-in `test/data/reference.json`, at 1, 4 and 8 threads. They also cover
-parameter-set-only units, size and format changes mid-stream, empty and garbage
-units, joining mid-stream, and two decoders sharing one module.
+The tests load `build/out/hevc.js` and `hevc.wasm` (or `$HEVC_WASM_DIR`'s)
+under Bun as the page loads them: the module on a shared memory, its pool's
+threads as workers that each run an instance of it. The `mac-*` streams in
+`test/data`, x265's nearest shape to the Mac's, must decode to native FFmpeg's
+`-f framemd5`, recorded in `test/data/reference.json`, on one thread and on
+four; the other streams there, of other shapes, must be refused by name. The
+tests also cover where the planes are in the memory, joining a stream before
+its keyframe, two decoders side by side, and garbage units.
 
 A run needs no ffmpeg. `bun run fixtures` regenerates the streams and their
 reference with the host's ffmpeg and libx265 from the specs in
@@ -75,65 +78,15 @@ artifacts are anyone's to download; attaches the archive and its `SHA256SUMS` to
 hevc-wasm-archives' release `vX.Y.Z`; and tags the commit `vX.Y.Z` here. remotex
 then takes it as a new version and checksum in `src/hevc_wasm.rs`.
 
-## What is optimized
+## The decoder
 
-- **Slice threads, with wavefront parallel processing.** The Mac's stream sets
-  `entropy_coding_sync_enabled_flag`, so a picture's CTB rows decode in parallel.
-  Frame threads would hold each picture behind the next ones, and a still desktop
-  sends no next one, so the decoder runs slice threads only and returns every
-  picture from the unit that completed it. The threads are pthread workers the
-  module starts before it resolves, as many as the page instantiates it with
-  (remotex asks for `min(hardwareConcurrency, 8)`).
-- **SIMD128.** FFmpeg's own WebAssembly kernels (IDCT, SAO), and the fork's for
-  the rest of what the Mac's stream spends time in: the whole-pel block copy,
-  the luma and chroma interpolation filters (horizontal, vertical and both) for
-  uni-prediction, and the residual add. Every other loop gets the autovectorizer.
-- **The arch traits configure leaves off for wasm**: unaligned loads, 64-bit
-  integers and a count-leading-zeros instruction, which choose libavcodec's
-  faster bitstream-reading paths.
-- `-O3` with link-time optimization across libavcodec and the shim, bulk
-  memory, non-trapping float-to-int, mimalloc for the threads' allocations.
-- **One copy per picture.** `hevc_picture` returns each plane's address and
-  stride in linear memory, so the page builds its `VideoFrame` straight over
-  them and the constructor's copy is the only one.
-
-## Measured
-
-On an M2 Max, in Node 24, a High Performance Mac's stream captured with
-remotex's `tests/hp_capture.sh`: 2880×1800, 4:4:4, 1039 pictures, about
-53 Mbit/s, with animation playing. Milliseconds per picture:
-
-| | 1 thread | 8 threads |
-|---|---|---|
-| FFmpeg defaults for wasm | 50.3 | 9.5 |
-| this build | 44.2 (p95 52.6) | 8.9 (p95 12.8) |
-| native FFmpeg 9 (NEON), for scale | 31.1 | 6.3 |
-
-Every picture is bit-identical to native FFmpeg's (`ffmpeg -f framemd5`), on the
-capture and on synthetic 4:2:0 and 4:4:4 streams of odd sizes. In headless
-Chrome against a virtual Mac at 2x, remotex's paint worker's draw time (decode,
-transfer and draw) was 11 ms at the median and 12 at p95, with no keyframe
-requested.
-
-What is left is entropy decoding: CABAC residual coding is over half the decode
-time, serial within a row, and spread across the threads only by the wavefront.
-
-```sh
-node build/out/bench.js capture.h265 8
-```
-
-prints a digest per picture on stdout, to compare with
-`ffmpeg -threads 1 -i capture.h265 -f framemd5 -`, and the timing on stderr.
-
-## The pure-Rust decoder (experimental)
-
-`rust/` holds a second decoder, written in Rust for the one shape of stream the
-Mac sends and nothing else of HEVC: 4:4:4 at 8 bits, one slice per picture with
-its coding tree block rows coded as a wavefront, I and P pictures with
-short-term references. Any other stream is refused by name (tiles, B pictures,
-weighted prediction, PCM, scaling lists, transform skip, long-term references,
-other chroma formats or bit depths). Its decoding arithmetic was transcribed
-from [rusty_h265](https://github.com/Remade-With-Rust/rusty_h265) 0.6.0
+`rust/` holds the decoder, written for the one shape of stream the Mac sends
+and nothing else of HEVC: 4:4:4 at 8 bits, one slice per picture with its
+coding tree block rows coded as a wavefront, I and P pictures with short-term
+references. Any other stream is refused by name (tiles, B pictures, weighted
+prediction, PCM, scaling lists, transform skip, long-term references, other
+chroma formats or bit depths). Its decoding arithmetic was transcribed from
+[rusty_h265](https://github.com/Remade-With-Rust/rusty_h265) 0.6.0
 (Apache-2.0, `rust/hevc/LICENSE`), which decodes 4:2:0 only; the 4:4:4 handling,
 the byte planes and the threading are this repository's.
 
@@ -154,20 +107,16 @@ the byte planes and the threading are this repository's.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
-  `picture`. `picture` describes the picture in the same sixteen numbers
-  `hevc_picture` does, so the paint worker uploads the planes to WebGL from the
-  module's shared memory as it does now (remotex's `hevcPicture.ts`), and only the
-  loader differs from the FFmpeg module's.
+  `picture`. `picture` describes the picture in sixteen numbers: its size, the
+  chroma layout, the colour the stream states, each plane's address and
+  stride in the module's memory, and whether it is a keyframe, so the paint
+  worker uploads the planes to WebGL from the module's shared memory
+  (remotex's `hevcPicture.ts`).
 - `rust/hevc-bench` decodes a file natively and prints each picture's MD5 as
   `ffmpeg -f framemd5` does: `cargo run --release -p hevc-bench -- FILE THREADS [REPEATS]`
   from `rust/`. To profile the module itself, run it under
-  `node --perf-basic-prof` and `perf record`: the build keeps the function
-  names. Profiles and logs go under `tmp/`.
-
-```sh
-./build-rust.sh              # rust/hevc-web/pkg, on nightly, via wasm-pack
-bun test test/rust.test.ts   # the mac-* fixtures, bit for bit against FFmpeg
-```
+  `node --perf-prof` and `perf record`: the build keeps the function names.
+  Profiles and logs go under `tmp/`.
 
 It decodes every picture of the seven High Performance Mac captures tried
 (2,833 pictures, 1600×1000 and 1600×256, including the long-term-refresh ones)
@@ -176,14 +125,17 @@ bit-identically to FFmpeg, natively on one thread and on six, and as the
 WebAssembly module on one and four. The `mac-*` fixtures in `test/data` are
 x265's nearest shape to the Mac's.
 
-Measured against the FFmpeg module under Node on a six-core x86 workstation
-that was busy with other work, so the two modules ran alternately on the same
-four cores and the medians of three rounds are shown. The instruction and cycle
+Measured under Node on a six-core x86 workstation against the module this
+repository released before it, FFmpeg's libavcodec configured down to the HEVC
+decoder and compiled with Emscripten, with SIMD128 kernels and slice threads
+(release 0.0.1, from FFmpeg 9.0.2). The host was busy with other work, so the
+two modules ran alternately on the same four cores and the medians of three
+rounds are shown. The instruction and cycle
 counts are `perf stat`'s for the whole process and do not depend on the load
 (the FFmpeg bench hashes every picture of its first pass, so its counts are a
 two-pass run less a one-pass one). Per picture:
 
-| 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg module |
+| 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg's, 0.0.1 |
 |---|---|---|
 | 1 thread, median ms | 19.3 | 34.4 |
 | 1 thread, M cycles | 54 | 90 |
@@ -191,7 +143,7 @@ two-pass run less a one-pass one). Per picture:
 | 4 threads, M cycles | 57 | 91 |
 | M instructions | 146 | 213 |
 
-| 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg module |
+| 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg's, 0.0.1 |
 |---|---|---|
 | 1 thread, median ms | 2.6 | 6.2 |
 | 1 thread, M cycles | 13 | 23 |
@@ -247,9 +199,8 @@ block wherever they are, are not looked up in the z-order map; and a block's
 motion is one word, written once per 4×4. A sixth of the capture's cycles and
 an eighth of the video's.
 Natively the decoder runs its scalar fallbacks, since the kernels are written
-for wasm32.
-What it does not do yet, and where its time still goes, is listed in
-[docs/remaining.md](docs/remaining.md).
+for wasm32. What it does not do yet, and where its time still goes, is listed
+in [docs/remaining.md](docs/remaining.md).
 
 To benchmark on a busy host, pin both runs to the same cores (`taskset`),
 alternate them, and read `perf stat -e instructions:u,cycles:u` rather than

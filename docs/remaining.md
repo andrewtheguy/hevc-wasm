@@ -207,30 +207,38 @@ module's tests do cover (`test/decoder.test.ts`).
 
 ## Integration into remotex
 
-The module is shaped like the FFmpeg one (`picture` returns the same sixteen
-numbers) but is not yet what the page loads. To get there:
+The page's decode worker loads this module as of remotex's `pure-rust-hevc`
+branch: the archive carries `hevc.js` and `hevc.wasm` as before, the gateway
+pins release 0.0.2 by SHA-256 and serves the two at `/hevc/`, the worker
+imports the glue from there and seats the pool's threads as workers of the
+page's bundle (`hevcWasm.worker.ts`, `hevcPool.worker.ts`), and the paint
+worker reads the planes as it did. What is left:
 
-1. **A loader in the page's worker.** `hevc_web.js` is wasm-bindgen's ES
-   module, and its threads are workers the page starts and hands to the pool
-   (`runPoolThread`, `startPool`), where the FFmpeg module starts its own
-   pthread workers. `test/rust.ts` and `test/rust-pool.worker.ts` load it the
-   way the page would; remotex's `hevcWasm.worker.ts` needs the same, with the
-   worker count the page chooses today (`min(hardwareConcurrency, 8)`).
-2. **The release.** `build.sh` and `publish-private.sh` build and publish the
-   FFmpeg module only, as `hevc.js` and `hevc.wasm` in the versioned archive
-   that remotex's gateway serves at `/hevc/`. `build-rust.sh` writes
-   `rust/hevc-web/pkg` and nothing packages it. Whether the archive carries
-   both modules and the page picks, or the Rust module replaces the FFmpeg one
-   once it covers what the Mac sends, is the decision to make first; the
-   archive's reproducibility (byte-identical to the release's) must hold for a
-   wasm-pack build on nightly, which has not been checked.
-3. **Fixtures.** `bun test test/rust.test.ts` decodes the two `mac-*` fixtures
-   (330×194 and 352×256) on one thread and the pool's; the real captures and
-   the video are checked by hand with `hevc-bench` and the Node bench. A
-   fixture nearer the Mac's size, and the Rust module in the same mid-stream
-   cases the FFmpeg module's tests run, belong in `test/`.
-4. **In the browser.** The FFmpeg module was measured in headless Chrome
-   against a virtual Mac (11 ms median draw at 2×). The Rust module has been
-   run only under Node and Bun. Chrome's `SharedArrayBuffer` and worker
-   start-up costs, and the pool threads' seating from the page's workers,
-   are untested there.
+1. **The release.** `publish-private.sh` has not run for 0.0.2: remotex's pin
+   is the digest of a local `./build.sh`, which a second build reproduced, and
+   the published archive's `SHA256SUMS` must agree with it before remotex's
+   branch merges.
+2. **In the browser.** Both sides are checked under Bun and Node only: the
+   module's tests here, remotex's unit tests there (the worker itself runs in
+   no test, as the FFmpeg one did not). The Playwright spec
+   `tests/playwright/software-hevc.spec.ts` needs a gateway with a live
+   High Performance Mac and the archive beside its config; it asserts the files
+   loaded and the first passed keyframe acknowledged without a decoder failure,
+   and is the first thing to run. Nested workers (the pool's threads are
+   started by the decode worker, itself a worker) are what the compositor's
+   pool relies on already.
+3. **A failed thread.** A pool thread that does not start fails the module's
+   load, and so every decoder, as a failed worker did before; one that panics
+   later poisons the pool's seats for every decoder sharing the module, and the
+   page's only recovery is a new decode worker, which nothing does yet.
+4. **Fixtures.** `bun test` decodes the two `mac-*` fixtures (330×194 and
+   352×256) on one thread and four; the real captures and the video are checked
+   by hand with `hevc-bench` and the Node bench under `tmp/`. A fixture nearer
+   the Mac's size, and a size change mid-stream, which the FFmpeg module's tests
+   covered and this module's do not, belong in `test/`.
+5. **Two modules of one shape.** The decode worker's loader now mirrors the
+   compositor's (`egfxPool.worker.ts`), differing only in where the glue comes
+   from. Once the decoder leaves BETA, the archive, the pin and `[hevc_wasm]`
+   could go and the module join the bundle as a third under `frontend/wasm`,
+   which the architecture's constraints currently forbid; that is a decision
+   for then.
