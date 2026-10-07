@@ -91,11 +91,26 @@ fn holds<T>(s: &[T], stride: usize, w: usize, h: usize) {
 pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
     holds(dst, dst_stride, w, h);
     holds(src, src_stride, w, h);
-    let (d, s) = (dst.as_mut_ptr(), src.as_ptr());
+    // SAFETY: both blocks checked.
+    unsafe { copy(dst.as_mut_ptr(), dst_stride, src.as_ptr(), src_stride, w, h) }
+}
+
+/// # Safety
+/// See `kernels::copy_block_from`.
+pub unsafe fn copy_block_from(dst: &mut [u8], dst_stride: usize, src: *const u8, src_stride: usize, w: usize, h: usize) {
+    holds(dst, dst_stride, w, h);
+    // SAFETY: `dst` checked, `src` the caller's.
+    unsafe { copy(dst.as_mut_ptr(), dst_stride, src, src_stride, w, h) }
+}
+
+/// # Safety
+/// Both blocks must be readable and `d`'s writable, and nothing else may be
+/// touching them.
+unsafe fn copy(d: *mut u8, dst_stride: usize, s: *const u8, src_stride: usize, w: usize, h: usize) {
     let mut x = 0;
     while x + 16 <= w {
         for y in 0..h {
-            // SAFETY: inside the block `holds` checked.
+            // SAFETY: inside the blocks the caller checked.
             unsafe { v128_store(d.add(y * dst_stride + x) as *mut v128, v128_load(s.add(y * src_stride + x) as *const v128)) };
         }
         x += 16;
@@ -700,14 +715,6 @@ pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, 
 
 // ---- deblocking ----
 
-/// Checks that the four-line edge segment at (`x`, `y`) with `n` taps a side
-/// lies inside `data`.
-#[inline(always)]
-fn edge_holds(data: &[u8], stride: usize, x: usize, y: usize, dir: usize, n: usize) {
-    let inside = if dir == 0 { x >= n && (y + 3) * stride + x + n <= data.len() } else { y >= n && (y + n - 1) * stride + x + 4 <= data.len() };
-    assert!(inside);
-}
-
 /// The four lines of one tap of an edge, from their bytes in the low lanes.
 #[inline(always)]
 fn tap(v: v128) -> v128 {
@@ -739,7 +746,7 @@ fn clip_abs(v: v128, t: v128) -> v128 {
 /// shuffles.
 ///
 /// # Safety
-/// The segment must lie inside the plane (`edge_holds`).
+/// The segment must lie inside the plane: the caller's (see `kernels::luma_edge`).
 #[inline(always)]
 unsafe fn luma_taps(p: *const u8, stride: usize, dir: usize) -> [v128; 8] {
     if dir == 1 {
@@ -791,10 +798,10 @@ unsafe fn store_luma_taps(p: *mut u8, stride: usize, dir: usize, t: &[v128; 8], 
     }
 }
 
-pub fn luma_edge(data: &mut [u8], stride: usize, x: usize, y: usize, dir: usize, beta: i32, tc: i32) {
-    edge_holds(data, stride, x, y, dir, 4);
-    let p = data[y * stride + x..].as_mut_ptr();
-    // SAFETY: checked above.
+/// # Safety
+/// See `kernels::luma_edge`.
+pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: i32, tc: i32) {
+    // SAFETY: the caller's.
     let t = unsafe { luma_taps(p, stride, dir) };
     let [p3, p2, p1, p0, q0, q1, q2, q3] = t;
     let dp = i16x8_abs(i16x8_sub(i16x8_add(p2, p0), i16x8_shl(p1, 1)));
@@ -844,16 +851,16 @@ pub fn luma_edge(data: &mut [u8], stride: usize, x: usize, y: usize, dir: usize,
         };
         [p3, p2, np1, np0, nq0, nq1, q2, q3]
     };
-    // SAFETY: checked above.
+    // SAFETY: the caller's.
     unsafe { store_luma_taps(p, stride, dir, &out, strong) }
 }
 
-pub fn chroma_edge(data: &mut [u8], stride: usize, x: usize, y: usize, dir: usize, tc: i32) {
-    edge_holds(data, stride, x, y, dir, 2);
-    let p = data[y * stride + x..].as_mut_ptr();
+/// # Safety
+/// See `kernels::chroma_edge`.
+pub unsafe fn chroma_edge(p: *mut u8, stride: usize, dir: usize, tc: i32) {
     // The taps `p1, p0, q0, q1`, as `luma_taps` makes them; a vertical
     // edge's four lines of four bytes fill one vector.
-    // SAFETY: checked above.
+    // SAFETY: the caller's.
     let [p1, p0, q0, q1] = unsafe {
         if dir == 1 {
             let row = |i: isize| tap(v128_load32_zero(p.offset((i - 2) * stride as isize) as *const u32));
@@ -872,7 +879,7 @@ pub fn chroma_edge(data: &mut [u8], stride: usize, x: usize, y: usize, dir: usiz
     let tcv = i16x8_splat(tc as i16);
     let d = clip_abs(i16x8_shr(i16x8_add(i16x8_sub(i16x8_add(i16x8_shl(i16x8_sub(q0, p0), 2), p1), q1), i16x8_splat(4)), 3), tcv);
     let (np0, nq0) = (i16x8_add(p0, d), i16x8_sub(q0, d));
-    // SAFETY: checked above.
+    // SAFETY: the caller's.
     unsafe {
         if dir == 1 {
             v128_store32_lane::<0>(u8x16_narrow_i16x8(np0, np0), p.sub(stride) as *mut u32);
@@ -900,14 +907,14 @@ fn add_offset(v: v128, off: v128) -> v128 {
     u8x16_sub_sat(u8x16_add_sat(v, pos), neg)
 }
 
-pub fn sao_band(data: &mut [u8], stride: usize, w: usize, h: usize, band: &[i8; 32]) {
-    holds(data, stride, w, h);
+/// # Safety
+/// See `kernels::sao_band`.
+pub unsafe fn sao_band(d: *mut u8, stride: usize, w: usize, h: usize, band: &[i8; 32]) {
     let lo = i8x16(band[0], band[1], band[2], band[3], band[4], band[5], band[6], band[7], band[8], band[9], band[10], band[11], band[12], band[13], band[14], band[15]);
     let hi = i8x16(band[16], band[17], band[18], band[19], band[20], band[21], band[22], band[23], band[24], band[25], band[26], band[27], band[28], band[29], band[30], band[31]);
     let sixteen = u8x16_splat(16);
-    let d = data.as_mut_ptr();
     for y in 0..h {
-        // SAFETY: inside the block `holds` checked.
+        // SAFETY: the caller's.
         unsafe {
             let dr = d.add(y * stride);
             let mut x = 0;
@@ -927,17 +934,18 @@ pub fn sao_band(data: &mut [u8], stride: usize, w: usize, h: usize, band: &[i8; 
     }
 }
 
-pub fn sao_edge(dst: &mut [u8], dst_stride: usize, src: &[u8], origin: usize, src_stride: usize, w: usize, h: usize, oa: isize, ob: isize, offs: &[i8; 4]) {
-    holds(dst, dst_stride, w, h);
+/// # Safety
+/// See `kernels::sao_edge`.
+pub unsafe fn sao_edge(d: *mut u8, dst_stride: usize, src: &[u8], origin: usize, src_stride: usize, w: usize, h: usize, oa: isize, ob: isize, offs: &[i8; 4]) {
     // The block and its neighbours in `src`, checked once.
     let (lo, hi) = (oa.min(ob).min(0), oa.max(ob).max(0));
     assert!(w > 0 && h > 0 && origin as isize + lo >= 0 && origin + (h - 1) * src_stride + w - 1 < (src.len() as isize - hi) as usize);
     let table = [offs[0], offs[1], 0, offs[2], offs[3]];
     let tab = i8x16(table[0], table[1], 0, table[3], table[4], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     let two = i8x16_splat(2);
-    let (d, s) = (dst.as_mut_ptr(), src.as_ptr());
+    let s = src.as_ptr();
     for y in 0..h {
-        // SAFETY: inside the blocks checked above.
+        // SAFETY: `src` checked above, the block at `d` the caller's.
         unsafe {
             let dr = d.add(y * dst_stride);
             let sr = s.add(origin + y * src_stride);

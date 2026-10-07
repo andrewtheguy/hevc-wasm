@@ -17,6 +17,12 @@ use crate::shared::PlanePtr;
 use crate::slice::SliceHeader;
 use crate::tables::TC_TABLE;
 
+/// Whether the four-line edge segment at (`x`, `y`), `n` taps a side, is in
+/// the plane.
+fn inside(pl: &PlanePtr, x: usize, y: usize, dir: usize, n: usize) -> bool {
+    if dir == 0 { x >= n && x + n <= pl.width && y + 4 <= pl.height } else { y >= n && y + n <= pl.height && x + 4 <= pl.width }
+}
+
 pub struct DeblockCtx<'a> {
     pub planes: [PlanePtr; 3],
     pub maps: Maps,
@@ -34,21 +40,18 @@ impl<'a> DeblockCtx<'a> {
         let beta = kernels::luma_beta(qp, self.sh.beta_offset_div2);
         let tc = kernels::luma_tc(qp, bs, self.sh.tc_offset_div2);
         let pl = self.planes[0];
-        // The edge's four lines, four samples each side of it.
-        let (bx, by, bw, bh) = if dir == 0 { (x - 4, y, 8, 4) } else { (x, y - 4, 4, 8) };
+        debug_assert!(inside(&pl, x, y, dir, 4));
         // SAFETY: the samples an edge touches are this thread's (see the module).
-        let data = unsafe { pl.block_mut(bx, by, bw, bh) };
-        kernels::luma_edge(data, pl.stride, x - bx, y - by, dir, beta, tc);
+        unsafe { kernels::luma_edge(pl.at(x, y), pl.stride, dir, beta, tc) };
         if bs == 2 {
             for c in 1..3usize {
                 let off = if c == 1 { self.pps.cb_qp_offset } else { self.pps.cr_qp_offset };
                 let qpc = (qp + off).clamp(0, 57).min(51);
                 let tc = TC_TABLE[(qpc + 2 + (self.sh.tc_offset_div2 << 1)).clamp(0, 53) as usize] as i32;
                 let pl = self.planes[c];
-                let (bx, by) = if dir == 0 { (x - 2, y) } else { (x, y - 2) };
+                debug_assert!(inside(&pl, x, y, dir, 2));
                 // SAFETY: as above.
-                let data = unsafe { pl.block_mut(bx, by, 4, 4) };
-                kernels::chroma_edge(data, pl.stride, x - bx, y - by, dir, tc);
+                unsafe { kernels::chroma_edge(pl.at(x, y), pl.stride, dir, tc) };
             }
         }
     }

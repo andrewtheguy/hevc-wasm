@@ -44,6 +44,15 @@ impl PlanePtr {
         unsafe { *self.ptr.add(y * self.stride + x) }
     }
 
+    /// The sample at (`x`, `y`) by pointer, for a filter kernel to run from:
+    /// the filters' blocks share rows with other threads' blocks, so they
+    /// never hold a slice of the plane.
+    #[inline]
+    pub fn at(&self, x: usize, y: usize) -> *mut u8 {
+        debug_assert!(x < self.width && y < self.height);
+        self.ptr.wrapping_add(y * self.stride + x)
+    }
+
     /// `len` samples of row `y` from `x`.
     ///
     /// # Safety

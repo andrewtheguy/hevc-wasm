@@ -199,10 +199,7 @@ mod tests {
 
     #[test]
     fn flat_neighbours_predict_flat() {
-        let mut r = RefSamples::default();
-        r.left = [50; 64];
-        r.top = [50; 64];
-        r.corner = 50;
+        let mut r = RefSamples { left: [50; 64], top: [50; 64], corner: 50, ..Default::default() };
         let mut out = [0u8; 64];
         for m in 0..35 {
             predict(&mut r, 8, m, true, &mut out, 8);

@@ -119,6 +119,7 @@ describe("what it refuses", () => {
     withDecoder(1, (d) => {
       const garbage = new Uint8Array([0, 0, 1, 0x26, 1, 0xaf, 0x13, 0x55, 0, 0, 1, 0x02, 1, 0xff, 0x00, 0x00]);
       expect(() => decodeUnit(loaded, d, garbage)).toThrow();
+      expect(() => decodeUnit(loaded, d, new Uint8Array([1, 2, 3, 4, 5]))).toThrow(/no NAL/);
       expect(decodeUnit(loaded, d, new Uint8Array(0))).toBeNull();
       const md5s: string[] = [];
       for (const unit of units) {

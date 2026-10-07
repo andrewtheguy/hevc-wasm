@@ -89,7 +89,11 @@ impl Decoder {
 
     fn unit(&mut self, unit: &[u8]) -> Result<Option<Decoded>> {
         let mut out = None;
-        for nal in nal::split_annex_b(unit) {
+        let nals = nal::split_annex_b(unit);
+        if nals.is_empty() && !unit.is_empty() {
+            return Err(Error::invalid("a unit with no NAL unit in it"));
+        }
+        for nal in nals {
             let hdr = NalHeader::parse(nal).ok_or_else(|| Error::invalid("a NAL unit header"))?;
             if hdr.layer_id != 0 {
                 continue;
@@ -139,6 +143,9 @@ impl Decoder {
         let sh = parse_slice_header(&mut r, hdr, &lookup)?;
         let (sps, pps) = lookup(sh.pps_id).ok_or_else(|| Error::invalid("the slice's parameter sets"))?;
         let (sps, pps) = (sps.clone(), pps.clone());
+        if !idr && self.dpb.iter().any(|e| e.pic.width() != sps.width as usize || e.pic.height() != sps.height as usize) {
+            return Err(Error::invalid("a picture size change without an IDR"));
+        }
         if sh.entry_point_offsets.len() + 1 != sps.pic_height_in_ctbs as usize {
             return Err(Error::unsupported("a slice whose entry points are not one per coding tree block row"));
         }

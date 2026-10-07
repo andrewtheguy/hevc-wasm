@@ -21,6 +21,25 @@ pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usi
     }
 }
 
+/// `dst = src`, `w`×`h`, `src` by pointer: a block of the picture whose rows
+/// other threads' blocks share.
+///
+/// # Safety
+/// The block at `src` must be readable and nothing may be writing it: see
+/// `shared`.
+pub unsafe fn copy_block_from(dst: &mut [u8], dst_stride: usize, src: *const u8, src_stride: usize, w: usize, h: usize) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return unsafe { simd128::copy_block_from(dst, dst_stride, src, src_stride, w, h) };
+    }
+    #[allow(unreachable_code)]
+    for y in 0..h {
+        // SAFETY: the caller's.
+        let row = unsafe { std::slice::from_raw_parts(src.add(y * src_stride), w) };
+        dst[y * dst_stride..y * dst_stride + w].copy_from_slice(row);
+    }
+}
+
 /// Horizontal `N`-tap filter of samples into the 14-bit intermediate:
 /// `dst[y][x] = Σ t[i] * src[y][x + i]`, the first pass of a two-dimensional
 /// interpolation.
@@ -244,75 +263,90 @@ pub fn accum<const LEN: usize>(out: &mut [i32; LEN], src: &[i16], s_in: usize, k
 
 // ---- deblocking (§8.7.2.5) ----
 
-/// One four-line luma edge segment at (`x`, `y`): a vertical edge (`dir` 0)
-/// between columns `x - 1` and `x`, or a horizontal one between rows.
-pub fn luma_edge(data: &mut [u8], stride: usize, x: usize, y: usize, dir: usize, beta: i32, tc: i32) {
+/// One four-line luma edge segment: `p` is the first line's first sample
+/// past the edge, which is vertical (`dir` 0) between it and the sample to
+/// its left, or horizontal between it and the sample above. The edge's
+/// samples are reached by pointer, since the lines belong to blocks whose
+/// rows other threads' blocks share.
+///
+/// # Safety
+/// The four lines' eight taps must be this thread's: see `shared`.
+pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: i32, tc: i32) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return simd128::luma_edge(data, stride, x, y, dir, beta, tc);
+        return unsafe { simd128::luma_edge(p, stride, dir, beta, tc) };
     }
     #[allow(unreachable_code)]
     let (line_step, tap_step): (isize, isize) = if dir == 0 { (stride as isize, 1) } else { (1, stride as isize) };
-    let origin = (y * stride + x) as isize;
-    let idx = |k: usize, i: i32| -> usize { (origin + k as isize * line_step + i as isize * tap_step) as usize };
-    let g = |d: &[u8], k: usize, i: i32| d[idx(k, i)] as i32;
-    let dp0 = (g(data, 0, -3) - 2 * g(data, 0, -2) + g(data, 0, -1)).abs();
-    let dp3 = (g(data, 3, -3) - 2 * g(data, 3, -2) + g(data, 3, -1)).abs();
-    let dq0 = (g(data, 0, 2) - 2 * g(data, 0, 1) + g(data, 0, 0)).abs();
-    let dq3 = (g(data, 3, 2) - 2 * g(data, 3, 1) + g(data, 3, 0)).abs();
+    let at = |k: usize, i: i32| p.wrapping_offset(k as isize * line_step + i as isize * tap_step);
+    // SAFETY: the caller's, for every tap.
+    let g = |k: usize, i: i32| unsafe { *at(k, i) } as i32;
+    let dp0 = (g(0, -3) - 2 * g(0, -2) + g(0, -1)).abs();
+    let dp3 = (g(3, -3) - 2 * g(3, -2) + g(3, -1)).abs();
+    let dq0 = (g(0, 2) - 2 * g(0, 1) + g(0, 0)).abs();
+    let dq3 = (g(3, 2) - 2 * g(3, 1) + g(3, 0)).abs();
     let (dpq0, dpq3) = (dp0 + dq0, dp3 + dq3);
     if dpq0 + dpq3 >= beta {
         return;
     }
-    let dsam = |k: usize, dpq: i32| -> bool { dpq < (beta >> 2) && (g(data, k, -4) - g(data, k, -1)).abs() + (g(data, k, 0) - g(data, k, 3)).abs() < (beta >> 3) && (g(data, k, -1) - g(data, k, 0)).abs() < ((5 * tc + 1) >> 1) };
+    let dsam = |k: usize, dpq: i32| -> bool { dpq < (beta >> 2) && (g(k, -4) - g(k, -1)).abs() + (g(k, 0) - g(k, 3)).abs() < (beta >> 3) && (g(k, -1) - g(k, 0)).abs() < ((5 * tc + 1) >> 1) };
     let strong = dsam(0, 2 * dpq0) && dsam(3, 2 * dpq3);
     let dep = dp0 + dp3 < ((beta + (beta >> 1)) >> 3);
     let deq = dq0 + dq3 < ((beta + (beta >> 1)) >> 3);
     for k in 0..4 {
-        let (p3, p2, p1, p0) = (g(data, k, -4), g(data, k, -3), g(data, k, -2), g(data, k, -1));
-        let (q0, q1, q2, q3) = (g(data, k, 0), g(data, k, 1), g(data, k, 2), g(data, k, 3));
+        let (p3, p2, p1, p0) = (g(k, -4), g(k, -3), g(k, -2), g(k, -1));
+        let (q0, q1, q2, q3) = (g(k, 0), g(k, 1), g(k, 2), g(k, 3));
+        // SAFETY: as above.
+        let set = |i: i32, v: i32| unsafe { *at(k, i) = v as u8 };
         if strong {
             let t2 = 2 * tc;
-            data[idx(k, -1)] = ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(p0 - t2, p0 + t2) as u8;
-            data[idx(k, -2)] = ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(p1 - t2, p1 + t2) as u8;
-            data[idx(k, -3)] = ((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(p2 - t2, p2 + t2) as u8;
-            data[idx(k, 0)] = ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(q0 - t2, q0 + t2) as u8;
-            data[idx(k, 1)] = ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(q1 - t2, q1 + t2) as u8;
-            data[idx(k, 2)] = ((p0 + q0 + q1 + 3 * q2 + 2 * q3 + 4) >> 3).clamp(q2 - t2, q2 + t2) as u8;
+            set(-1, ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(p0 - t2, p0 + t2));
+            set(-2, ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(p1 - t2, p1 + t2));
+            set(-3, ((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(p2 - t2, p2 + t2));
+            set(0, ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(q0 - t2, q0 + t2));
+            set(1, ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(q1 - t2, q1 + t2));
+            set(2, ((p0 + q0 + q1 + 3 * q2 + 2 * q3 + 4) >> 3).clamp(q2 - t2, q2 + t2));
         } else {
             let mut delta = (9 * (q0 - p0) - 3 * (q1 - p1) + 8) >> 4;
             if delta.abs() < tc * 10 {
                 delta = delta.clamp(-tc, tc);
-                data[idx(k, -1)] = (p0 + delta).clamp(0, 255) as u8;
-                data[idx(k, 0)] = (q0 - delta).clamp(0, 255) as u8;
+                set(-1, (p0 + delta).clamp(0, 255));
+                set(0, (q0 - delta).clamp(0, 255));
                 if dep {
                     let d = ((((p2 + p0 + 1) >> 1) - p1 + delta) >> 1).clamp(-(tc >> 1), tc >> 1);
-                    data[idx(k, -2)] = (p1 + d).clamp(0, 255) as u8;
+                    set(-2, (p1 + d).clamp(0, 255));
                 }
                 if deq {
                     let d = ((((q2 + q0 + 1) >> 1) - q1 - delta) >> 1).clamp(-(tc >> 1), tc >> 1);
-                    data[idx(k, 1)] = (q1 + d).clamp(0, 255) as u8;
+                    set(1, (q1 + d).clamp(0, 255));
                 }
             }
         }
     }
 }
 
-/// One four-line chroma edge segment (§8.7.2.5.5): one sample each side.
-pub fn chroma_edge(data: &mut [u8], stride: usize, x: usize, y: usize, dir: usize, tc: i32) {
+/// One four-line chroma edge segment (§8.7.2.5.5): one sample each side,
+/// `p` as for [`luma_edge`].
+///
+/// # Safety
+/// The four lines' four taps must be this thread's: see `shared`.
+pub unsafe fn chroma_edge(p: *mut u8, stride: usize, dir: usize, tc: i32) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return simd128::chroma_edge(data, stride, x, y, dir, tc);
+        return unsafe { simd128::chroma_edge(p, stride, dir, tc) };
     }
     #[allow(unreachable_code)]
     let (line_step, tap_step): (isize, isize) = if dir == 0 { (stride as isize, 1) } else { (1, stride as isize) };
-    let origin = (y * stride + x) as isize;
     for k in 0..4isize {
-        let at = |i: isize| (origin + k * line_step + i * tap_step) as usize;
-        let (p1, p0, q0, q1) = (data[at(-2)] as i32, data[at(-1)] as i32, data[at(0)] as i32, data[at(1)] as i32);
+        let at = |i: isize| p.wrapping_offset(k * line_step + i * tap_step);
+        // SAFETY: the caller's.
+        let (p1, p0, q0, q1) = unsafe { (*at(-2) as i32, *at(-1) as i32, *at(0) as i32, *at(1) as i32) };
         let d = ((((q0 - p0) << 2) + p1 - q1 + 4) >> 3).clamp(-tc, tc);
-        data[at(-1)] = (p0 + d).clamp(0, 255) as u8;
-        data[at(0)] = (q0 - d).clamp(0, 255) as u8;
+        // SAFETY: as above.
+        unsafe {
+            *at(-1) = (p0 + d).clamp(0, 255) as u8;
+            *at(0) = (q0 - d).clamp(0, 255) as u8;
+        }
     }
 }
 
@@ -327,26 +361,38 @@ pub fn luma_beta(qp: i32, beta_offset_div2: i32) -> i32 {
 
 // ---- sample adaptive offset (§8.7.3) ----
 
-/// Band offset in place over a `w`×`h` block: `v += band[v >> 3]`.
-pub fn sao_band(data: &mut [u8], stride: usize, w: usize, h: usize, band: &[i8; 32]) {
+/// Band offset in place over the `w`×`h` block at `p`, a block of the
+/// picture reached by pointer as [`luma_edge`]'s: `v += band[v >> 3]`.
+///
+/// # Safety
+/// The block must be this thread's: see `shared`.
+pub unsafe fn sao_band(p: *mut u8, stride: usize, w: usize, h: usize, band: &[i8; 32]) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return simd128::sao_band(data, stride, w, h, band);
+        return unsafe { simd128::sao_band(p, stride, w, h, band) };
     }
     #[allow(unreachable_code)]
     for y in 0..h {
-        for v in &mut data[y * stride..y * stride + w] {
-            *v = (*v as i32 + band[(*v >> 3) as usize] as i32).clamp(0, 255) as u8;
+        for x in 0..w {
+            // SAFETY: the caller's.
+            unsafe {
+                let v = p.add(y * stride + x);
+                *v = (*v as i32 + band[(*v >> 3) as usize] as i32).clamp(0, 255) as u8;
+            }
         }
     }
 }
 
 /// Edge offset of the `w`×`h` block at `origin` of `src`, whose neighbours
-/// `oa` and `ob` away are all in `src`, into `dst`.
-pub fn sao_edge(dst: &mut [u8], dst_stride: usize, src: &[u8], origin: usize, src_stride: usize, w: usize, h: usize, oa: isize, ob: isize, offs: &[i8; 4]) {
+/// `oa` and `ob` away are all in `src`, into the block of the picture at
+/// `dst`, reached by pointer as [`luma_edge`]'s.
+///
+/// # Safety
+/// The block at `dst` must be this thread's: see `shared`.
+pub unsafe fn sao_edge(dst: *mut u8, dst_stride: usize, src: &[u8], origin: usize, src_stride: usize, w: usize, h: usize, oa: isize, ob: isize, offs: &[i8; 4]) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return simd128::sao_edge(dst, dst_stride, src, origin, src_stride, w, h, oa, ob, offs);
+        return unsafe { simd128::sao_edge(dst, dst_stride, src, origin, src_stride, w, h, oa, ob, offs) };
     }
     // `edgeIdx` 0, 1, 3, 4 take the four offsets; 2 is the plateau (Table 8-19).
     #[allow(unreachable_code)]
@@ -358,7 +404,8 @@ pub fn sao_edge(dst: &mut [u8], dst_stride: usize, src: &[u8], origin: usize, sr
             let a = src[(i + oa) as usize] as i32;
             let b = src[(i + ob) as usize] as i32;
             let e = (2 + (v - a).signum() + (v - b).signum()) as usize;
-            dst[y * dst_stride + x] = (v + table[e] as i32).clamp(0, 255) as u8;
+            // SAFETY: the caller's.
+            unsafe { *dst.add(y * dst_stride + x) = (v + table[e] as i32).clamp(0, 255) as u8 };
         }
     }
 }

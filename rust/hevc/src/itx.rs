@@ -189,7 +189,7 @@ mod tests {
     fn dequant_flat() {
         assert_eq!(Dequant::new(4, 4).apply(10), 320);
         // QP 51 on a 4×4: the shift goes the other way.
-        assert_eq!(Dequant::new(4, 51).apply(3), ((3i64 * 57 * 16 << 8) >> 5) as i16);
+        assert_eq!(Dequant::new(4, 51).apply(3), (((3i64 * 57 * 16) << 8) >> 5) as i16);
     }
 }
 

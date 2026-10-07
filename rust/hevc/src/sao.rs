@@ -65,19 +65,21 @@ impl SaoCtx {
         let prm = unsafe { m.sao.at(cy * m.ctb_w + cx) }[c];
         let pl = self.planes[c];
         let stride = pl.stride;
-        // SAFETY: this block is final and nothing else touches it now; the
-        // deblocked line below and column to the right it reads are too
-        // (see `shared`).
-        let block = unsafe { pl.block_mut(x0, y0, w, h) };
+        // SAFETY, for every access to the plane below: this block is final
+        // and this thread's, as are the deblocked line below it and the
+        // column to its right that it reads (see `shared`); all by pointer,
+        // since other threads' blocks share its rows.
         // The last line and column as deblocked, for the neighbours.
         // SAFETY: this block's own entries.
         let (last_row, last_col) = unsafe { (m.sao_rows.slice_mut((c * m.ctb_h + cy) * pw + x0, w), m.sao_cols.slice_mut((c * m.ctb_w + cx) * ph + y0, h)) };
         if below {
-            last_row.copy_from_slice(&block[(h - 1) * stride..(h - 1) * stride + w]);
+            // SAFETY: see above.
+            last_row.copy_from_slice(unsafe { pl.row(x0, y1 - 1, w) });
         }
         if right {
             for (k, v) in last_col.iter_mut().enumerate() {
-                *v = block[k * stride + w - 1];
+                // SAFETY: see above.
+                *v = unsafe { pl.get(x1 - 1, y0 + k) };
             }
         }
         match prm.type_idx {
@@ -86,7 +88,8 @@ impl SaoCtx {
                 for k in 0..4usize {
                     band[(k + prm.aux as usize) & 31] = prm.offset[k];
                 }
-                kernels::sao_band(block, stride, w, h, &band);
+                // SAFETY: see above.
+                unsafe { kernels::sao_band(pl.at(x0, y0), stride, w, h, &band) };
             }
             2 => {
                 let (da, db) = match prm.aux {
@@ -106,7 +109,8 @@ impl SaoCtx {
                 // and the column to the left from what those blocks saved,
                 // the rest from the picture.
                 const S: usize = SRC_STRIDE;
-                kernels::copy_block(&mut src[S + 1..], S, &block[..], stride, w, h);
+                // SAFETY: see above.
+                unsafe { kernels::copy_block_from(&mut src[S + 1..], S, pl.at(x0, y0), stride, w, h) };
                 let (l, r) = ((x0 > 0) as usize, (x1 < pw) as usize);
                 if y0 > 0 {
                     // SAFETY: the row above's entries, saved before this.
@@ -114,8 +118,7 @@ impl SaoCtx {
                     src[1 - l..1 + w + r].copy_from_slice(above);
                 }
                 if y1 < ph {
-                    // SAFETY: the line below, deblocked, which its own
-                    // block has yet to reach.
+                    // SAFETY: see above.
                     let line = unsafe { pl.row(x0 - l, y1, w + l + r) };
                     src[(h + 1) * S + 1 - l..(h + 1) * S + 1 + w + r].copy_from_slice(line);
                 }
@@ -128,12 +131,13 @@ impl SaoCtx {
                 }
                 if r == 1 {
                     for k in 0..h {
-                        // SAFETY: the column to the right, as the line below.
+                        // SAFETY: see above.
                         src[(k + 1) * S + w + 1] = unsafe { pl.get(x1, y0 + k) };
                     }
                 }
                 let origin = (iy0 - y0 + 1) * S + (ix0 - x0 + 1);
-                kernels::sao_edge(&mut block[(iy0 - y0) * stride + ix0 - x0..], stride, src, origin, S, ix1 - ix0, iy1 - iy0, da.1 * S as isize + da.0, db.1 * S as isize + db.0, &prm.offset);
+                // SAFETY: see above.
+                unsafe { kernels::sao_edge(pl.at(ix0, iy0), stride, src, origin, S, ix1 - ix0, iy1 - iy0, da.1 * S as isize + da.0, db.1 * S as isize + db.0, &prm.offset) };
             }
             _ => {}
         }
