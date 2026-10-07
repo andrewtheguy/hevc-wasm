@@ -1,8 +1,8 @@
 # What remains of the pure-Rust decoder
 
 What the decoder does today is in [the architecture](architecture.md), with
-where its time goes; how it is built and what it measures against FFmpeg's
-decoder compiled to WebAssembly are in the [README](../README.md). This is the list of what it does
+where its time goes; how it is built and what it measures against the
+release before are in the [README](../README.md). This is the list of what it does
 not do yet, in the order the work would go. Numbers are from the module
 under Node on one thread of the x86 workstation, profiled with `perf record`
 of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
@@ -54,15 +54,23 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ### The video
 
-4. **The row-start copy.** The largest item at 17%, and memory-bound: each row
-   begins as a copy of the first reference's rows, and the reference and the
-   picture being written do not fit the cache together. The remaining lever
-   is not to touch the memory twice. Candidates: copying the reference's row
-   into the picture a stripe ahead of the decode rather than whole rows
-   ahead, so the written lines are still cached when the blocks that are not
-   still overwrite them; and reusing, as the next picture's buffer, the one
-   the first reference was copied from last, so its lines are the warmest.
-   Neither is measured.
+4. **The row-start copy.** It was the largest item at 17%, and
+   memory-bound. Two thirds of it is no longer made: the buffer reused is
+   one holding a picture the first reference descends from, and a row copies
+   only the runs of coding tree blocks changed since (see the architecture).
+   What is left is about 10%, the copy of the other third, and that third is
+   larger than it need be: a block counts as changed when any of the four
+   beside it wrote a sample, whatever the strength of the edge between them,
+   and when its SAO is on, whatever the offsets do. 1,400 of the video's
+   2,040 blocks are left as the picture before by that rule, where nine
+   tenths of its coding units are skipped; settling it from the boundary
+   strengths of the block's own edges is the untried lever. The copy a
+   stripe ahead of the decode rather than whole rows ahead measured slower
+   at every width, one coding tree block to eight, by vector or by
+   `memory.copy`: the copy is bound by the reference's lines arriving, not
+   by the picture's being touched twice. The capture has almost no such
+   blocks (13 of 1,600) and fifteen references between the first and a free
+   buffer, so it gains nothing.
 
 5. **`coding_quadtree`**, 9.3%, is a 20 KB function with no hot spot: the
    recursion, the skip and merge flags, the map fills. Moving the coding unit
@@ -93,8 +101,8 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
    lookups for the first candidate. Not profiled to the instruction yet.
 
 9. **Four-thread scaling.** On the capture four threads are 2.6× one; on the
-   video no faster (2.5 ms either way), while the cycles rise from 12 M to 15 M.
-   The video's picture is 2.6 ms of work spread over its few coding tree
+   video slower (2.0 ms on one, 2.4 ms on four), while the cycles rise from 11 M to 14 M.
+   The video's picture is 2 ms of work spread over its few coding tree
    block rows, and the wavefront's waits (`run_rows` 2.2%, `wait_for` spinning 256
    times before it sleeps) are a visible share. Whether the loss is the waits,
    the row-start copies contending for memory bandwidth, or rayon's scope per
@@ -103,8 +111,8 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ### Elsewhere
 
-- **The target machine.** All of the README's numbers, this module's and
-  the FFmpeg module's, are from an x86 workstation under Node. Neither has
+- **The target machine.** All of the README's numbers are from an x86
+  workstation under Bun. The module has not
   been run on Apple silicon, where V8 lowers SIMD128 to NEON differently and
   the memory system differs; the capture's transform and the video's
   memory-bound copy may rank differently there.

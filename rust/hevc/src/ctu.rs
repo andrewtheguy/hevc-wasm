@@ -11,6 +11,7 @@ use crate::cabac::*;
 use crate::deblock::DeblockCtx;
 use crate::error::{Error, Result};
 use crate::intra::RefSamples;
+use crate::kernels;
 use crate::pic::{Motion, PicState, Picture, SaoParams, PRED_INTER, PRED_INTRA, PRED_SKIP};
 use crate::ps::{Pps, Sps};
 use crate::sao::SaoCtx;
@@ -50,6 +51,7 @@ pub struct Maps {
     pub nz: MapPtr<u8>,
     pub motion: MapPtr<Motion>,
     pub sao: MapPtr<[SaoParams; 3]>,
+    pub written: MapPtr<u8>,
     pub sao_rows: MapPtr<u8>,
     pub sao_cols: MapPtr<u8>,
 }
@@ -71,6 +73,7 @@ impl Maps {
             nz: MapPtr::of(&mut st.nz),
             motion: MapPtr::of(&mut st.motion),
             sao: MapPtr::of(&mut st.sao),
+            written: MapPtr::of(&mut st.written),
             sao_rows: MapPtr::of(&mut st.sao_rows),
             sao_cols: MapPtr::of(&mut st.sao_cols),
         }
@@ -99,6 +102,10 @@ pub struct PictureCtx<'a> {
     /// first reference, whose samples cost less to copy by the row than by
     /// the block.
     pub base: Option<&'a Picture>,
+    /// Per coding tree block, where the picture's buffer came holding a
+    /// picture the base descends from: whether the base's samples are still
+    /// that picture's, and so in the buffer already.
+    pub kept: Option<&'a [u8]>,
     /// The slice's RBSP.
     pub data: &'a [u8],
     /// Where each row's substream starts in `data`.
@@ -230,9 +237,30 @@ pub fn decode_row(pic: &PictureCtx, s: &mut Scratch, row: usize) -> Result<()> {
     // The row's samples start as the base's, before the wait on the row above.
     if let Some(base) = pic.base {
         let n = ctb.min(m.height - y0);
-        for c in 0..3 {
-            // SAFETY: the rows are this row's, and nothing has written them.
-            unsafe { pic.planes[c].copy_rows_from(&base.planes[c], y0, n) };
+        let kept = pic.kept.map(|k| &k[row * m.ctb_w..(row + 1) * m.ctb_w]).filter(|k| k.contains(&1));
+        if let Some(kept) = kept {
+            // Only the runs of blocks the buffer does not hold already.
+            let mut a = 0;
+            while a < m.ctb_w {
+                if kept[a] != 0 {
+                    a += 1;
+                    continue;
+                }
+                let b = kept[a..].iter().position(|&k| k != 0).map_or(m.ctb_w, |i| a + i);
+                let (x0, w) = (a * ctb, (b * ctb).min(m.width) - a * ctb);
+                for c in 0..3 {
+                    let src = &base.planes[c];
+                    // SAFETY: the blocks are this row's, and nothing has written them.
+                    let dst = unsafe { pic.planes[c].block_mut(x0, y0, w, n) };
+                    kernels::copy_rows(dst, src.stride, &src.data[y0 * src.stride + x0..], src.stride, w, n);
+                }
+                a = b;
+            }
+        } else {
+            for c in 0..3 {
+                // SAFETY: the rows are this row's, and nothing has written them.
+                unsafe { pic.planes[c].copy_rows_from(&base.planes[c], y0, n) };
+            }
         }
     }
     // §9.3.1: the models start as the row above left them after its second
@@ -322,6 +350,15 @@ impl<'a> Row<'a> {
             self.parse_sao(x0, y0, rs)?;
         }
         self.coding_quadtree(x0, y0, self.pic.sps.log2_ctb_size as usize, 0)
+    }
+
+    /// The coding unit at (`x`, `y`) has samples of its own: its coding tree
+    /// block is no longer the base's.
+    #[inline]
+    fn wrote(&self, x: usize, y: usize) {
+        let m = &self.pic.maps;
+        // SAFETY: this coding tree block's own entry.
+        unsafe { m.written.set((y >> m.log2_ctb) * m.ctb_w + (x >> m.log2_ctb), 1) };
     }
 
     // ---- SAO syntax (§7.3.8.3) ----
@@ -529,6 +566,11 @@ impl<'a> Row<'a> {
             self.cu_intra = false;
             self.part_mode = PartMode::Part2Nx2N;
             self.prediction_unit(x0, y0, n, x0, y0, n, n, 0, true)?;
+            // Skipped on the first reference with no motion, the block is the
+            // samples its row started as (`motion_compensate`).
+            if self.map_get(m.motion, m.idx4(x0, y0)) != Motion::default() {
+                self.wrote(x0, y0);
+            }
             self.edge_strengths(x0, y0, n, n, true);
             self.last_cu_qp = self.qp_y;
             return Ok(());
@@ -540,6 +582,7 @@ impl<'a> Row<'a> {
             self.part_mode = self.parse_part_mode(log2cb);
         }
         self.fill4(m.pred_mode, x0, y0, n, n, if self.cu_intra { PRED_INTRA } else { PRED_INTER });
+        self.wrote(x0, y0);
         self.intra_split = self.cu_intra && self.part_mode == PartMode::PartNxN;
         let mut merge_2nx2n = false;
         if self.cu_intra {

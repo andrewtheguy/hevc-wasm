@@ -47,6 +47,11 @@ pub struct Decoder {
     state: Option<PicState>,
     /// Picture buffers no reference or output holds any more.
     pool: Vec<Picture>,
+    /// The last picture's serial (`Picture::serial`).
+    serial: u64,
+    /// Which coding tree blocks of the picture's buffer were the base's
+    /// already (`PictureCtx::kept`), reused across pictures.
+    kept: Vec<u8>,
     progress: Vec<Progress>,
     wpp_ctx: Vec<Mutex<Option<crate::cabac::Contexts>>>,
     scratch: Vec<Mutex<Scratch>>,
@@ -67,6 +72,8 @@ impl Decoder {
             prev_tid0_poc: 0,
             state: None,
             pool: Vec::new(),
+            serial: 0,
+            kept: Vec::new(),
             progress: Vec::new(),
             wpp_ctx: Vec::new(),
             scratch: (0..threads).map(|_| Mutex::new(Scratch::default())).collect(),
@@ -197,6 +204,9 @@ impl Decoder {
                 plane.data.fill(128);
             }
             pic.poc = p;
+            self.serial += 1;
+            (pic.serial, pic.base_serial) = (self.serial, 0);
+            pic.same.clear();
             self.dpb.push(Reference { pic: Arc::new(pic), poc: p });
         }
         // RefPicList0 (§8.3.4): the earlier pictures, then the later, repeated.
@@ -210,8 +220,19 @@ impl Decoder {
             }
         }
 
-        // The picture's buffer and maps.
-        let mut pic = self.take_buffer(&sps);
+        // The picture's buffer and maps: a free buffer holding a picture the
+        // base descends from, base by base, is the base but for the blocks
+        // changed on the way, and failing one, any.
+        let base = refs.first().map(|r| &*r.pic);
+        let ctbs = sps.pic_width_in_ctbs as usize * sps.pic_height_in_ctbs as usize;
+        let mut kept = std::mem::take(&mut self.kept);
+        let descended = base.and_then(|b| self.descended(b, ctbs, &mut kept));
+        let mut pic = match descended {
+            Some(i) => self.pool.swap_remove(i),
+            None => self.take_buffer(&sps),
+        };
+        // Until it is decoded whole, the buffer holds no picture.
+        pic.serial = 0;
         let mut state = match self.state.take() {
             Some(s) if s.fits(&sps) => s,
             _ => PicState::new(&sps),
@@ -245,7 +266,8 @@ impl Decoder {
                 maps,
                 zs: &state.zs,
                 refs: &refs,
-                base: refs.first().map(|r| &*r.pic),
+                base,
+                kept: descended.map(|_| &kept[..]),
                 data: &rbsp.data,
                 substreams: &substreams,
                 progress: &self.progress,
@@ -260,11 +282,32 @@ impl Decoder {
                 ctu::decode_row(&ctx, &mut s, row)
             })
         };
-        self.state = Some(state);
+        self.kept = kept;
         if let Err(e) = decoded {
+            self.state = Some(state);
             self.pool.push(pic);
             return Err(e);
         }
+        // Where the picture is still its base: a block none of whose coding
+        // units wrote a sample, beside none with one that did, since the
+        // deblocking of an edge between two such blocks has no strength, and
+        // with SAO off.
+        pic.same.clear();
+        pic.base_serial = base.map_or(0, |b| b.serial);
+        if base.is_some() {
+            let (w, h) = (state.ctb_w, state.ctb_h);
+            let sao = sh.sao_luma || sh.sao_chroma;
+            let wrote = &state.written;
+            for i in 0..w * h {
+                let (x, y) = (i % w, i / w);
+                let beside = (x > 0 && wrote[i - 1] != 0) || (x + 1 < w && wrote[i + 1] != 0) || (y > 0 && wrote[i - w] != 0) || (y + 1 < h && wrote[i + w] != 0);
+                let filtered = sao && state.sao[i].iter().any(|p| p.type_idx != 0);
+                pic.same.push(!(wrote[i] != 0 || beside || filtered) as u8);
+            }
+        }
+        self.state = Some(state);
+        self.serial += 1;
+        pic.serial = self.serial;
         pic.poc = poc;
         self.started = true;
 
@@ -279,6 +322,29 @@ impl Decoder {
         let (w, h) = (sps.width as usize, sps.height as usize);
         self.pool.retain(|p| p.width() == w && p.height() == h);
         self.pool.pop().unwrap_or_else(|| Picture::new(w, h))
+    }
+
+    /// The pooled buffer that holds a picture `base` descends from, each
+    /// picture from the one its rows started as, through pictures still
+    /// referenced; `kept` is then, per coding tree block, whether no picture
+    /// on the way changed it, so the buffer holds `base`'s samples there.
+    fn descended(&self, base: &Picture, ctbs: usize, kept: &mut Vec<u8>) -> Option<usize> {
+        kept.clear();
+        kept.resize(ctbs, 1);
+        let mut pic = base;
+        // Each step is a picture decoded earlier, so the walk ends.
+        loop {
+            if pic.base_serial == 0 || pic.same.len() != ctbs || pic.width() != base.width() || pic.height() != base.height() {
+                return None;
+            }
+            for (k, &s) in kept.iter_mut().zip(&pic.same) {
+                *k &= s;
+            }
+            if let Some(i) = self.pool.iter().position(|p| p.serial == pic.base_serial && p.width() == base.width() && p.height() == base.height()) {
+                return kept.contains(&1).then_some(i);
+            }
+            pic = &self.dpb.iter().find(|e| e.pic.serial == pic.base_serial)?.pic;
+        }
     }
 
     /// Returns a picture's buffer to the pool once nothing else holds it.

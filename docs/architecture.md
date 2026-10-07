@@ -6,8 +6,7 @@ compiled to WebAssembly with SIMD128 and threads for
 [remotex](https://github.com/andrewtheguy/remotex)'s browser client. It
 decodes bit for bit as FFmpeg does. The [README](../README.md) is the
 operator's and builder's view of the same thing: building, testing,
-releasing and the measurements against FFmpeg's decoder compiled to
-WebAssembly.
+releasing and the measurements against the release before.
 [What remains](remaining.md) is the list of what it does not do yet.
 
 ## Data path
@@ -117,7 +116,8 @@ size, each row starting a multiple of 64 bytes apart so the kernels' vectors
 never cross a row. The decoded picture comes back with the conformance window
 to show and the colour the VUI states, or `2` (unspecified) where it does
 not. Buffers are pooled: a picture no reference or output holds goes back to
-the pool, four at most, and a sequence of another size takes new ones.
+the pool, four at most, still holding its picture (see the wavefront), and a
+sequence of another size takes new ones.
 
 References are short-term only, kept by picture order count. Each picture's
 reference picture set decides what stays; a used reference the decoder does
@@ -148,6 +148,18 @@ A P picture's rows start as the first reference's rows, one sequential copy
 before the wait on the row above, so a skipped block with a zero motion
 vector from that reference, which on a screen is nearly every block, is
 already in place and costs nothing.
+
+Where it can, the copy is not made either. Each picture keeps, per coding
+tree block, whether it is still the picture its rows started as: no coding
+unit of the block wrote a sample, none of the four blocks beside it did,
+since the deblocking of an edge between two such blocks has no strength, and
+its SAO is off. A buffer in the pool still holds the picture it was decoded
+as, known by a serial number, so a free buffer holding a picture the first
+reference descends from, base by base through the pictures still referenced,
+already is that reference wherever no picture on the way changed the block.
+The decoder takes that buffer when there is one, and a row copies only the
+runs of blocks in between. A buffer whose decode failed holds no picture and
+is never taken for one.
 
 ### The filters, behind the wavefront
 
@@ -248,7 +260,7 @@ plain Rust in `kernels`, and WebAssembly's 128-bit vectors in
 has `simd128`. A run on either path reconstructs the same picture; the
 native build runs the plain ones. The vector kernels are the interpolation
 filters, which write samples straight from their last pass, block copies
-down sixteen-wide columns, the residual add, planar and angular intra
+down sixteen-wide columns and across the rows of a run of coding tree blocks, the residual add, planar and angular intra
 prediction, the inverse transform by dot products, the deblocking edge
 filters, SAO's band and edge offsets, and the map fills by whole words
 rather than `memory.fill` calls into the runtime.
@@ -353,25 +365,25 @@ pictures), 13.6 ms a picture under the profiler:
 | 0.9% | deblock `edges` | |
 | 0.8% | `run_rows` | the wavefront's waits |
 
-The 1080p camera video in the Mac's shape (`sample`, 2,896 pictures), 4.5 ms a
+The 1080p camera video in the Mac's shape (`sample`, 2,896 pictures), 3.9 ms a
 picture under the profiler:
 
 | share | function |
 |---|---|
-| 12.6% | `sub_block` |
-| 19.0% | libc `memmove` (two symbols: the row-start copy and the stripe copies) |
-| 8.5% | `coding_quadtree` |
-| 8.4% | `intra_predict` |
-| 6.9% | `prediction_unit` |
-| 6.8% | `edge_strengths` |
-| 9.6% | deblock `edges` (luma 5.5%, chroma 4.2%) |
-| 4.8% | `copy_block` |
-| 2.3% | `residual_block` |
-| 2.6% | SAO `component` |
-| 2.4% | `inverse_transform` |
-| 2.4% | `run_rows` (the wavefront's waits) |
-| 1.9% | `merge_motion` |
-| 1.8% | `filter_after` |
+| 13.9% | `sub_block` |
+| 10.0% | `run_rows` (the copy of the changed blocks' runs each row starts with, and the wavefront's waits) |
+| 10.0% | `coding_quadtree` |
+| 8.9% | `intra_predict` |
+| 7.3% | `prediction_unit` |
+| 6.9% | `edge_strengths` |
+| 10.0% | deblock `edges` (luma 5.6%, chroma 4.4%) |
+| 5.2% | `copy_block` |
+| 3.4% | SAO `component` |
+| 3.3% | libc `memmove` (two symbols: the rows copied whole and the stripe copies) |
+| 2.8% | `inverse_transform` |
+| 2.5% | `residual_block` |
+| 1.9% | `filter_after` |
+| 1.8% | `merge_motion` |
 
 Per picture of the capture: 4,060 residual blocks, 3,022 of them 32×32,
 28.8 K coefficients in all (about seven per 32×32 block) in 27 K coded
@@ -380,7 +392,9 @@ bypass bins, so about 160 bins per 32×32 block, nearly all of them
 coded-sub-block and significance flags. The video: 551 blocks, 8,244
 coefficients, 45 K context bins, 19.6 K bypass bins, 4,029 coding units of
 which 3,642 are skipped, 3,880 prediction units of which 3,774 are merges and
-3,202 are still blocks from the first reference.
+3,202 are still blocks from the first reference; of its 2,040 coding tree
+blocks 1,400 are left as the picture before, and 1,256 are in the reused
+buffer already.
 
 On four threads the capture decodes 2.6× as fast as on one; the video no
-faster (2.5 ms either way), its cycles rising from 12 M to 15 M.
+faster (2.0 ms on one, 2.4 ms on four), its cycles rising from 11 M to 14 M.

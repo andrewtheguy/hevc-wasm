@@ -39,7 +39,7 @@ function decodeAll(decoder: RustDecoder, fixture: Fixture): { pictures: RustPict
 }
 
 describe("the Mac's shape of stream", () => {
-  for (const name of ["mac-330x194", "mac-352x256"] as const) {
+  for (const name of ["mac-330x194", "mac-352x256", "mac-still-352x256"] as const) {
     for (const threads of [1, POOL]) {
       test(`${name} decodes bit for bit as FFmpeg does, on ${threads} thread(s)`, () => {
         const fixture = fixtures[name];

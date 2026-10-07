@@ -29,11 +29,20 @@ impl Plane {
 pub struct Picture {
     pub planes: [Plane; 3],
     pub poc: i32,
+    /// Which decoded picture the planes hold, a number no other picture of
+    /// the decoder has; zero while they hold none whole.
+    pub serial: u64,
+    /// The picture this one's rows started as, by its serial, or zero for
+    /// none, and per coding tree block whether the samples are still that
+    /// picture's: a buffer holding that picture needs only the other blocks
+    /// copied to hold this one.
+    pub base_serial: u64,
+    pub same: Vec<u8>,
 }
 
 impl Picture {
     pub fn new(width: usize, height: usize) -> Self {
-        Picture { planes: [Plane::new(width, height), Plane::new(width, height), Plane::new(width, height)], poc: 0 }
+        Picture { planes: [Plane::new(width, height), Plane::new(width, height), Plane::new(width, height)], poc: 0, serial: 0, base_serial: 0, same: Vec::new() }
     }
 
     pub fn width(&self) -> usize {
@@ -99,6 +108,9 @@ pub struct PicState {
     pub motion: Vec<Motion>,
     /// Per coding tree block: SAO for Y, Cb, Cr.
     pub sao: Vec<[SaoParams; 3]>,
+    /// Per coding tree block: a coding unit of it wrote samples, so they are
+    /// not the ones its row started as.
+    pub written: Vec<u8>,
     /// The last line of each coding tree block row and the last column of
     /// each coding tree block column as deblocked, per component (`sao`
     /// filters in place and its neighbours read these): `[c][row][x]` and
@@ -154,6 +166,7 @@ impl PicState {
             nz: vec![0; n4],
             motion: vec![Motion::default(); n4],
             sao: vec![[SaoParams::default(); 3]; ctb_w * ctb_h],
+            written: vec![0; ctb_w * ctb_h],
             sao_rows: vec![0; 3 * ctb_h * width],
             sao_cols: vec![0; 3 * ctb_w * height],
         }
@@ -168,5 +181,6 @@ impl PicState {
     pub fn reset(&mut self) {
         self.bs.fill(0);
         self.nz.fill(0);
+        self.written.fill(0);
     }
 }

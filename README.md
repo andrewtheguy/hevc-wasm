@@ -46,7 +46,7 @@ until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.4.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.5.tar.gz"
 ```
 
 ## Testing
@@ -154,42 +154,39 @@ bit-identically to FFmpeg, natively on one thread and on six, and as the
 WebAssembly module on one and four. The `mac-*` fixtures in `test/data` are
 x265's nearest shape to the Mac's.
 
-The comparison is between two WebAssembly modules under Node, not with
-native FFmpeg: this decoder's module, and the module this repository released
-before it, FFmpeg's libavcodec configured down to the HEVC decoder and
-compiled with Emscripten, with SIMD128 kernels and slice threads (release
-0.0.1, from FFmpeg 9.0.2). Both ran on a six-core x86 workstation. The host
-was busy with other work, so the two modules ran alternately on the same four
-cores and the medians of three rounds are shown. The instruction and cycle
-counts are `perf stat`'s for the whole process and do not depend on the load
-(the FFmpeg bench hashes every picture of its first pass, so its counts are a
-two-pass run less a one-pass one). Per picture:
+The comparison is between builds of this decoder's module under Bun: the
+module as it is, the release before it, 0.0.4, and for the capture the one
+before that, 0.0.3, since the capture's last large step, the transform of a
+block with few coefficients, came with 0.0.4. They ran on a six-core x86
+workstation, alternately on the same four cores, and the medians of three
+rounds are shown. The instruction and cycle counts are `perf stat`'s for the
+whole process and do not depend on the load. Per picture:
 
-| 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg's module, 0.0.1 |
+| 1600×1000 Mac capture, 236 pictures | this decoder | release 0.0.4 | release 0.0.3 |
+|---|---|---|---|
+| 1 thread, median ms | 13.5 | 14.3 | 17.5 |
+| 1 thread, M cycles | 43.2 | 45.1 | 53.9 |
+| 4 threads, median ms | 5.7 | 6.2 | 6.9 |
+| 4 threads, M cycles | 45.7 | 47.7 | 56.2 |
+| M instructions | 106 | 110 | 146 |
+
+| 1080p video in the Mac's shape, 2,896 pictures | this decoder | release 0.0.4 |
 |---|---|---|
-| 1 thread, median ms | 13.7 | 32.6 |
-| 1 thread, M cycles | 43 | 88 |
-| 4 threads, median ms | 5.2 | 9.8 |
-| 4 threads, M cycles | 45 | 90 |
-| M instructions | 105 | 213 |
+| 1 thread, median ms | 2.0 | 2.4 |
+| 1 thread, M cycles | 11.3 | 12.4 |
+| 4 threads, median ms | 2.4 | 2.4 |
+| 4 threads, M cycles | 13.7 | 14.7 |
+| M instructions | 22.0 | 21.5 |
 
-| 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg's module, 0.0.1 |
-|---|---|---|
-| 1 thread, median ms | 2.5 | 6.2 |
-| 1 thread, M cycles | 12 | 23 |
-| 4 threads, median ms | 2.5 | 3.4 |
-| 4 threads, M cycles | 15 | 25 |
-| M instructions | 21 | 54 |
-
-On the Mac's dense screen content this decoder is half ahead of the FFmpeg
-module in cycles,
-and both spend their time where the stream does: CABAC residual parsing and
+On the Mac's dense screen content the decoder spends its time where the
+stream does: CABAC residual parsing and
 the 32×32 inverse transforms, of which the capture has some three thousand a
 picture, each with a handful of coefficients scattered to the far corners,
 which the transform runs over alone. On ordinary video, where motion compensation
-dominates, this decoder is nearly half ahead of it, and what leads its profile is the copy
+dominates, what led its profile was the copy
 of the first reference that each row starts as: bound by memory, the reference
-and the picture being written not fitting the cache together. Of the steps that
+and the picture being written not fitting the cache together, and now made
+only for the blocks that changed. Of the steps that
 got here:
 running the filters inside the wavefront rather than as passes over the whole
 picture was worth a fifth of the cycles on four threads, where the passes had
@@ -218,6 +215,12 @@ a hundredth of the capture's, so each row's thread starts the row as one
 sequential copy of the first reference's rows, before it waits on the row
 above, and such a block costs nothing; the copy by the row moves the bytes
 sooner than the copies by the block did, a seventh of the video's cycles again.
+And most of that copy is not made: a free buffer still holds the picture it
+was decoded as, each picture knows which coding tree blocks it left as the
+picture its rows started as, two thirds of the video's, and so the buffer
+holding a picture the first reference descends from is that reference already
+but for the blocks changed since, the only ones a row copies: a twelfth of
+the video's cycles and a sixth of its time on one thread.
 And the parsing, which on the capture is some six hundred thousand context
 bins a picture for thirty thousand coefficients, nearly all of them the
 flags of sparse 32×32 blocks: the arithmetic decoder's most probable symbol,
