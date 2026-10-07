@@ -6,8 +6,7 @@ compiled to WebAssembly with SIMD128 and threads for
 [remotex](https://github.com/andrewtheguy/remotex)'s browser client. It
 decodes bit for bit as FFmpeg does. The [README](../README.md) is the
 operator's and builder's view of the same thing: building, testing,
-releasing and the measurements against FFmpeg's decoder compiled to
-WebAssembly.
+releasing and the measurements against the release before.
 [What remains](remaining.md) is the list of what it does not do yet.
 
 ## Data path
@@ -398,4 +397,4 @@ blocks 1,400 are left as the picture before, and 1,256 are in the reused
 buffer already.
 
 On four threads the capture decodes 2.6× as fast as on one; the video no
-faster (1.9 ms on one, 2.3 ms on four), its cycles rising from 11 M to 14 M.
+faster (2.0 ms on one, 2.4 ms on four), its cycles rising from 11 M to 14 M.

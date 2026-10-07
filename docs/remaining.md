@@ -1,8 +1,8 @@
 # What remains of the pure-Rust decoder
 
 What the decoder does today is in [the architecture](architecture.md), with
-where its time goes; how it is built and what it measures against FFmpeg's
-decoder compiled to WebAssembly are in the [README](../README.md). This is the list of what it does
+where its time goes; how it is built and what it measures against the
+release before are in the [README](../README.md). This is the list of what it does
 not do yet, in the order the work would go. Numbers are from the module
 under Node on one thread of the x86 workstation, profiled with `perf record`
 of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
@@ -101,7 +101,7 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
    lookups for the first candidate. Not profiled to the instruction yet.
 
 9. **Four-thread scaling.** On the capture four threads are 2.6× one; on the
-   video slower (1.9 ms on one, 2.3 ms on four), while the cycles rise from 11 M to 14 M.
+   video slower (2.0 ms on one, 2.4 ms on four), while the cycles rise from 11 M to 14 M.
    The video's picture is 2 ms of work spread over its few coding tree
    block rows, and the wavefront's waits (`run_rows` 2.2%, `wait_for` spinning 256
    times before it sleeps) are a visible share. Whether the loss is the waits,
@@ -111,8 +111,8 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ### Elsewhere
 
-- **The target machine.** All of the README's numbers, this module's and
-  the FFmpeg module's, are from an x86 workstation under Node. Neither has
+- **The target machine.** All of the README's numbers are from an x86
+  workstation under Bun. The module has not
   been run on Apple silicon, where V8 lowers SIMD128 to NEON differently and
   the memory system differs; the capture's transform and the video's
   memory-bound copy may rank differently there.
