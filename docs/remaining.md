@@ -11,18 +11,7 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ### The capture
 
-1. **A sparse inverse transform.** Nearly half the capture's time. The 32×32
-   blocks carry about seven coefficients each, but scattered far enough that
-   the bounded transform (`nz_w` × `nz_h` of coded rows and columns) runs over
-   most of the block. A path for a block with few coefficients that
-   accumulates each coefficient's outer product of basis vectors, or a column
-   pass over the coded columns only followed by a dense row pass, would spend
-   its time in proportion to the coefficients rather than their bounding box.
-   A DC-only shortcut covers a further share of the blocks. The transform must
-   stay bit-exact with the 16-bit two-stage transform it replaces: same
-   intermediate clipping, same rounding per stage.
-
-2. **The sub-block loop's head.** `residual_block` at 17% is not the flags it
+1. **The sub-block loop's head.** `residual_block` at 27% is not the flags it
    decodes (those are in `sub_block`) but what it does between sub-blocks: a
    coded-sub-block flag and the construction of the sub-block's description
    (its sixteen significance contexts, its greater-than-one and -two context
@@ -32,17 +21,27 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
    replaces the arithmetic. The csbf context itself is two map lookups a
    sub-block.
 
-3. **The per-bin floor.** The probable-symbol path of `decode` compiles to
+2. **The per-bin floor.** The probable-symbol path of `decode` compiles to
    about 50 x86 instructions, of which the arithmetic is a dozen; the rest is
    V8 spilling and reloading the engine's state and the loop's invariants (the
    context table base, the sub-block description) around the call. 645 K bins
-   at 50 instructions is a fifth of the capture's 146 M instructions. The
-   levers left are in the shape of the code V8 sees: the sixteen significance
-   contexts as two 64-bit words rather than a byte array it reloads through a
-   pointer, the significance loop unrolled by the scan so the position is a
-   constant, and inspecting the Liftoff/TurboFan output (`tmp/annot.sh`) for
-   which values spill. There is no `inline(always)` across the wasm boundary
-   to help; this is the floor V8's register allocator sets.
+   at 50 instructions is over a quarter of the capture's 115 M instructions.
+   The levers left are in the shape of the code V8 sees: the sixteen
+   significance contexts as two 64-bit words rather than a byte array it
+   reloads through a pointer, the significance loop unrolled by the scan so
+   the position is a constant, and inspecting the Liftoff/TurboFan output
+   (`tmp/annot.sh`) for which values spill. There is no `inline(always)`
+   across the wasm boundary to help; this is the floor V8's register
+   allocator sets.
+
+3. **The transform's floor.** 21%, nearly all of it the sparse path's row
+   pass: a broadcast and eight dots per pair of coded columns per row, over
+   32 rows, then the row's eight sums rounded, narrowed and stored. Two rows
+   per pass, to load each table vector once for both, measured no faster
+   (the sixteen sums spill); the column pass against a widened matrix, so
+   V8 emits multiply-adds rather than its unpack-and-multiply lowering of
+   `extmul`, measured the same. What is left is the shape of the loop V8
+   sees, as with the bins.
 
 ### The video
 
@@ -84,8 +83,8 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
    a few bins; the cost is the per-unit motion fill and the availability
    lookups for the first candidate. Not profiled to the instruction yet.
 
-9. **Four-thread scaling.** On the capture four threads are 2.75× one; on the
-   video only 1.1× (2.6 → 2.4 ms), while the cycles rise from 13 M to 15 M.
+9. **Four-thread scaling.** On the capture four threads are 2.6× one; on the
+   video only 1.05× (2.3 → 2.2 ms), while the cycles rise from 12 M to 15 M.
    The video's picture is 2.6 ms of work spread over its few coding tree
    block rows, and the wavefront's waits (`run_rows` 2.2%, `wait_for` spinning 256
    times before it sleeps) are a visible share. Whether the loss is the waits,
@@ -99,8 +98,7 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
   workstation under Node. The FFmpeg module's table in the README is from an
   M2 Max. The Rust module has not been run on Apple silicon, where V8 lowers
   SIMD128 to NEON differently and the memory system differs; the capture's
-  dense-transform and the video's memory-bound copy may rank differently
-  there.
+  transform and the video's memory-bound copy may rank differently there.
 - **The native build runs scalar fallbacks**: the kernels are written for
   `core::arch::wasm32`. `hevc-bench` is for correctness, not speed. A native
   SIMD port is not a goal unless the decoder gets a native user.

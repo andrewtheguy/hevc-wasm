@@ -36,6 +36,22 @@ impl Dequant {
     }
 }
 
+/// Where a block's non-zero coefficients are: a bit per coded column and
+/// row, and how many there are.
+#[derive(Clone, Copy, Default)]
+pub struct Coded {
+    pub cols: u32,
+    pub rows: u32,
+    pub count: u32,
+}
+
+impl Coded {
+    /// The columns and rows up to the last coded one.
+    pub fn extent(&self) -> (usize, usize) {
+        (32 - self.cols.leading_zeros() as usize, 32 - self.rows.leading_zeros() as usize)
+    }
+}
+
 #[inline(always)]
 fn butterfly<const H: usize>(out: &mut [i32], even: &[i32; H], odd: &[i32; H]) {
     for j in 0..H {
@@ -100,11 +116,11 @@ fn block<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], nz_w: usiz
     }
 }
 
-/// Scaled coefficients `d` (raster, `n`×`n`, non-zero within `nz_w`×`nz_h`)
+/// Scaled coefficients `d` (raster, `n`×`n`, non-zero where `coded` says)
 /// to the residual `res`. `dst` selects the 4×4 DST of intra luma. `tmp` is
 /// the first pass's intermediate.
-pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, nz_w: usize, nz_h: usize, dst: bool) {
-    if nz_w <= 1 && nz_h <= 1 && !dst {
+pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) {
+    if coded.cols <= 1 && coded.rows <= 1 && !dst {
         // A lone DC coefficient: row 0 of the matrix is the constant 64, so
         // both passes are one value.
         let v1 = ((d[0] as i32 * 64 + 64) >> 7).clamp(-32768, 32767);
@@ -112,12 +128,13 @@ pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, 
         crate::kernels::fill_i16(&mut res[..n * n], out);
         return;
     }
-    let (nz_w, nz_h) = (nz_w.clamp(1, n), nz_h.clamp(1, n));
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return crate::kernels::simd128::inverse_transform(d, tmp, res, n, nz_w, nz_h, dst);
+        return crate::kernels::simd128::inverse_transform(d, tmp, res, n, coded, dst);
     }
     #[allow(unreachable_code)]
+    let (nz_w, nz_h) = coded.extent();
+    let (nz_w, nz_h) = (nz_w.clamp(1, n), nz_h.clamp(1, n));
     match (n, dst) {
         (4, true) => block::<4>(d, tmp, res, nz_w, nz_h, idst4),
         (4, false) => block::<4>(d, tmp, res, nz_w, nz_h, idct4),
@@ -157,6 +174,18 @@ mod tests {
         out
     }
 
+    fn coded(d: &[i16], n: usize) -> Coded {
+        let mut c = Coded::default();
+        for (i, &v) in d.iter().enumerate() {
+            if v != 0 {
+                c.cols |= 1 << (i % n);
+                c.rows |= 1 << (i / n);
+                c.count += 1;
+            }
+        }
+        c
+    }
+
     #[test]
     fn butterflies_and_sparse_bounds_match_the_naive_transform() {
         let mut st = 0x1234_5678u32;
@@ -178,9 +207,21 @@ mod tests {
                     if dst && n != 4 {
                         continue;
                     }
-                    inverse_transform(&d, &mut tmp, &mut res, n, nz_w, nz_h, dst);
+                    inverse_transform(&d, &mut tmp, &mut res, n, coded(&d, n), dst);
                     assert_eq!(&res[..n * n], &naive(&d, n, dst)[..], "n={n} nz=({nz_w},{nz_h}) dst={dst}");
                 }
+            }
+            // A few coefficients scattered over the block, as the capture's
+            // are: the extent is most of the block, the coded columns and
+            // rows a handful.
+            for count in [1usize, 2, 7, 13] {
+                let mut d = vec![0i16; n * n];
+                for i in 0..count {
+                    let (x, y) = ((i * 7 + 3) % n, (i * 5 + 1) % n);
+                    d[y * n + x] = rnd();
+                }
+                inverse_transform(&d, &mut tmp, &mut res, n, coded(&d, n), false);
+                assert_eq!(&res[..n * n], &naive(&d, n, false)[..], "n={n} scattered {count}");
             }
         }
     }

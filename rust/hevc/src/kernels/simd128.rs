@@ -8,6 +8,9 @@
 
 use core::arch::wasm32::*;
 
+use crate::itx::Coded;
+use crate::tables::DCT32;
+
 #[inline(always)]
 fn load_u8x8(s: &[u8]) -> v128 {
     u64x2(u64::from_le_bytes(s[..8].try_into().unwrap()), 0)
@@ -30,6 +33,14 @@ fn load_i16x4(s: &[i16]) -> v128 {
     let s = &s[..4];
     // SAFETY: four values are there, and an unaligned load is allowed.
     unsafe { v128_load64_zero(s.as_ptr() as *const u64) }
+}
+
+/// Two adjacent values as one 32-bit lane in every lane.
+#[inline(always)]
+fn load_i32_splat(s: &[i16]) -> v128 {
+    let s = &s[..2];
+    // SAFETY: two values are there, and an unaligned load is allowed.
+    unsafe { v128_load32_splat(s.as_ptr() as *const u32) }
 }
 
 #[inline(always)]
@@ -684,26 +695,115 @@ fn block<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], nz_w: usiz
         }
         x += 8;
     }
-    let round2 = i32x4_splat(2048);
     let mut out = [i32x4_splat(0); 8];
     for y in 0..N {
         rows(&tmp[y * N..y * N + N], nz_w, &mut out);
-        let r = &mut res[y * N..y * N + N];
-        let mut j = 0;
-        while j < N {
-            let lo = i32x4_shr(i32x4_add(out[j / 4], round2), 12);
-            if N >= 8 {
-                let hi = i32x4_shr(i32x4_add(out[j / 4 + 1], round2), 12);
-                store_i16x8(&mut r[j..], i16x8_narrow_i32x4(lo, hi));
-            } else {
-                store_i16x4(&mut r[j..], i16x8_narrow_i32x4(lo, lo));
-            }
-            j += 8;
-        }
+        store_row::<N>(&mut res[y * N..y * N + N], &out);
     }
 }
 
-pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, nz_w: usize, nz_h: usize, dst: bool) {
+/// The second pass's rounding of one row's sums into the residual.
+#[inline(always)]
+fn store_row<const N: usize>(r: &mut [i16], out: &[v128; 8]) {
+    let round2 = i32x4_splat(2048);
+    let mut j = 0;
+    while j < N {
+        let lo = i32x4_shr(i32x4_add(out[j / 4], round2), 12);
+        if N >= 8 {
+            let hi = i32x4_shr(i32x4_add(out[j / 4 + 1], round2), 12);
+            store_i16x8(&mut r[j..], i16x8_narrow_i32x4(lo, hi));
+        } else {
+            store_i16x4(&mut r[j..], i16x8_narrow_i32x4(lo, lo));
+        }
+        j += 8;
+    }
+}
+
+// ---- the inverse transform of a block with few coefficients ----
+
+/// The first pass down one column: the sum of its coefficients (in the
+/// `rows` of the block that have any) times their rows of the matrix,
+/// rounded and clipped to 16 bits, eight outputs a vector.
+#[inline(always)]
+fn column<const N: usize>(d: &[i16], x: usize, rows: u32) -> [v128; 4] {
+    let mut acc = [i32x4_splat(0); 8];
+    let mut rs = rows;
+    while rs != 0 {
+        let k = rs.trailing_zeros() as usize;
+        rs &= rs - 1;
+        let c = d[k * N + x];
+        if c == 0 {
+            continue;
+        }
+        let cv = i16x8_splat(c);
+        let t = &DCT32[k * (32 / N)];
+        for m in 0..N / 8 {
+            let tv = load_i16x8(&t[8 * m..]);
+            acc[2 * m] = i32x4_add(acc[2 * m], i32x4_extmul_low_i16x8(tv, cv));
+            acc[2 * m + 1] = i32x4_add(acc[2 * m + 1], i32x4_extmul_high_i16x8(tv, cv));
+        }
+    }
+    let round1 = i32x4_splat(64);
+    let mut out = [i16x8_splat(0); 4];
+    for m in 0..N / 8 {
+        out[m] = i16x8_narrow_i32x4(i32x4_shr(i32x4_add(acc[2 * m], round1), 7), i32x4_shr(i32x4_add(acc[2 * m + 1], round1), 7));
+    }
+    out
+}
+
+/// Both passes of an `N`×`N` block in proportion to its coefficients. The
+/// coded columns go in pairs, as `dot` takes them: the first pass runs
+/// down each from its coefficients and writes the pair's two columns
+/// zipped, a 32-bit lane per row, next to the pair's two rows of the
+/// matrix zipped the same way; the second pass sums each row over the
+/// pairs with one splat and `N / 4` dots per pair.
+#[inline(always)]
+fn sparse<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], coded: Coded) {
+    static NONE: [i16; 32] = [0; 32];
+    let mut tabs = [[i16x8_splat(0); 8]; 8];
+    let mut pairs = 0;
+    let mut cs = coded.cols;
+    while cs != 0 {
+        let xa = cs.trailing_zeros() as usize;
+        cs &= cs - 1;
+        let xb = if cs != 0 { cs.trailing_zeros() as usize } else { N };
+        cs &= cs.wrapping_sub(1);
+        let a = column::<N>(d, xa, coded.rows);
+        let b = if xb < N { column::<N>(d, xb, coded.rows) } else { [i16x8_splat(0); 4] };
+        let ra = &DCT32[xa * (32 / N)];
+        let rb = if xb < N { &DCT32[xb * (32 / N)] } else { &NONE };
+        let tab = &mut tabs[pairs];
+        for m in 0..N / 8 {
+            store_i16x8(&mut tmp[pairs * 2 * N + 16 * m..], i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(a[m], b[m]));
+            store_i16x8(&mut tmp[pairs * 2 * N + 16 * m + 8..], i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(a[m], b[m]));
+            let (ta, tb) = (load_i16x8(&ra[8 * m..]), load_i16x8(&rb[8 * m..]));
+            tab[2 * m] = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(ta, tb);
+            tab[2 * m + 1] = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(ta, tb);
+        }
+        pairs += 1;
+    }
+    for y in 0..N {
+        let mut acc = [i32x4_splat(0); 8];
+        for (p, tab) in tabs[..pairs].iter().enumerate() {
+            let v = load_i32_splat(&tmp[p * 2 * N + 2 * y..]);
+            for c in 0..N / 4 {
+                acc[c] = i32x4_add(acc[c], i32x4_dot_i16x8(tab[c], v));
+            }
+        }
+        store_row::<N>(&mut res[y * N..y * N + N], &acc);
+    }
+}
+
+pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) {
+    if !dst && n >= 8 && coded.count <= 2 * n as u32 && coded.cols.count_ones() <= 16 {
+        return match n {
+            8 => sparse::<8>(d, tmp, res, coded),
+            16 => sparse::<16>(d, tmp, res, coded),
+            _ => sparse::<32>(d, tmp, res, coded),
+        };
+    }
+    let (nz_w, nz_h) = coded.extent();
+    let (nz_w, nz_h) = (nz_w.clamp(1, n), nz_h.clamp(1, n));
     match (n, dst) {
         (4, true) => block::<4>(d, tmp, res, nz_w, nz_h, idst_cols, idst_row),
         (4, false) => block::<4>(d, tmp, res, nz_w, nz_h, idct_cols::<4>, idct_row::<4>),

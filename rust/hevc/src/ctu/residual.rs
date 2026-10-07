@@ -203,7 +203,7 @@ impl<'a> Row<'a> {
         let co = &mut self.s.coeffs[..n * n];
         kernels::fill_i16(&mut co[..fh * n], 0);
         let mut csbf = 0u64;
-        let mut nz = [0usize; 2];
+        let mut coded = itx::Coded::default();
         let mut c1: usize = 1;
         let sig_base = CTX_SIG + if c_idx == 0 { 0 } else { 27 };
         let gt1_base = CTX_GT1 + if c_idx == 0 { 0 } else { 16 };
@@ -251,23 +251,22 @@ impl<'a> Row<'a> {
                 last_pos: if i == last_sb { last_pos } else { 16 },
                 infer_dc,
             };
-            let (engine, c1_next) = sub_block(cab.engine(), cab.ctx, &sb, co, &dq, c1, &mut nz)?;
+            let (engine, c1_next) = sub_block(cab.engine(), cab.ctx, &sb, co, &dq, c1, &mut coded)?;
             cab.restore(engine);
             c1 = c1_next;
         }
-        let (nz_w, nz_h) = (nz[0], nz[1]);
         let engine = cab.engine();
         self.cab.restore(engine);
-        self.reconstruct_residual(x0, y0, log2, c_idx, nz_w, nz_h);
+        self.reconstruct_residual(x0, y0, log2, c_idx, coded);
         Ok(())
     }
 
     /// §8.6.4 over the scaled coefficients, added to the picture.
-    fn reconstruct_residual(&mut self, x0: usize, y0: usize, log2: usize, c_idx: usize, nz_w: usize, nz_h: usize) {
+    fn reconstruct_residual(&mut self, x0: usize, y0: usize, log2: usize, c_idx: usize, coded: itx::Coded) {
         let n = 1usize << log2;
         let dst = self.cu_intra && c_idx == 0 && n == 4;
         let s = &mut *self.s;
-        itx::inverse_transform(&s.coeffs[..n * n], &mut s.itx_tmp, &mut s.res, n, nz_w, nz_h, dst);
+        itx::inverse_transform(&s.coeffs[..n * n], &mut s.itx_tmp, &mut s.res, n, coded, dst);
         let plane = self.pic.planes[c_idx];
         // SAFETY: the block is this row's.
         let out = unsafe { plane.block_mut(x0, y0, n, n) };
@@ -300,12 +299,12 @@ struct SubBlock<'s> {
 
 /// One coded sub-block after its flag (§7.3.8.11): the significance flags,
 /// the levels and the signs, each coefficient scaled as it lands in `co`;
-/// `nz` grows to cover them. `c1` is the greater-than-1 context the previous
+/// `coded` grows to cover them. `c1` is the greater-than-1 context the previous
 /// sub-block left, and the one this leaves is returned with the engine. Out
 /// of line, so that the engine's registers and the loops' few counters get
 /// the registers of a function of their own.
 #[inline(never)]
-fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], dq: &Dequant, c1_in: usize, nz: &mut [usize; 2]) -> Result<(Engine, usize)> {
+fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], dq: &Dequant, c1_in: usize, coded: &mut itx::Coded) -> Result<(Engine, usize)> {
     let mut v = View::new(engine, ctx);
     let cab = &mut v;
     // significant_coeff_flag, highest position first, as a bit per position.
@@ -353,7 +352,7 @@ fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], 
     let mut sbits = cab.bypass_bits(nsig as u32).wrapping_shl(32 - nsig as u32);
     // coeff_abs_level_remaining
     let mut rice = 0u32;
-    let (mut nz_w, mut nz_h) = (nz[0], nz[1]);
+    let (mut cols, mut rows) = (coded.cols, coded.rows);
     let mut rest = sig;
     for k in 0..nsig {
         let np = (31 - rest.leading_zeros()) as usize;
@@ -382,11 +381,11 @@ fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], 
         sbits <<= 1;
         let v = if neg { -abs } else { abs };
         let (xc, yc) = (sb.x + sb.pos[np & 15].0 as usize, sb.y + sb.pos[np & 15].1 as usize);
-        nz_w = nz_w.max(xc + 1);
-        nz_h = nz_h.max(yc + 1);
+        cols |= 1 << xc;
+        rows |= 1 << yc;
         co[yc * sb.n + xc] = dq.apply(v.clamp(-32768, 32767));
     }
-    *nz = [nz_w, nz_h];
+    *coded = itx::Coded { cols, rows, count: coded.count + nsig as u32 };
     Ok((cab.engine(), c1))
 }
 

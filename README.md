@@ -125,7 +125,8 @@ the byte planes and the threading are this repository's.
   (`core::arch::wasm32`): the interpolation filters, which write samples
   straight from their last pass, block copies, the residual add, planar and
   angular intra prediction, SAO and a 16-bit inverse transform by dot
-  products; coefficients are scaled as they are parsed, and CABAC keeps its
+  products, over the coded columns alone of a block with few coefficients;
+  coefficients are scaled as they are parsed, and CABAC keeps its
   registers in locals, each coded sub-block decoding in a function of its own.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
@@ -160,25 +161,25 @@ two-pass run less a one-pass one). Per picture:
 
 | 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg's, 0.0.1 |
 |---|---|---|
-| 1 thread, median ms | 19.3 | 34.4 |
-| 1 thread, M cycles | 54 | 90 |
-| 4 threads, median ms | 7.0 | 10.9 |
-| 4 threads, M cycles | 57 | 91 |
-| M instructions | 146 | 213 |
+| 1 thread, median ms | 13.7 | 30.8 |
+| 1 thread, M cycles | 44 | 88 |
+| 4 threads, median ms | 5.3 | 9.7 |
+| 4 threads, M cycles | 47 | 90 |
+| M instructions | 113 | 213 |
 
 | 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg's, 0.0.1 |
 |---|---|---|
-| 1 thread, median ms | 2.6 | 6.2 |
-| 1 thread, M cycles | 13 | 23 |
-| 4 threads, median ms | 2.4 | 3.1 |
+| 1 thread, median ms | 2.3 | 5.8 |
+| 1 thread, M cycles | 12 | 23 |
+| 4 threads, median ms | 2.2 | 3.0 |
 | 4 threads, M cycles | 15 | 25 |
 | M instructions | 22 | 54 |
 
-On the Mac's dense screen content this decoder is two fifths ahead in cycles,
+On the Mac's dense screen content this decoder is half ahead in cycles,
 and both spend their time where the stream does: CABAC residual parsing and
 the 32×32 inverse transforms, of which the capture has some three thousand a
-picture, each with a handful of coefficients scattered to the far corners, so
-that the transform runs dense. On ordinary video, where motion compensation
+picture, each with a handful of coefficients scattered to the far corners,
+which the transform runs over alone. On ordinary video, where motion compensation
 dominates, this decoder is nearly half ahead, and what leads its profile is the copy
 of the first reference that each row starts as: bound by memory, the reference
 and the picture being written not fitting the cache together. Of the steps that
@@ -189,7 +190,10 @@ left the threads spinning at barriers; SAO in place rather than into a second
 picture, with the interpolation filters writing samples from their last pass,
 a tenth on one thread; the transform's row pass splatting each pair of
 coefficients with one shuffle rather than scalar loads, a twentieth of the
-capture's instructions; the block copy running down sixteen-wide columns, a
+capture's instructions; the transform of a block with few coefficients
+running down its coded columns and across the pairs of them, rather than the
+butterfly over their bounding box, a fifth of the capture's instructions and
+a sixth of its cycles; the block copy running down sixteen-wide columns, a
 seventh of the video's instructions; the maps filled by whole words rather
 than `memory.fill` calls into the runtime, a twelfth of the video's;
 shipping LLVM's output without wasm-opt, a twentieth of the capture's cycles;
