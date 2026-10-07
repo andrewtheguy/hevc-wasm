@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 use crate::intra;
 use crate::itx::{self, Dequant};
 use crate::kernels;
-use crate::tables::scan_set;
+use crate::tables::{scan_set, ScanSet, SigCtx};
 
 impl<'a> Row<'a> {
     pub(super) fn transform_tree(&mut self, x0: usize, y0: usize, log2: usize, depth: u8, parent_cbf_cb: bool, parent_cbf_cr: bool) -> Result<()> {
@@ -194,80 +194,52 @@ impl<'a> Row<'a> {
         let log2sb = log2 - 2;
         let nsb = 1usize << log2sb;
         let sc = scan_set(log2sb, scan_idx);
-        let last_sb = sc.sb_inv[(last_y >> 2) * nsb + (last_x >> 2)] as usize;
-        let last_pos = sc.pos_inv[(last_y & 3) * 4 + (last_x & 3)] as usize;
-        // Only the sub-blocks up to the last can hold a coefficient: clear
-        // their rows, whole, so the transform reads zeros past the live
-        // columns.
-        let fh = (sc.sb_rows[last_sb] as usize) << 2;
+        let luma = c_idx == 0;
+        let blk = Block {
+            sc,
+            sig: &sc.sig[(!luma) as usize],
+            csbf_ctx: CTX_CSBF + if luma { 0 } else { 2 },
+            gt1: [CTX_GT1 + if luma { 0 } else { 16 }, CTX_GT1 + if luma { 8 } else { 16 }],
+            gt2: [CTX_GT2 + if luma { 0 } else { 4 }, CTX_GT2 + if luma { 2 } else { 4 }],
+            n,
+            last_sb: sc.sb_inv[(last_y >> 2) * nsb + (last_x >> 2)] as usize,
+            last_pos: sc.pos_inv[(last_y & 3) * 4 + (last_x & 3)] as usize,
+        };
+        // The coefficients are zero between blocks (`reconstruct_residual`
+        // leaves them so), so the transform reads a zero wherever this block
+        // wrote nothing.
         let co = &mut self.s.coeffs[..n * n];
-        kernels::fill_i16(&mut co[..fh * n], 0);
-        let mut csbf = 0u64;
-        let mut nz = [0usize; 2];
-        let mut c1: usize = 1;
-        let sig_base = CTX_SIG + if c_idx == 0 { 0 } else { 27 };
-        let gt1_base = CTX_GT1 + if c_idx == 0 { 0 } else { 16 };
-        let gt2_base = CTX_GT2 + if c_idx == 0 { 0 } else { 4 };
-        for i in (0..=last_sb).rev() {
-            let (xs, ys) = (sc.sb[i].0 as usize, sc.sb[i].1 as usize);
-            let right = xs + 1 < nsb && (csbf >> ((xs + 1) * 8 + ys)) & 1 != 0;
-            let below = ys + 1 < nsb && (csbf >> (xs * 8 + ys + 1)) & 1 != 0;
-            let infer_dc = i < last_sb && i > 0;
-            // coded_sub_block_flag: inferred for the first and last sub-blocks.
-            if infer_dc && cab.decode(CTX_CSBF + (right || below) as usize + if c_idx == 0 { 0 } else { 2 }) == 0 {
-                continue;
+        let mut coded = itx::Coded::default();
+        let engine = match sub_blocks(cab.engine(), cab.ctx, &blk, co, &dq, &mut coded) {
+            Ok(engine) => engine,
+            Err(e) => {
+                kernels::fill_i16(co, 0);
+                return Err(e);
             }
-            csbf |= 1 << (xs * 8 + ys);
-            let prev_csbf = right as usize | ((below as usize) << 1);
-            let (sig_row, sig_off) = if log2 == 2 {
-                (sc.sig_4x4, 0usize)
-            } else {
-                let mut o = if xs > 0 || ys > 0 { 3 } else { 0 };
-                if c_idx == 0 {
-                    o += if log2 == 3 {
-                        if scan_idx == 0 {
-                            9
-                        } else {
-                            15
-                        }
-                    } else {
-                        21
-                    };
-                } else {
-                    o = if log2 == 3 { 9 } else { 12 };
-                }
-                (&sc.sig_nb[prev_csbf & 3], o)
-            };
-            let sig_ctx = sig_base + sig_off;
-            let sb = SubBlock {
-                sig_ctx: std::array::from_fn(|k| sig_row[k].wrapping_add(sig_ctx as u8)),
-                dc_ctx: if xs == 0 && ys == 0 { sig_base } else { sig_ctx + sig_row[0] as usize },
-                gt1_set: gt1_base + if i == 0 || c_idx > 0 { 0 } else { 8 },
-                gt2_set: gt2_base + if i == 0 || c_idx > 0 { 0 } else { 2 },
-                pos: sc.pos,
-                x: xs << 2,
-                y: ys << 2,
-                n,
-                last_pos: if i == last_sb { last_pos } else { 16 },
-                infer_dc,
-            };
-            let (engine, c1_next) = sub_block(cab.engine(), cab.ctx, &sb, co, &dq, c1, &mut nz)?;
-            cab.restore(engine);
-            c1 = c1_next;
-        }
-        let (nz_w, nz_h) = (nz[0], nz[1]);
-        let engine = cab.engine();
+        };
         self.cab.restore(engine);
-        self.reconstruct_residual(x0, y0, log2, c_idx, nz_w, nz_h);
+        self.reconstruct_residual(x0, y0, log2, c_idx, coded);
         Ok(())
     }
 
-    /// §8.6.4 over the scaled coefficients, added to the picture.
-    fn reconstruct_residual(&mut self, x0: usize, y0: usize, log2: usize, c_idx: usize, nz_w: usize, nz_h: usize) {
+    /// §8.6.4 over the scaled coefficients, added to the picture; the
+    /// coefficients are cleared behind it.
+    fn reconstruct_residual(&mut self, x0: usize, y0: usize, log2: usize, c_idx: usize, coded: itx::Coded) {
         let n = 1usize << log2;
         let dst = self.cu_intra && c_idx == 0 && n == 4;
         let s = &mut *self.s;
-        itx::inverse_transform(&s.coeffs[..n * n], &mut s.itx_tmp, &mut s.res, n, nz_w, nz_h, dst);
+        let co = &mut s.coeffs[..n * n];
+        itx::inverse_transform(co, &mut s.itx_tmp, &mut s.res, n, coded, dst);
+        if n == 4 {
+            kernels::fill_i16(co, 0);
+        } else {
+            let mut rows = coded.rows;
+            while rows != 0 {
+                let y = rows.trailing_zeros() as usize;
+                rows &= rows - 1;
+                kernels::fill_i16(&mut co[y * n..y * n + n], 0);
+            }
+        }
         let plane = self.pic.planes[c_idx];
         // SAFETY: the block is this row's.
         let out = unsafe { plane.block_mut(x0, y0, n, n) };
@@ -275,12 +247,27 @@ impl<'a> Row<'a> {
     }
 }
 
+/// What one block's sub-blocks are decoded against.
+struct Block {
+    sc: &'static ScanSet,
+    /// The significance contexts of the block's component.
+    sig: &'static SigCtx,
+    /// The coded-sub-block contexts of the component, and its greater-than
+    /// context sets for the first sub-block and for the rest.
+    csbf_ctx: usize,
+    gt1: [usize; 2],
+    gt2: [usize; 2],
+    n: usize,
+    /// The scan positions of the sub-block holding the block's last
+    /// coefficient, and of the coefficient in it.
+    last_sb: usize,
+    last_pos: usize,
+}
+
 /// What one sub-block's syntax is decoded against.
 struct SubBlock<'s> {
-    /// The significance context of each position after the first; that of
-    /// the first is `dc_ctx`.
-    sig_ctx: [u8; 16],
-    dc_ctx: usize,
+    /// The significance context of each scan position, the first's at `[0]`.
+    sig: &'static [u8; 16],
     /// The greater-than contexts of the sub-block, before the previous
     /// sub-block's say.
     gt1_set: usize,
@@ -298,14 +285,56 @@ struct SubBlock<'s> {
     infer_dc: bool,
 }
 
+/// The sub-blocks from the one holding the last coefficient back to the
+/// first (§7.3.8.11): each one's coded_sub_block_flag, and the syntax of the
+/// coded ones through `sub_block`. Out of line, as that is, so that the
+/// engine's registers stay in registers across the sub-blocks that are not
+/// coded.
+#[inline(never)]
+fn sub_blocks(engine: Engine, ctx: &mut Contexts, blk: &Block, co: &mut [i16], dq: &Dequant, coded: &mut itx::Coded) -> Result<Engine> {
+    let mut v = View::new(engine, ctx);
+    let cab = &mut v;
+    // The coded flags on a 9×9 grid with a zero border, so that a sub-block's
+    // right and lower neighbours are two loads wherever it is.
+    let mut flags = [0u8; 81];
+    let mut c1: usize = 1;
+    for i in (0..=blk.last_sb).rev() {
+        let (xs, ys) = blk.sc.sb[i];
+        let at = (ys as usize & 7) * 9 + (xs as usize & 7);
+        let prev = (flags[at + 1] | flags[at + 9] << 1) as usize;
+        let rest = (i != 0) as usize;
+        let infer_dc = i < blk.last_sb && i > 0;
+        // coded_sub_block_flag: inferred for the first and last sub-blocks.
+        if infer_dc && cab.decode(blk.csbf_ctx + (prev != 0) as usize) == 0 {
+            continue;
+        }
+        flags[at] = 1;
+        let sb = SubBlock {
+            sig: &blk.sig[rest][prev],
+            gt1_set: blk.gt1[rest],
+            gt2_set: blk.gt2[rest],
+            pos: blk.sc.pos,
+            x: (xs as usize) << 2,
+            y: (ys as usize) << 2,
+            n: blk.n,
+            last_pos: if i == blk.last_sb { blk.last_pos } else { 16 },
+            infer_dc,
+        };
+        let (engine, c1_next) = sub_block(cab.engine(), cab.ctx, &sb, co, dq, c1, coded)?;
+        cab.restore(engine);
+        c1 = c1_next;
+    }
+    Ok(cab.engine())
+}
+
 /// One coded sub-block after its flag (§7.3.8.11): the significance flags,
 /// the levels and the signs, each coefficient scaled as it lands in `co`;
-/// `nz` grows to cover them. `c1` is the greater-than-1 context the previous
+/// `coded` grows to cover them. `c1` is the greater-than-1 context the previous
 /// sub-block left, and the one this leaves is returned with the engine. Out
 /// of line, so that the engine's registers and the loops' few counters get
 /// the registers of a function of their own.
 #[inline(never)]
-fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], dq: &Dequant, c1_in: usize, nz: &mut [usize; 2]) -> Result<(Engine, usize)> {
+fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], dq: &Dequant, c1_in: usize, coded: &mut itx::Coded) -> Result<(Engine, usize)> {
     let mut v = View::new(engine, ctx);
     let cab = &mut v;
     // significant_coeff_flag, highest position first, as a bit per position.
@@ -318,9 +347,9 @@ fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], 
     };
     if start >= 0 {
         for np in (1..=start as usize).rev() {
-            sig |= cab.decode(sb.sig_ctx[np & 15] as usize) << np;
+            sig |= cab.decode(sb.sig[np & 15] as usize) << np;
         }
-        if (sb.infer_dc && sig == 0) || cab.decode(sb.dc_ctx) == 1 {
+        if (sb.infer_dc && sig == 0) || cab.decode(sb.sig[0] as usize) == 1 {
             sig |= 1;
         }
     }
@@ -353,7 +382,7 @@ fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], 
     let mut sbits = cab.bypass_bits(nsig as u32).wrapping_shl(32 - nsig as u32);
     // coeff_abs_level_remaining
     let mut rice = 0u32;
-    let (mut nz_w, mut nz_h) = (nz[0], nz[1]);
+    let (mut cols, mut rows) = (coded.cols, coded.rows);
     let mut rest = sig;
     for k in 0..nsig {
         let np = (31 - rest.leading_zeros()) as usize;
@@ -382,11 +411,11 @@ fn sub_block(engine: Engine, ctx: &mut Contexts, sb: &SubBlock, co: &mut [i16], 
         sbits <<= 1;
         let v = if neg { -abs } else { abs };
         let (xc, yc) = (sb.x + sb.pos[np & 15].0 as usize, sb.y + sb.pos[np & 15].1 as usize);
-        nz_w = nz_w.max(xc + 1);
-        nz_h = nz_h.max(yc + 1);
+        cols |= 1 << xc;
+        rows |= 1 << yc;
         co[yc * sb.n + xc] = dq.apply(v.clamp(-32768, 32767));
     }
-    *nz = [nz_w, nz_h];
+    *coded = itx::Coded { cols, rows, count: coded.count + nsig as u32 };
     Ok((cab.engine(), c1))
 }
 

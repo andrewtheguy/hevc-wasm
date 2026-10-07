@@ -1,5 +1,7 @@
 //! The specification's constant tables, built at compile time.
 
+use crate::cabac::CTX_SIG;
+
 /// Up-right diagonal scan (§6.5.3) of a `SIZE`×`SIZE` block, as (x, y).
 const fn diag_scan<const SIZE: usize, const N: usize>() -> [(u8, u8); N] {
     let mut out = [(0u8, 0u8); N];
@@ -45,21 +47,6 @@ const fn invert<const SIZE: usize, const N: usize>(f: [(u8, u8); N]) -> [u8; N] 
     let mut i = 0;
     while i < N {
         t[(f[i].1 as usize) * SIZE + f[i].0 as usize] = i as u8;
-        i += 1;
-    }
-    t
-}
-
-/// `t[k]` is `max y + 1` over scan positions `0..=k`: the rows of sub-blocks
-/// that the first `k + 1` cover.
-const fn rows<const N: usize>(f: [(u8, u8); N]) -> [u8; N] {
-    let mut t = [0u8; N];
-    let (mut h, mut i) = (0u8, 0usize);
-    while i < N {
-        if f[i].1 + 1 > h {
-            h = f[i].1 + 1;
-        }
-        t[i] = h;
         i += 1;
     }
     t
@@ -125,17 +112,63 @@ const fn sig_nb(f: [(u8, u8); 16]) -> [[u8; 16]; 4] {
     t
 }
 
+/// The significance contexts of one sub-block of a block (§9.3.4.2.5), by
+/// scan position, with the context set's base folded in: the sub-block's
+/// first position is `[0]`. Indexed by whether the sub-block is after the
+/// block's first, then by `prevCsbf`.
+pub type SigCtx = [[[u8; 16]; 4]; 2];
+
+/// [`SigCtx`] for a (sub-block grid, scan) by component, `log2sb` being the
+/// grid's log2 size: 4×4 blocks use their map, larger ones the neighbour
+/// term and the offsets of the block's size, its scan and the sub-block's
+/// place (a luma sub-block's after the first).
+const fn sig_ctx_table(log2sb: usize, scan_idx: usize, by_scan: [u8; 16], nb: [[u8; 16]; 4]) -> [SigCtx; 2] {
+    let mut t = [[[[0u8; 16]; 4]; 2]; 2];
+    let mut c = 0;
+    while c < 2 {
+        let base = (CTX_SIG + if c == 0 { 0 } else { 27 }) as u8;
+        let mut rest = 0;
+        while rest < 2 {
+            let mut prev = 0;
+            while prev < 4 {
+                let mut k = 0;
+                while k < 16 {
+                    t[c][rest][prev][k] = if log2sb == 0 {
+                        base + by_scan[k]
+                    } else if rest == 0 && k == 0 {
+                        base
+                    } else {
+                        // Luma alone shifts a sub-block after the first.
+                        let off = if c == 0 {
+                            3 * rest as u8 + if log2sb > 1 { 21 } else if scan_idx == 0 { 9 } else { 15 }
+                        } else if log2sb > 1 {
+                            12
+                        } else {
+                            9
+                        };
+                        base + off + nb[prev][k]
+                    };
+                    k += 1;
+                }
+                prev += 1;
+            }
+            rest += 1;
+        }
+        c += 1;
+    }
+    t
+}
+
 /// Everything the residual parser needs of one (sub-block grid size, scanIdx).
 pub struct ScanSet {
-    /// The sub-block scan, its inverse and its prefix bounding boxes.
+    /// The sub-block scan and its inverse.
     pub sb: &'static [(u8, u8)],
     pub sb_inv: &'static [u8],
-    pub sb_rows: &'static [u8],
     /// The scan inside a 4×4 sub-block and its inverse.
     pub pos: &'static [(u8, u8); 16],
     pub pos_inv: &'static [u8; 16],
-    pub sig_4x4: &'static [u8; 16],
-    pub sig_nb: &'static [[u8; 16]; 4],
+    /// The significance contexts, by component.
+    pub sig: &'static [SigCtx; 2],
 }
 
 macro_rules! scans {
@@ -148,9 +181,6 @@ macro_rules! scans {
             pub static DIAG_INV: [u8; $n] = invert::<$size, $n>(diag_scan::<$size, $n>());
             pub static HORIZ_INV: [u8; $n] = invert::<$size, $n>(horiz_scan::<$size, $n>());
             pub static VERT_INV: [u8; $n] = invert::<$size, $n>(vert_scan::<$size, $n>());
-            pub static DIAG_ROWS: [u8; $n] = rows(diag_scan::<$size, $n>());
-            pub static HORIZ_ROWS: [u8; $n] = rows(horiz_scan::<$size, $n>());
-            pub static VERT_ROWS: [u8; $n] = rows(vert_scan::<$size, $n>());
         }
     };
 }
@@ -159,33 +189,41 @@ scans!(s2, 2, 4);
 scans!(s4, 4, 16);
 scans!(s8, 8, 64);
 
-static SIG_4X4: [[u8; 16]; 3] = [sig_by_scan(s4::DIAG), sig_by_scan(s4::HORIZ), sig_by_scan(s4::VERT)];
-static SIG_NB: [[[u8; 16]; 4]; 3] = [sig_nb(s4::DIAG), sig_nb(s4::HORIZ), sig_nb(s4::VERT)];
+/// `SIG[log2sb][scanIdx]`.
+static SIG: [[[SigCtx; 2]; 3]; 4] = {
+    const S: [[(u8, u8); 16]; 3] = [diag_scan::<4, 16>(), horiz_scan::<4, 16>(), vert_scan::<4, 16>()];
+    let mut t = [[[[[[0u8; 16]; 4]; 2]; 2]; 3]; 4];
+    let mut l = 0;
+    while l < 4 {
+        let mut si = 0;
+        while si < 3 {
+            t[l][si] = sig_ctx_table(l, si, sig_by_scan(S[si]), sig_nb(S[si]));
+            si += 1;
+        }
+        l += 1;
+    }
+    t
+};
 
 macro_rules! set {
-    ($m:ident, $which:ident, $pos:ident, $si:literal) => {
-        paste_set!($m, $which, $pos, $si)
+    ($m:ident, $l:literal, DIAG) => {
+        ScanSet { sb: &$m::DIAG, sb_inv: &$m::DIAG_INV, pos: &s4::DIAG, pos_inv: &s4::DIAG_INV, sig: &SIG[$l][0] }
     };
-}
-macro_rules! paste_set {
-    ($m:ident, DIAG, $pos:ident, $si:literal) => {
-        ScanSet { sb: &$m::DIAG, sb_inv: &$m::DIAG_INV, sb_rows: &$m::DIAG_ROWS, pos: &s4::$pos, pos_inv: &s4::DIAG_INV, sig_4x4: &SIG_4X4[$si], sig_nb: &SIG_NB[$si] }
+    ($m:ident, $l:literal, HORIZ) => {
+        ScanSet { sb: &$m::HORIZ, sb_inv: &$m::HORIZ_INV, pos: &s4::HORIZ, pos_inv: &s4::HORIZ_INV, sig: &SIG[$l][1] }
     };
-    ($m:ident, HORIZ, $pos:ident, $si:literal) => {
-        ScanSet { sb: &$m::HORIZ, sb_inv: &$m::HORIZ_INV, sb_rows: &$m::HORIZ_ROWS, pos: &s4::$pos, pos_inv: &s4::HORIZ_INV, sig_4x4: &SIG_4X4[$si], sig_nb: &SIG_NB[$si] }
-    };
-    ($m:ident, VERT, $pos:ident, $si:literal) => {
-        ScanSet { sb: &$m::VERT, sb_inv: &$m::VERT_INV, sb_rows: &$m::VERT_ROWS, pos: &s4::$pos, pos_inv: &s4::VERT_INV, sig_4x4: &SIG_4X4[$si], sig_nb: &SIG_NB[$si] }
+    ($m:ident, $l:literal, VERT) => {
+        ScanSet { sb: &$m::VERT, sb_inv: &$m::VERT_INV, pos: &s4::VERT, pos_inv: &s4::VERT_INV, sig: &SIG[$l][2] }
     };
 }
 
 /// `SCAN_SETS[log2TrafoSize - 2][scanIdx]`: scanIdx 0 diagonal, 1 horizontal,
 /// 2 vertical.
 static SCAN_SETS: [[ScanSet; 3]; 4] = [
-    [set!(s1, DIAG, DIAG, 0), set!(s1, HORIZ, HORIZ, 1), set!(s1, VERT, VERT, 2)],
-    [set!(s2, DIAG, DIAG, 0), set!(s2, HORIZ, HORIZ, 1), set!(s2, VERT, VERT, 2)],
-    [set!(s4, DIAG, DIAG, 0), set!(s4, HORIZ, HORIZ, 1), set!(s4, VERT, VERT, 2)],
-    [set!(s8, DIAG, DIAG, 0), set!(s8, HORIZ, HORIZ, 1), set!(s8, VERT, VERT, 2)],
+    [set!(s1, 0, DIAG), set!(s1, 0, HORIZ), set!(s1, 0, VERT)],
+    [set!(s2, 1, DIAG), set!(s2, 1, HORIZ), set!(s2, 1, VERT)],
+    [set!(s4, 2, DIAG), set!(s4, 2, HORIZ), set!(s4, 2, VERT)],
+    [set!(s8, 3, DIAG), set!(s8, 3, HORIZ), set!(s8, 3, VERT)],
 ];
 
 #[inline]
@@ -276,6 +314,43 @@ mod tests {
         assert_eq!(&DCT32[8][..4], &[83, 36, -36, -83]);
         assert_eq!(&DCT32[4][..8], &[89, 75, 50, 18, -18, -50, -75, -89]);
         assert_eq!(DCT32[31][1], -13);
-        assert_eq!(SIG_4X4[0][1], SIG_MAP_4X4[4]);
+        // A 4×4 luma block's second diagonal position, (0, 1), by its map; a
+        // 32×32 chroma block's sub-block after the first, with its right
+        // neighbour coded, at its own first position.
+        assert_eq!(SIG[0][0][0][0][0][1], CTX_SIG as u8 + SIG_MAP_4X4[4]);
+        assert_eq!(SIG[3][0][1][1][1][0], (CTX_SIG + 27 + 12 + 2) as u8);
+    }
+    #[test]
+    fn sig_table_matches_formula() {
+        const S: [[(u8, u8); 16]; 3] = [diag_scan::<4, 16>(), horiz_scan::<4, 16>(), vert_scan::<4, 16>()];
+        for l in 0..4 {
+            for si in 0..3 {
+                let by_scan = sig_by_scan(S[si]);
+                let nb = sig_nb(S[si]);
+                for c in 0..2 {
+                    let base = CTX_SIG + if c == 0 { 0 } else { 27 };
+                    for rest in 0..2 {
+                        for prev in 0..4 {
+                            for k in 0..16 {
+                                let want = if l == 0 {
+                                    base + by_scan[k] as usize
+                                } else if rest == 0 && k == 0 {
+                                    base
+                                } else {
+                                    let mut o = if rest == 1 { 3 } else { 0 };
+                                    if c == 0 {
+                                        o += if l == 1 { if si == 0 { 9 } else { 15 } } else { 21 };
+                                    } else {
+                                        o = if l == 1 { 9 } else { 12 };
+                                    }
+                                    base + o + nb[prev][k] as usize
+                                };
+                                assert_eq!(SIG[l][si][c][rest][prev][k] as usize, want, "l {l} si {si} c {c} rest {rest} prev {prev} k {k}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

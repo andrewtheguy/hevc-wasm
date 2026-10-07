@@ -46,7 +46,7 @@ until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.3.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.4.tar.gz"
 ```
 
 ## Testing
@@ -93,7 +93,9 @@ run decode fuzz/artifacts/decode/<file>` replays it.
 
 ## Releasing
 
-Bump `VERSION`, commit, push, and run `./publish-private.sh`, logged in to `gh`
+Bump the version in `rust/hevc-web/Cargo.toml` (the module's crate: the archive
+and the tag take their number from it, through `cargo metadata` and `jq`),
+commit, push, and run `./publish-private.sh`, logged in to `gh`
 with an account that can write to hevc-wasm-archives. It builds `git archive HEAD`
 on this machine, not in a workflow, since a public repository's workflow
 artifacts are anyone's to download; attaches the archive and its `SHA256SUMS` to
@@ -125,8 +127,11 @@ the byte planes and the threading are this repository's.
   (`core::arch::wasm32`): the interpolation filters, which write samples
   straight from their last pass, block copies, the residual add, planar and
   angular intra prediction, SAO and a 16-bit inverse transform by dot
-  products; coefficients are scaled as they are parsed, and CABAC keeps its
-  registers in locals, each coded sub-block decoding in a function of its own.
+  products, over the coded columns alone of a block with few coefficients;
+  coefficients are scaled as they are parsed, and CABAC keeps its
+  registers in locals, the walk over a block's sub-blocks and each coded
+  sub-block decoding in functions of their own, the significance contexts
+  from a table built at compile time.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
@@ -148,38 +153,40 @@ bit-identically to FFmpeg, natively on one thread and on six, and as the
 WebAssembly module on one and four. The `mac-*` fixtures in `test/data` are
 x265's nearest shape to the Mac's.
 
-Measured under Node on a six-core x86 workstation against the module this
-repository released before it, FFmpeg's libavcodec configured down to the HEVC
-decoder and compiled with Emscripten, with SIMD128 kernels and slice threads
-(release 0.0.1, from FFmpeg 9.0.2). The host was busy with other work, so the
-two modules ran alternately on the same four cores and the medians of three
-rounds are shown. The instruction and cycle
+The comparison is between two WebAssembly modules under Node, not with
+native FFmpeg: this decoder's module, and the module this repository released
+before it, FFmpeg's libavcodec configured down to the HEVC decoder and
+compiled with Emscripten, with SIMD128 kernels and slice threads (release
+0.0.1, from FFmpeg 9.0.2). Both ran on a six-core x86 workstation. The host
+was busy with other work, so the two modules ran alternately on the same four
+cores and the medians of three rounds are shown. The instruction and cycle
 counts are `perf stat`'s for the whole process and do not depend on the load
 (the FFmpeg bench hashes every picture of its first pass, so its counts are a
 two-pass run less a one-pass one). Per picture:
 
-| 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg's, 0.0.1 |
+| 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg's module, 0.0.1 |
 |---|---|---|
-| 1 thread, median ms | 19.3 | 34.4 |
-| 1 thread, M cycles | 54 | 90 |
-| 4 threads, median ms | 7.0 | 10.9 |
-| 4 threads, M cycles | 57 | 91 |
-| M instructions | 146 | 213 |
+| 1 thread, median ms | 13.9 | 31.6 |
+| 1 thread, M cycles | 45 | 90 |
+| 4 threads, median ms | 5.4 | 9.9 |
+| 4 threads, M cycles | 47 | 91 |
+| M instructions | 110 | 213 |
 
-| 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg's, 0.0.1 |
+| 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg's module, 0.0.1 |
 |---|---|---|
-| 1 thread, median ms | 2.6 | 6.2 |
+| 1 thread, median ms | 2.5 | 6.2 |
 | 1 thread, M cycles | 13 | 23 |
-| 4 threads, median ms | 2.4 | 3.1 |
+| 4 threads, median ms | 2.3 | 3.2 |
 | 4 threads, M cycles | 15 | 25 |
 | M instructions | 22 | 54 |
 
-On the Mac's dense screen content this decoder is two fifths ahead in cycles,
+On the Mac's dense screen content this decoder is half ahead of the FFmpeg
+module in cycles,
 and both spend their time where the stream does: CABAC residual parsing and
 the 32×32 inverse transforms, of which the capture has some three thousand a
-picture, each with a handful of coefficients scattered to the far corners, so
-that the transform runs dense. On ordinary video, where motion compensation
-dominates, this decoder is nearly half ahead, and what leads its profile is the copy
+picture, each with a handful of coefficients scattered to the far corners,
+which the transform runs over alone. On ordinary video, where motion compensation
+dominates, this decoder is nearly half ahead of it, and what leads its profile is the copy
 of the first reference that each row starts as: bound by memory, the reference
 and the picture being written not fitting the cache together. Of the steps that
 got here:
@@ -189,7 +196,10 @@ left the threads spinning at barriers; SAO in place rather than into a second
 picture, with the interpolation filters writing samples from their last pass,
 a tenth on one thread; the transform's row pass splatting each pair of
 coefficients with one shuffle rather than scalar loads, a twentieth of the
-capture's instructions; the block copy running down sixteen-wide columns, a
+capture's instructions; the transform of a block with few coefficients
+running down its coded columns and across the pairs of them, rather than the
+butterfly over their bounding box, a fifth of the capture's instructions and
+a sixth of its cycles; the block copy running down sixteen-wide columns, a
 seventh of the video's instructions; the maps filled by whole words rather
 than `memory.fill` calls into the runtime, a twelfth of the video's;
 shipping LLVM's output without wasm-opt, a twentieth of the capture's cycles;
@@ -214,9 +224,11 @@ which most bins are, takes a short path, the range shrinking by the other
 symbol's share and doubling at most to put it back; the bits read ahead carry
 their own end marker instead of a count, and the slice data is padded so a
 refill is one whole word with no call, so that V8 keeps the registers in
-registers, which it does not for a value live across a call; each coded
-sub-block decodes in a small function of its own, since V8 spills what a
-large one holds; the merge list is built only as far as the index, which is
+registers, which it does not for a value live across a call; the walk over a
+block's sub-blocks, most of them not coded, and each coded sub-block decode
+in small functions of their own, since V8 spills what a large one holds, the
+sub-block's significance contexts coming from a table built at compile
+time; the merge list is built only as far as the index, which is
 nearly always zero; the neighbours to the left and above, decoded before the
 block wherever they are, are not looked up in the z-order map; and a block's
 motion is one word, written once per 4×4. A sixth of the capture's cycles and

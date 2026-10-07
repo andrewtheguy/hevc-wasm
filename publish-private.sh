@@ -11,9 +11,10 @@
 # rather than in a workflow because a public repository's workflow artifacts can
 # be downloaded by anyone with a GitHub account.
 #
-# Bump VERSION, commit and push first. What gets built is `git archive HEAD`, not
-# this directory, so nothing uncommitted or ignored can reach the archive. The tag
-# is `v$(cat VERSION)`, created on both repositories: on the private one, as the
+# Bump the version in rust/hevc-web/Cargo.toml, commit and push first. What gets
+# built is `git archive HEAD`, not this directory, so nothing uncommitted or
+# ignored can reach the archive. The tag is `v` and that version, created on both
+# repositories: on the private one, as the
 # release holding the archive, and on this one, as the git tag of the commit it
 # was built from, with a release of the source alone whose notes give the
 # archive's digest.
@@ -26,9 +27,11 @@ cd "$here"
 
 [ $# -eq 0 ] || { sed -n '2,/^set -euo pipefail$/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 2; }
 
-version="$(cat VERSION)"
+# The module's crate is the one shipped, so its manifest names the release.
+version="$(cargo metadata --manifest-path rust/hevc-web/Cargo.toml --no-deps --offline --format-version 1 \
+  | jq -r '.packages[] | select(.name == "hevc-web") | .version')"
 echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
-  || { echo "VERSION is not X.Y.Z: '$version'" >&2; exit 1; }
+  || { echo "hevc-web's version is not X.Y.Z: '$version'" >&2; exit 1; }
 tag="v$version"
 archive="hevc-wasm-$tag.tar.gz"
 
@@ -41,7 +44,7 @@ git fetch --quiet --tags origin
 [ -n "$(git branch -r --contains "$sha")" ] \
   || { echo "$sha is on no branch of origin; push it first" >&2; exit 1; }
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-  echo "$tag already exists here; bump VERSION" >&2
+  echo "$tag already exists here; bump the version" >&2
   exit 1
 fi
 
@@ -50,7 +53,7 @@ fi
 gh release list --repo "$ARCHIVES_REPO" --limit 1 >/dev/null \
   || { echo "cannot read $ARCHIVES_REPO: gh auth login, with an account that has access" >&2; exit 1; }
 if gh release view "$tag" --repo "$ARCHIVES_REPO" >/dev/null 2>&1; then
-  echo "$ARCHIVES_REPO already has a release $tag; bump VERSION" >&2
+  echo "$ARCHIVES_REPO already has a release $tag; bump the version" >&2
   exit 1
 fi
 

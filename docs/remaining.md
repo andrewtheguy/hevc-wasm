@@ -2,7 +2,7 @@
 
 What the decoder does today is in [the architecture](architecture.md), with
 where its time goes; how it is built and what it measures against FFmpeg's
-decoder are in the [README](../README.md). This is the list of what it does
+decoder compiled to WebAssembly are in the [README](../README.md). This is the list of what it does
 not do yet, in the order the work would go. Numbers are from the module
 under Node on one thread of the x86 workstation, profiled with `perf record`
 of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
@@ -11,38 +11,35 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ### The capture
 
-1. **A sparse inverse transform.** Nearly half the capture's time. The 32×32
-   blocks carry about seven coefficients each, but scattered far enough that
-   the bounded transform (`nz_w` × `nz_h` of coded rows and columns) runs over
-   most of the block. A path for a block with few coefficients that
-   accumulates each coefficient's outer product of basis vectors, or a column
-   pass over the coded columns only followed by a dense row pass, would spend
-   its time in proportion to the coefficients rather than their bounding box.
-   A DC-only shortcut covers a further share of the blocks. The transform must
-   stay bit-exact with the 16-bit two-stage transform it replaces: same
-   intermediate clipping, same rounding per stage.
+1. **The sub-block walk.** `sub_blocks` at 13% is 154 K sub-blocks a
+   picture, 127 K of them not coded: a coded-sub-block flag each, at about
+   75 instructions a sub-block of which the flag's decode is near half. The
+   rest is the scan table, the neighbour flags and what V8 spills around the
+   call to `sub_block` for the coded ones. An inner loop over the uncoded
+   sub-blocks alone, with few values live, measured 1% fewer instructions
+   and no fewer cycles. The flags are in the stream; the floor is the bin's.
 
-2. **The sub-block loop's head.** `residual_block` at 17% is not the flags it
-   decodes (those are in `sub_block`) but what it does between sub-blocks: a
-   coded-sub-block flag and the construction of the sub-block's description
-   (its sixteen significance contexts, its greater-than-one and -two context
-   sets, its position) for each of the up to 64 sub-blocks of 3,022 blocks a
-   picture. Most of that description depends only on the sub-block's position
-   and the block's size and component, so a table indexed by those, built once,
-   replaces the arithmetic. The csbf context itself is two map lookups a
-   sub-block.
-
-3. **The per-bin floor.** The probable-symbol path of `decode` compiles to
+2. **The per-bin floor.** The probable-symbol path of `decode` compiles to
    about 50 x86 instructions, of which the arithmetic is a dozen; the rest is
    V8 spilling and reloading the engine's state and the loop's invariants (the
    context table base, the sub-block description) around the call. 645 K bins
-   at 50 instructions is a fifth of the capture's 146 M instructions. The
-   levers left are in the shape of the code V8 sees: the sixteen significance
-   contexts as two 64-bit words rather than a byte array it reloads through a
-   pointer, the significance loop unrolled by the scan so the position is a
-   constant, and inspecting the Liftoff/TurboFan output (`tmp/annot.sh`) for
-   which values spill. There is no `inline(always)` across the wasm boundary
-   to help; this is the floor V8's register allocator sets.
+   at 50 instructions is over a quarter of the capture's 112 M instructions.
+   The levers left are in the shape of the code V8 sees: the sixteen
+   significance contexts as two 64-bit words rather than a byte array it
+   reloads through a pointer, the significance loop unrolled by the scan so
+   the position is a constant, and inspecting the Liftoff/TurboFan output
+   (`tmp/annot.sh`) for which values spill. There is no `inline(always)`
+   across the wasm boundary to help; this is the floor V8's register
+   allocator sets.
+
+3. **The transform's floor.** 21%, nearly all of it the sparse path's row
+   pass: a broadcast and eight dots per pair of coded columns per row, over
+   32 rows, then the row's eight sums rounded, narrowed and stored. Two rows
+   per pass, to load each table vector once for both, measured no faster
+   (the sixteen sums spill); the column pass against a widened matrix, so
+   V8 emits multiply-adds rather than its unpack-and-multiply lowering of
+   `extmul`, measured the same. What is left is the shape of the loop V8
+   sees, as with the bins.
 
 ### The video
 
@@ -84,8 +81,8 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
    a few bins; the cost is the per-unit motion fill and the availability
    lookups for the first candidate. Not profiled to the instruction yet.
 
-9. **Four-thread scaling.** On the capture four threads are 2.75× one; on the
-   video only 1.1× (2.6 → 2.4 ms), while the cycles rise from 13 M to 15 M.
+9. **Four-thread scaling.** On the capture four threads are 2.6× one; on the
+   video only 1.1× (2.5 → 2.3 ms), while the cycles rise from 13 M to 15 M.
    The video's picture is 2.6 ms of work spread over its few coding tree
    block rows, and the wavefront's waits (`run_rows` 2.2%, `wait_for` spinning 256
    times before it sleeps) are a visible share. Whether the loss is the waits,
@@ -95,12 +92,11 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ### Elsewhere
 
-- **The target machine.** All of the Rust module's numbers are from an x86
-  workstation under Node. The FFmpeg module's table in the README is from an
-  M2 Max. The Rust module has not been run on Apple silicon, where V8 lowers
-  SIMD128 to NEON differently and the memory system differs; the capture's
-  dense-transform and the video's memory-bound copy may rank differently
-  there.
+- **The target machine.** All of the README's numbers, this module's and
+  the FFmpeg module's, are from an x86 workstation under Node. Neither has
+  been run on Apple silicon, where V8 lowers SIMD128 to NEON differently and
+  the memory system differs; the capture's transform and the video's
+  memory-bound copy may rank differently there.
 - **The native build runs scalar fallbacks**: the kernels are written for
   `core::arch::wasm32`. `hevc-bench` is for correctness, not speed. A native
   SIMD port is not a goal unless the decoder gets a native user.
