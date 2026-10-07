@@ -151,9 +151,8 @@ already in place and costs nothing.
 
 Where it can, the copy is not made either. Each picture keeps, per coding
 tree block, whether it is still the picture its rows started as: no coding
-unit of the block wrote a sample, none of the four blocks beside it did,
-since the deblocking of an edge between two such blocks has no strength, and
-its SAO is off. A buffer in the pool still holds the picture it was decoded
+unit of the block wrote a sample, no edge in it or along a side of it has a
+boundary strength, so the deblocking changed nothing, and its SAO is off. A buffer in the pool still holds the picture it was decoded
 as, known by a serial number, so a free buffer holding a picture the first
 reference descends from, base by base through the pictures still referenced,
 already is that reference wherever no picture on the way changed the block.
@@ -173,6 +172,9 @@ picture, and a block is filtered while it is still in cache.
   blocks decode, into a per-4×4 map of two bits per edge, zero off the 8×8
   grid, so the filter is a scan of eight strengths at a time, nearly all
   zero, and the edge filter with its four lines in the vector's lanes. A
+  coding tree block also records whether any edge along its left side, its
+  top or within it has a strength: one without is not scanned, and the same
+  flags say whether the deblocking reached into the block beside it. A
   block's vertical edges are filtered when it is reached and its horizontal
   edges eight columns behind, since the picture's vertical edges must all be
   filtered before any horizontal one that crosses them.
@@ -365,25 +367,25 @@ pictures), 13.6 ms a picture under the profiler:
 | 0.9% | deblock `edges` | |
 | 0.8% | `run_rows` | the wavefront's waits |
 
-The 1080p camera video in the Mac's shape (`sample`, 2,896 pictures), 3.9 ms a
+The 1080p camera video in the Mac's shape (`sample`, 2,896 pictures), 3.8 ms a
 picture under the profiler:
 
 | share | function |
 |---|---|
-| 13.9% | `sub_block` |
-| 10.0% | `run_rows` (the copy of the changed blocks' runs each row starts with, and the wavefront's waits) |
-| 10.0% | `coding_quadtree` |
-| 8.9% | `intra_predict` |
-| 7.3% | `prediction_unit` |
-| 6.9% | `edge_strengths` |
-| 10.0% | deblock `edges` (luma 5.6%, chroma 4.4%) |
-| 5.2% | `copy_block` |
-| 3.4% | SAO `component` |
-| 3.3% | libc `memmove` (two symbols: the rows copied whole and the stripe copies) |
+| 14.2% | `sub_block` |
+| 10.3% | `coding_quadtree` |
+| 9.6% | `intra_predict` |
+| 9.4% | `run_rows` (the copy of the changed blocks' runs each row starts with, and the wavefront's waits) |
+| 7.5% | deblock `ctb` (the scan of the blocks with a strength, and the edge filters) |
+| 7.4% | `prediction_unit` |
+| 7.4% | `edge_strengths` |
+| 5.9% | `copy_block` |
+| 3.5% | libc `memmove` (two symbols: the rows copied whole and the stripe copies) |
+| 2.9% | SAO `component` |
 | 2.8% | `inverse_transform` |
 | 2.5% | `residual_block` |
-| 1.9% | `filter_after` |
-| 1.8% | `merge_motion` |
+| 2.1% | `filter_after` |
+| 1.7% | `merge_motion` |
 
 Per picture of the capture: 4,060 residual blocks, 3,022 of them 32×32,
 28.8 K coefficients in all (about seven per 32×32 block) in 27 K coded
@@ -393,8 +395,8 @@ coded-sub-block and significance flags. The video: 551 blocks, 8,244
 coefficients, 45 K context bins, 19.6 K bypass bins, 4,029 coding units of
 which 3,642 are skipped, 3,880 prediction units of which 3,774 are merges and
 3,202 are still blocks from the first reference; of its 2,040 coding tree
-blocks 1,400 are left as the picture before, and 1,256 are in the reused
-buffer already.
+blocks 1,709 have no edge with a strength, and in a P picture 1,436 are left
+as the picture before and 1,220 are in the reused buffer already.
 
 On four threads the capture decodes 2.6× as fast as on one; the video no
-faster (2.0 ms on one, 2.4 ms on four), its cycles rising from 11 M to 14 M.
+faster (1.9 ms on one, 2.3 ms on four), its cycles rising from 11 M to 13 M.

@@ -8,7 +8,7 @@ use crate::ctu::{self, Maps, PictureCtx, RefPic, Scratch};
 use crate::deblock::DeblockCtx;
 use crate::error::{Error, Result};
 use crate::nal::{self, NalHeader, Rbsp};
-use crate::pic::{PicState, Picture};
+use crate::pic::{PicState, Picture, EDGED_LEFT, EDGED_TOP};
 use crate::ps::{parse_pps, parse_sps, Colour, Pps, Sps};
 use crate::sao::SaoCtx;
 use crate::shared::PlanePtr;
@@ -289,20 +289,19 @@ impl Decoder {
             return Err(e);
         }
         // Where the picture is still its base: a block none of whose coding
-        // units wrote a sample, beside none with one that did, since the
-        // deblocking of an edge between two such blocks has no strength, and
-        // with SAO off.
+        // units wrote a sample, with no edge of a strength for the deblocking
+        // in it or along a side of it, and with SAO off.
         pic.same.clear();
         pic.base_serial = base.map_or(0, |b| b.serial);
         if base.is_some() {
             let (w, h) = (state.ctb_w, state.ctb_h);
             let sao = sh.sao_luma || sh.sao_chroma;
-            let wrote = &state.written;
+            let (wrote, edged) = (&state.written, &state.edged);
             for i in 0..w * h {
                 let (x, y) = (i % w, i / w);
-                let beside = (x > 0 && wrote[i - 1] != 0) || (x + 1 < w && wrote[i + 1] != 0) || (y > 0 && wrote[i - w] != 0) || (y + 1 < h && wrote[i + w] != 0);
+                let deblocked = edged[i] != 0 || (x + 1 < w && edged[i + 1] & EDGED_LEFT != 0) || (y + 1 < h && edged[i + w] & EDGED_TOP != 0);
                 let filtered = sao && state.sao[i].iter().any(|p| p.type_idx != 0);
-                pic.same.push(!(wrote[i] != 0 || beside || filtered) as u8);
+                pic.same.push(!(wrote[i] != 0 || deblocked || filtered) as u8);
             }
         }
         self.state = Some(state);

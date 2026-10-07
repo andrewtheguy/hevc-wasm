@@ -12,7 +12,7 @@ use crate::deblock::DeblockCtx;
 use crate::error::{Error, Result};
 use crate::intra::RefSamples;
 use crate::kernels;
-use crate::pic::{Motion, PicState, Picture, SaoParams, PRED_INTER, PRED_INTRA, PRED_SKIP};
+use crate::pic::{Motion, PicState, Picture, SaoParams, EDGED_INSIDE, EDGED_LEFT, EDGED_TOP, PRED_INTER, PRED_INTRA, PRED_SKIP};
 use crate::ps::{Pps, Sps};
 use crate::sao::SaoCtx;
 use crate::shared::{MapPtr, PlanePtr};
@@ -52,6 +52,7 @@ pub struct Maps {
     pub motion: MapPtr<Motion>,
     pub sao: MapPtr<[SaoParams; 3]>,
     pub written: MapPtr<u8>,
+    pub edged: MapPtr<u8>,
     pub sao_rows: MapPtr<u8>,
     pub sao_cols: MapPtr<u8>,
 }
@@ -74,6 +75,7 @@ impl Maps {
             motion: MapPtr::of(&mut st.motion),
             sao: MapPtr::of(&mut st.sao),
             written: MapPtr::of(&mut st.written),
+            edged: MapPtr::of(&mut st.edged),
             sao_rows: MapPtr::of(&mut st.sao_rows),
             sao_cols: MapPtr::of(&mut st.sao_cols),
         }
@@ -517,8 +519,11 @@ impl<'a> Row<'a> {
             let v = m.bs.get(q);
             m.bs.set(q, (v & !(3 << shift)) | (v & (3 << shift)).max(bs << shift));
         };
+        let in_ctb = (1usize << m.log2_ctb) - 1;
+        let mut edged = 0;
         if x & 7 == 0 && x > 0 {
             let (y4, h4) = (y >> 2, h >> 2);
+            let mut any = 0;
             let mut r = 0;
             while r < h4 {
                 let q = base + r * m.w4;
@@ -526,11 +531,16 @@ impl<'a> Row<'a> {
                 for k in 0..n {
                     put(q + k * m.w4, bs, 0);
                 }
+                any |= bs;
                 r += n;
+            }
+            if any != 0 {
+                edged |= if x & in_ctb == 0 { EDGED_LEFT } else { EDGED_INSIDE };
             }
         }
         if y & 7 == 0 && y > 0 {
             let (x4, w4) = (x >> 2, w >> 2);
+            let mut any = 0;
             let mut c = 0;
             while c < w4 {
                 let q = base + c;
@@ -538,8 +548,17 @@ impl<'a> Row<'a> {
                 for k in 0..n {
                     put(q + k, bs, 2);
                 }
+                any |= bs;
                 c += n;
             }
+            if any != 0 {
+                edged |= if y & in_ctb == 0 { EDGED_TOP } else { EDGED_INSIDE };
+            }
+        }
+        if edged != 0 {
+            let ctb = (y >> m.log2_ctb) * m.ctb_w + (x >> m.log2_ctb);
+            // SAFETY: this coding tree block's own entry.
+            unsafe { m.edged.set(ctb, m.edged.get(ctb) | edged) };
         }
     }
 

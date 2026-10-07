@@ -111,6 +111,11 @@ pub struct PicState {
     /// Per coding tree block: a coding unit of it wrote samples, so they are
     /// not the ones its row started as.
     pub written: Vec<u8>,
+    /// Per coding tree block, where it has an edge of non-zero boundary
+    /// strength: `EDGED_LEFT` along its left side, `EDGED_TOP` along its
+    /// top, `EDGED_INSIDE` within. The deblocking changes no sample of a
+    /// block without one, nor of the block across a side without one.
+    pub edged: Vec<u8>,
     /// The last line of each coding tree block row and the last column of
     /// each coding tree block column as deblocked, per component (`sao`
     /// filters in place and its neighbours read these): `[c][row][x]` and
@@ -118,6 +123,10 @@ pub struct PicState {
     pub sao_rows: Vec<u8>,
     pub sao_cols: Vec<u8>,
 }
+
+pub const EDGED_LEFT: u8 = 1;
+pub const EDGED_TOP: u8 = 2;
+pub const EDGED_INSIDE: u8 = 4;
 
 /// `MinTbAddrZs` at 4×4 granularity, raster order of the blocks in a picture
 /// of `w4` by `h4` of them with coding tree blocks of `1 << log2_ctb`.
@@ -167,6 +176,7 @@ impl PicState {
             motion: vec![Motion::default(); n4],
             sao: vec![[SaoParams::default(); 3]; ctb_w * ctb_h],
             written: vec![0; ctb_w * ctb_h],
+            edged: vec![0; ctb_w * ctb_h],
             sao_rows: vec![0; 3 * ctb_h * width],
             sao_cols: vec![0; 3 * ctb_w * height],
         }
@@ -182,5 +192,6 @@ impl PicState {
         self.bs.fill(0);
         self.nz.fill(0);
         self.written.fill(0);
+        self.edged.fill(0);
     }
 }

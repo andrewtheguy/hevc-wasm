@@ -46,7 +46,7 @@ until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.5.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.6.tar.gz"
 ```
 
 ## Testing
@@ -155,28 +155,28 @@ WebAssembly module on one and four. The `mac-*` fixtures in `test/data` are
 x265's nearest shape to the Mac's.
 
 The comparison is between builds of this decoder's module under Bun: the
-module as it is, the release before it, 0.0.4, and for the capture the one
-before that, 0.0.3, since the capture's last large step, the transform of a
-block with few coefficients, came with 0.0.4. They ran on a six-core x86
+module as it is, the release before it, 0.0.5, and for the capture the one
+before that, 0.0.4, since the capture's last step, the context-coded bin's
+chain, came with 0.0.5. They ran on a six-core x86
 workstation, alternately on the same four cores, and the medians of three
 rounds are shown. The instruction and cycle counts are `perf stat`'s for the
 whole process and do not depend on the load. Per picture:
 
-| 1600×1000 Mac capture, 236 pictures | this decoder | release 0.0.4 | release 0.0.3 |
+| 1600×1000 Mac capture, 236 pictures | this decoder | release 0.0.5 | release 0.0.4 |
 |---|---|---|---|
-| 1 thread, median ms | 13.5 | 14.3 | 17.5 |
-| 1 thread, M cycles | 43.2 | 45.1 | 53.9 |
-| 4 threads, median ms | 5.7 | 6.2 | 6.9 |
-| 4 threads, M cycles | 45.7 | 47.7 | 56.2 |
-| M instructions | 106 | 110 | 146 |
+| 1 thread, median ms | 13.3 | 13.3 | 14.3 |
+| 1 thread, M cycles | 43.0 | 43.1 | 45.0 |
+| 4 threads, median ms | 5.1 | 5.2 | 5.4 |
+| 4 threads, M cycles | 44.7 | 45.6 | 47.0 |
+| M instructions | 105 | 106 | 110 |
 
-| 1080p video in the Mac's shape, 2,896 pictures | this decoder | release 0.0.4 |
+| 1080p video in the Mac's shape, 2,896 pictures | this decoder | release 0.0.5 |
 |---|---|---|
-| 1 thread, median ms | 2.0 | 2.4 |
-| 1 thread, M cycles | 11.3 | 12.4 |
-| 4 threads, median ms | 2.4 | 2.4 |
-| 4 threads, M cycles | 13.7 | 14.7 |
-| M instructions | 22.0 | 21.5 |
+| 1 thread, median ms | 1.9 | 2.0 |
+| 1 thread, M cycles | 11.0 | 11.3 |
+| 4 threads, median ms | 2.3 | 2.3 |
+| 4 threads, M cycles | 13.2 | 13.7 |
+| M instructions | 20.9 | 22.0 |
 
 On the Mac's dense screen content the decoder spends its time where the
 stream does: CABAC residual parsing and
@@ -205,7 +205,9 @@ and the in-loop filters, which had been a quarter of the video's cycles: the
 deblocking's boundary strengths settled as the blocks decode, where one side
 of each edge is known once and a skipped neighbour is one block, rather than
 read back per 4×4 block at filter time, so the filter scans eight strengths
-at a time and nearly all are zero; the edge filter itself by vector, its four
+at a time and nearly all are zero, and a coding tree block with no strength
+in it, five in six of the video's, is not scanned at all; the edge filter
+itself by vector, its four
 lines in the lanes; and SAO blocks with no offset of their own and no
 neighbour's edge offset to save a line for, which on these streams is nearly
 all of them, cost one check. Together a seventh of the video's cycles. And

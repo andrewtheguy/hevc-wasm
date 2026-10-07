@@ -62,23 +62,29 @@
       ]
     },
     "mac-still-352x256": {
-      "sha256": "547756911f46d13d651b483ee77057a85eda7174c1df332f937c6703d0d7d1df",
+      "sha256": "f2b077363107c8d8e24e0efb0a407b489ea4b494950e25ed403778d328e22db6",
       "width": 352,
       "height": 256,
       "pixFmt": "yuv444p",
       "md5s": [
         "c4112da9adbb1208ef71df05015ccc49",
-        "d12cbafba6c822be25292adc9762c6b6",
-        "7ee6e2e793e4b775a52c34e14d1c9744",
-        "341d2e13e662337dbaa171d1842c9d9b",
-        "d098daa537ea12c67253f0d646c8f12f",
-        "6804ea92d5d6f2d0f6b22f78a85592d0",
-        "4a827b024737e032fa727d491d79a7aa",
-        "fa37fa885ee9ad3c83ba287584d02390",
-        "13cc92d622e0d0108980ed8a229afc9c",
-        "ad3b048c96fa762c5158608be22dc708",
-        "67a1841fc9517cc9891087c3b6c760cf",
-        "968eb127cba621987439167cf1eefd36"
+        "9ce47e2fccfc0d48a70380e14673a4bf",
+        "82d40135b097123a2ae69928f2b31c63",
+        "12d9f524e4e41783fb2dee5069dfdb1a",
+        "7eca49a7b5cb73fddc8f13791000078c",
+        "fb1155c97e67c7c76442acbb9d1f65ac",
+        "74402dec41d7960f1ba1512782e5ab1e",
+        "6753e7111dc575889670ee75ce46acf6",
+        "27c5252fe2a123ca66d2596d42bb3c96",
+        "f66e9407954cfec395fc11a6c68290d0",
+        "db380f6cde5b71d8700195d75aae3ce1",
+        "df778295dc5f1446ba97462309075601",
+        "d700061631d840ec51533a12094c2a67",
+        "bf6d319cc9a482dc2d7e11c0c022891d",
+        "506dcedc66c31ceb947e3e78e1168f4a",
+        "14009131e15f73ad583331712126fcfd",
+        "c0906aab4f4df7ee216b937fe830825d",
+        "ad51adf2bbb31135669790cc6a6e0f0e"
       ]
     },
     "yuv420p-330x194": {

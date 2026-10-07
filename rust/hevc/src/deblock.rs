@@ -88,9 +88,16 @@ impl<'a> DeblockCtx<'a> {
         let ctb4 = 1usize << (m.log2_ctb - 2);
         let (x4_0, y4_0) = (cx * ctb4, cy * ctb4);
         let (x4_1, y4_1) = ((x4_0 + ctb4).min(m.w4), (y4_0 + ctb4).min(m.height.div_ceil(4)));
-        self.edges(y4_0, y4_1, 1, x4_0, x4_1, 0);
-        let hx0 = x4_0.saturating_sub(2);
-        let hx1 = if x4_1 == m.w4 { m.w4 } else { x4_1 - 2 };
-        self.edges(y4_0, y4_1, 2, hx0, hx1, 1);
+        // Most blocks have no edge with a strength, and are not scanned.
+        // SAFETY: the blocks' entries are complete and only read now.
+        let (own, left) = unsafe { (m.edged.get(cy * m.ctb_w + cx), if cx > 0 { m.edged.get(cy * m.ctb_w + cx - 1) } else { 0 }) };
+        if own != 0 {
+            self.edges(y4_0, y4_1, 1, x4_0, x4_1, 0);
+        }
+        if own | left != 0 {
+            let hx0 = x4_0.saturating_sub(2);
+            let hx1 = if x4_1 == m.w4 { m.w4 } else { x4_1 - 2 };
+            self.edges(y4_0, y4_1, 2, hx0, hx1, 1);
+        }
     }
 }

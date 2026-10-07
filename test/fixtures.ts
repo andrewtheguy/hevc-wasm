@@ -70,11 +70,17 @@ export const SPECS = {
   "mac-352x256": { size: "352x256", pixFmt: "yuv444p", x265: MAC_X265 },
   // A screen mostly still: a patch moves across one frozen picture, and the
   // rest is skipped from the picture before, which the decoder leaves in the
-  // buffer it reuses rather than copy.
+  // buffer it reuses rather than copy. The patch slides off the coding tree
+  // blocks' grid for six pictures, then rests on it for twelve, where the
+  // deblocking of its sides reaches into blocks that are otherwise still.
   "mac-still-352x256": {
     size: "352x256",
     pixFmt: "yuv444p",
-    source: "testsrc2=size=352x256:rate=30,trim=end_frame=1,loop=loop=-1:size=1[bg];testsrc2=size=44x36:rate=30[fg];[bg][fg]overlay=x=37+9*n:y=50+5*n",
+    frames: 18,
+    source:
+      "testsrc2=size=352x256:rate=30,trim=end_frame=1,loop=loop=-1:size=1[bg];testsrc2=size=44x36:rate=30[fg];[bg][fg]overlay=" +
+      "x='if(lt(n,6),37+9*n,if(lt(n,12),32*(floor(n/3)-1),32*(floor(n/2)-2)))':" +
+      "y='if(lt(n,6),50+5*n,if(lt(n,12),64*(floor(n/3)-1),32*(floor(n/2)-2)))'",
     x265: MAC_X265,
   },
   "yuv420p-330x194": { size: "330x194", pixFmt: "yuv420p" },
