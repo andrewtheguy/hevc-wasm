@@ -127,7 +127,9 @@ the byte planes and the threading are this repository's.
   angular intra prediction, SAO and a 16-bit inverse transform by dot
   products, over the coded columns alone of a block with few coefficients;
   coefficients are scaled as they are parsed, and CABAC keeps its
-  registers in locals, each coded sub-block decoding in a function of its own.
+  registers in locals, the walk over a block's sub-blocks and each coded
+  sub-block decoding in functions of their own, the significance contexts
+  from a table built at compile time.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
@@ -161,17 +163,17 @@ two-pass run less a one-pass one). Per picture:
 
 | 1600×1000 Mac capture, 236 pictures | this decoder | FFmpeg's, 0.0.1 |
 |---|---|---|
-| 1 thread, median ms | 13.7 | 30.8 |
-| 1 thread, M cycles | 44 | 88 |
-| 4 threads, median ms | 5.3 | 9.7 |
-| 4 threads, M cycles | 47 | 90 |
-| M instructions | 113 | 213 |
+| 1 thread, median ms | 13.9 | 31.6 |
+| 1 thread, M cycles | 45 | 90 |
+| 4 threads, median ms | 5.4 | 9.9 |
+| 4 threads, M cycles | 47 | 91 |
+| M instructions | 110 | 213 |
 
 | 1080p video in the Mac's shape, 2,896 pictures | this decoder | FFmpeg's, 0.0.1 |
 |---|---|---|
-| 1 thread, median ms | 2.3 | 5.8 |
-| 1 thread, M cycles | 12 | 23 |
-| 4 threads, median ms | 2.2 | 3.0 |
+| 1 thread, median ms | 2.5 | 6.2 |
+| 1 thread, M cycles | 13 | 23 |
+| 4 threads, median ms | 2.3 | 3.2 |
 | 4 threads, M cycles | 15 | 25 |
 | M instructions | 22 | 54 |
 
@@ -218,9 +220,11 @@ which most bins are, takes a short path, the range shrinking by the other
 symbol's share and doubling at most to put it back; the bits read ahead carry
 their own end marker instead of a count, and the slice data is padded so a
 refill is one whole word with no call, so that V8 keeps the registers in
-registers, which it does not for a value live across a call; each coded
-sub-block decodes in a small function of its own, since V8 spills what a
-large one holds; the merge list is built only as far as the index, which is
+registers, which it does not for a value live across a call; the walk over a
+block's sub-blocks, most of them not coded, and each coded sub-block decode
+in small functions of their own, since V8 spills what a large one holds, the
+sub-block's significance contexts coming from a table built at compile
+time; the merge list is built only as far as the index, which is
 nearly always zero; the neighbours to the left and above, decoded before the
 block wherever they are, are not looked up in the z-order map; and a block's
 motion is one word, written once per 4×4. A sixth of the capture's cycles and

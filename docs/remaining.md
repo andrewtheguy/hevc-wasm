@@ -11,21 +11,19 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ### The capture
 
-1. **The sub-block loop's head.** `residual_block` at 27% is not the flags it
-   decodes (those are in `sub_block`) but what it does between sub-blocks: a
-   coded-sub-block flag and the construction of the sub-block's description
-   (its sixteen significance contexts, its greater-than-one and -two context
-   sets, its position) for each of the up to 64 sub-blocks of 3,022 blocks a
-   picture. Most of that description depends only on the sub-block's position
-   and the block's size and component, so a table indexed by those, built once,
-   replaces the arithmetic. The csbf context itself is two map lookups a
-   sub-block.
+1. **The sub-block walk.** `sub_blocks` at 13% is 154 K sub-blocks a
+   picture, 127 K of them not coded: a coded-sub-block flag each, at about
+   75 instructions a sub-block of which the flag's decode is near half. The
+   rest is the scan table, the neighbour flags and what V8 spills around the
+   call to `sub_block` for the coded ones. An inner loop over the uncoded
+   sub-blocks alone, with few values live, measured 1% fewer instructions
+   and no fewer cycles. The flags are in the stream; the floor is the bin's.
 
 2. **The per-bin floor.** The probable-symbol path of `decode` compiles to
    about 50 x86 instructions, of which the arithmetic is a dozen; the rest is
    V8 spilling and reloading the engine's state and the loop's invariants (the
    context table base, the sub-block description) around the call. 645 K bins
-   at 50 instructions is over a quarter of the capture's 115 M instructions.
+   at 50 instructions is over a quarter of the capture's 112 M instructions.
    The levers left are in the shape of the code V8 sees: the sixteen
    significance contexts as two 64-bit words rather than a byte array it
    reloads through a pointer, the significance loop unrolled by the scan so
@@ -84,7 +82,7 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
    lookups for the first candidate. Not profiled to the instruction yet.
 
 9. **Four-thread scaling.** On the capture four threads are 2.6× one; on the
-   video only 1.05× (2.3 → 2.2 ms), while the cycles rise from 12 M to 15 M.
+   video only 1.1× (2.5 → 2.3 ms), while the cycles rise from 13 M to 15 M.
    The video's picture is 2.6 ms of work spread over its few coding tree
    block rows, and the wavefront's waits (`run_rows` 2.2%, `wait_for` spinning 256
    times before it sleeps) are a visible share. Whether the loss is the waits,
