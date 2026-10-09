@@ -8,7 +8,7 @@
 # module decodes on (.cargo/config.toml).
 [package]
 name = "hevc-web"
-version = "0.0.7"
+version = "0.0.8"
 license = "Apache-2.0"
 edition = "2024"
 publish = false
