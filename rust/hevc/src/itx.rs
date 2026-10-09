@@ -36,6 +36,19 @@ impl Dequant {
     }
 }
 
+/// A coefficient as the parser lists it: its scaled value in the low half,
+/// its column in the five bits above and its row in the five above those.
+#[inline(always)]
+pub fn entry(x: usize, y: usize, v: i16) -> u32 {
+    ((y << 5 | x) as u32) << 16 | v as u16 as u32
+}
+
+/// The column and the row of a listed coefficient.
+#[inline(always)]
+pub fn place(e: u32) -> (usize, usize) {
+    ((e >> 16) as usize & 31, (e >> 21) as usize & 31)
+}
+
 /// Where a block's non-zero coefficients are: a bit per coded column and
 /// row, and how many there are.
 #[derive(Clone, Copy, Default)]
@@ -116,21 +129,47 @@ fn block<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], nz_w: usiz
     }
 }
 
-/// Scaled coefficients `d` (raster, `n`×`n`, non-zero where `coded` says)
-/// to the residual `res`. `dst` selects the 4×4 DST of intra luma. `tmp` is
-/// the first pass's intermediate.
-pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) {
+/// The scaled coefficients of an `n`×`n` block, listed with their places
+/// (`entry`) and covered by `coded`, to the residual `res`. `dst` selects the
+/// 4×4 DST of intra luma. `tmp` is the first pass's intermediate, and `d` an
+/// `n`×`n` block of zeros, left so: a block with few coefficients is
+/// transformed from the list, and any other from `d` with them put into it.
+pub fn inverse_transform(list: &[u32], d: &mut [i16], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) {
     if coded.cols <= 1 && coded.rows <= 1 && !dst {
         // A lone DC coefficient: row 0 of the matrix is the constant 64, so
         // both passes are one value.
-        let v1 = ((d[0] as i32 * 64 + 64) >> 7).clamp(-32768, 32767);
+        let dc = list.first().map_or(0, |&e| e as i16);
+        let v1 = ((dc as i32 * 64 + 64) >> 7).clamp(-32768, 32767);
         let out = ((v1 * 64 + (1 << 11)) >> 12) as i16;
         crate::kernels::fill_i16(&mut res[..n * n], out);
         return;
     }
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    if crate::kernels::simd128::sparse_transform(list, tmp, res, n, coded, dst) {
+        return;
+    }
+    for &e in list {
+        let (x, y) = place(e);
+        d[y * n + x] = e as i16;
+    }
+    dense(d, tmp, res, n, coded, dst);
+    if n == 4 {
+        kernels::fill_i16(d, 0);
+    } else {
+        let mut rows = coded.rows;
+        while rows != 0 {
+            let y = rows.trailing_zeros() as usize;
+            rows &= rows - 1;
+            kernels::fill_i16(&mut d[y * n..y * n + n], 0);
+        }
+    }
+}
+
+/// Both passes over the block `d`, as far as `coded` reaches.
+fn dense(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return crate::kernels::simd128::inverse_transform(d, tmp, res, n, coded, dst);
+        return crate::kernels::simd128::dense_transform(d, tmp, res, n, coded, dst);
     }
     #[allow(unreachable_code)]
     let (nz_w, nz_h) = coded.extent();
@@ -174,16 +213,21 @@ mod tests {
         out
     }
 
-    fn coded(d: &[i16], n: usize) -> Coded {
+    /// The transform of the block `d`, from its coefficients listed.
+    fn transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, dst: bool) {
         let mut c = Coded::default();
+        let mut list = Vec::new();
         for (i, &v) in d.iter().enumerate() {
             if v != 0 {
                 c.cols |= 1 << (i % n);
                 c.rows |= 1 << (i / n);
                 c.count += 1;
+                list.push(entry(i % n, i / n, v));
             }
         }
-        c
+        let mut zeros = vec![0i16; n * n];
+        inverse_transform(&list, &mut zeros, tmp, res, n, c, dst);
+        assert!(zeros.iter().all(|&v| v == 0), "n={n}: the block is left zero");
     }
 
     #[test]
@@ -207,7 +251,7 @@ mod tests {
                     if dst && n != 4 {
                         continue;
                     }
-                    inverse_transform(&d, &mut tmp, &mut res, n, coded(&d, n), dst);
+                    transform(&d, &mut tmp, &mut res, n, dst);
                     assert_eq!(&res[..n * n], &naive(&d, n, dst)[..], "n={n} nz=({nz_w},{nz_h}) dst={dst}");
                 }
             }
@@ -220,7 +264,7 @@ mod tests {
                     let (x, y) = ((i * 7 + 3) % n, (i * 5 + 1) % n);
                     d[y * n + x] = rnd();
                 }
-                inverse_transform(&d, &mut tmp, &mut res, n, coded(&d, n), false);
+                transform(&d, &mut tmp, &mut res, n, false);
                 assert_eq!(&res[..n * n], &naive(&d, n, false)[..], "n={n} scattered {count}");
             }
         }

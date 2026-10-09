@@ -174,6 +174,10 @@ impl<'a> PictureCtx<'a> {
 
 /// Buffers a row needs, kept by the thread across the rows it decodes.
 pub struct Scratch {
+    /// A block's coefficients as they are parsed, each with its place
+    /// (`itx::entry`), and the block of zeros a transform that reads them
+    /// in place has them put into.
+    list: Vec<u32>,
     coeffs: Vec<i16>,
     itx_tmp: Vec<i16>,
     res: Vec<i16>,
@@ -188,6 +192,7 @@ pub struct Scratch {
 impl Default for Scratch {
     fn default() -> Self {
         Scratch {
+            list: vec![0; 32 * 32],
             coeffs: vec![0; 32 * 32],
             itx_tmp: vec![0; 32 * 32],
             res: vec![0; 32 * 32],

@@ -258,9 +258,11 @@ of a sub-block from a table built at compile time, by the block's size,
 component and scan, the sub-block's place and its neighbours' flags; the
 sub-block's significance flags are decoded unrolled by position, so each
 flag's context and bit are constants of the code.
-Coefficients are scaled as they are parsed, and the block they land in is
-cleared behind the transform, row by coded row, rather than ahead of the
-parse. The merge candidate list is built only as far as the coded index,
+Coefficients are scaled as they are parsed and listed one after another,
+each with its place, so the parser writes no block and nothing is cleared
+for one; a coefficient's remaining level, the escape few of them have, is
+read in a function apart, so its two loops of bypass bins are no part of
+the sub-block's. The merge candidate list is built only as far as the coded index,
 nearly always zero; the neighbours to the left and above, decoded before the
 block wherever they are, are not looked up in the z-order map; and a
 block's motion is one word, written once per 4×4.
@@ -278,13 +280,16 @@ coefficients with one shuffle.
 
 A block with few coefficients, which on the capture is nearly every 32×32
 block (some seven, scattered so that their bounding box is most of the
-block), takes a path in proportion to them instead: the first pass runs down
-the coded columns only, each the sum of its coefficients times their rows of
-the matrix, and writes the columns in pairs, zipped a 32-bit lane per row;
+block), takes a path in proportion to them instead, from the parser's list:
+the coefficients are chained by their columns, and the first pass runs down
+the coded columns only, each the sum of its chain's coefficients times their
+rows of the matrix, and writes the columns in pairs, zipped a 32-bit lane
+per row;
 the second pass sums each row over those pairs by dot products against the
 pairs' rows of the matrix zipped the same way, with no butterfly. The dense
-path remains for a block with more coefficients than twice its width, or
-more than sixteen coded columns.
+path remains for a 4×4 block and for a block with more coefficients than
+twice its width, or more than sixteen coded columns: the list is put into a
+block of zeros, which is cleared behind the transform, row by coded row.
 
 ### The kernels
 
