@@ -24,8 +24,9 @@ pub struct Display {
     pitch: usize,
     /// The strips placed since the keyframe, a bit each.
     placed: u8,
-    /// Every strip placed is the keyframe's own.
-    keyframe: bool,
+    /// Of those, the strips whose picture is predicted from no other: the
+    /// keyframe's own, the first strip's IDR and the others' intra pictures.
+    intra: u8,
 }
 
 impl Display {
@@ -35,7 +36,8 @@ impl Display {
     /// whatever the keyframe mends, and is not shown beside it.
     pub fn place(display: &mut Option<Self>, strip: usize, rows: usize, part: &Decoded) -> Result<()> {
         let [x, y, width, pitch] = part.window.map(|v| v as usize);
-        if strip >= STRIPS || pitch * STRIPS < rows || pitch * (STRIPS - 1) > rows || (width * rows) as u64 > MAX_LUMA_PS {
+        // A quarter of the display's rows, rounded up to a multiple of 16.
+        if strip >= STRIPS || pitch != rows.div_ceil(STRIPS).next_multiple_of(16) || pitch * (STRIPS - 1) > rows || (width * rows) as u64 > MAX_LUMA_PS {
             return Err(Error::invalid(format!("a {width}\u{d7}{pitch} picture is not strip {strip} of a display of {rows} rows")));
         }
         let display = match display {
@@ -45,15 +47,14 @@ impl Display {
                 colour: part.colour,
                 pitch,
                 placed: 0,
-                keyframe: false,
+                intra: 0,
             }),
         };
         if part.keyframe {
             display.placed = 0;
-            display.keyframe = true;
-        } else if display.placed & 1 << strip != 0 {
-            display.keyframe = false;
+            display.intra = 0;
         }
+        display.intra = display.intra & !(1 << strip) | u8::from(part.intra) << strip;
         display.colour = part.colour;
         let from = strip * pitch;
         for (into, plane) in display.planes.iter_mut().zip(&part.picture.planes) {
@@ -73,8 +74,9 @@ impl Display {
         self.placed == ALL
     }
 
-    /// Whether the display is the keyframe's strips and no later one.
+    /// Whether the display is whole and predicted from nothing before its
+    /// keyframe: every strip the keyframe's, or an intra picture since.
     pub fn keyframe(&self) -> bool {
-        self.keyframe
+        self.intra == ALL
     }
 }

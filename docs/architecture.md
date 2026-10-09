@@ -83,8 +83,9 @@ others, so the display is whole once every strip has come since the keyframe
 and stays whole from then on, each later strip changing its own rows. A
 keyframe starts the display over, since what the other strips hold is from
 before whatever the keyframe mends. A picture whose height is not a quarter
-of the display's, rounded up or with the last strip starting at the end, is
-refused as invalid.
+of the display's rounded up to a multiple of 16 is
+refused as invalid. A unit decoded whole, with `decode`, drops the display, so
+strips after it start one over.
 
 Remotex offers one tile for a display whose last strip would start past its
 last row (heights under 48, 65 to 95 and 129 to 143), which the Mac's encoder
@@ -333,7 +334,7 @@ read the planes from the module's memory without a copy:
 | 4, 5, 6 | the matrix, primaries and transfer as the stream codes them, `2` for unstated |
 | 7, 8, 9 | each plane's start in the module's memory, at the window's origin |
 | 10, 11, 12 | each plane's stride |
-| 13 | whether the picture is an IDR, where a stream can be joined; for a display, whether its strips are all the keyframe's |
+| 13 | whether the picture is an IDR, where a stream can be joined; for a display, whether its strips are all the keyframe's or intra pictures since, so that nothing before the keyframe is in it |
 
 A display's planes are the decoder's own and are written by the next
 `decodeStrip`, so they are good until the next `input` as a picture's are.

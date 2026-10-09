@@ -102,6 +102,8 @@ impl Decoder {
     /// picture, which [`Self::picture`] describes. Throws for a unit that does
     /// not decode, after which the stream waits for a keyframe.
     pub fn decode(&mut self) -> Result<bool, JsError> {
+        // A stream of whole pictures: strips from before it are no display's.
+        self.display = None;
         self.shown = false;
         let unit = std::mem::take(&mut self.input);
         let r = self.inner.decode(&unit);

@@ -143,6 +143,9 @@ describe("a display in strips", () => {
             shown++;
             expect([display!.width, display!.height, display!.format]).toEqual([width, rows(), 2]);
             expect(rustPictureRows(loaded, display!)).toEqual(expected);
+            // The strips after the first are predicted pictures here, not the
+            // intra ones of the Mac's keyframe.
+            expect(display!.keyframe).toBe(false);
           }
           expect(shown).toBeGreaterThan(0);
         }),
@@ -158,9 +161,9 @@ describe("a display in strips", () => {
         expect(() => decodeStrip(loaded, d, unit!.data, strip, displayRows)).toThrow(/not strip/);
       });
     }
-    // A last strip that starts at the display's end holds none of it.
+    // In bounds, but not the quarter of the rows rounded up to 16.
     withDecoder(1, (d) => {
-      expect(decodeStrip(loaded, d, unit!.data, 0, (STRIPS - 1) * height)).toBeNull();
+      expect(() => decodeStrip(loaded, d, unit!.data, 0, (STRIPS - 1) * height)).toThrow(/not strip/);
     });
   });
 
@@ -173,8 +176,25 @@ describe("a display in strips", () => {
       };
       for (const unit of units.slice(0, 4)) decodeStrip(loaded, d, unit.data, unit.strip, rows());
       whole(units[4]!);
-      const display = decodeStrip(loaded, d, units[5]!.data, units[5]!.strip, rows());
-      expect(display!.height).toBe(rows());
+      whole(units[5]!);
+      // The strips from before the whole picture are gone: the display is
+      // whole again after four new ones, and holds those alone.
+      const { width, height } = fixture();
+      const expected = [0, 1, 2].map(() => new Uint8Array(width * rows()));
+      withDecoder(1, (alone) => {
+        for (const unit of units.slice(0, 6)) decodeUnit(loaded, alone, unit.data);
+        for (const [i, unit] of units.slice(6, 10).entries()) {
+          const part = rustPictureRows(loaded, decodeUnit(loaded, alone, unit.data)!);
+          const at = unit.strip * height * width;
+          expected.forEach((plane, c) => plane.set(part[c]!.subarray(0, plane.length - at), at));
+          const display = decodeStrip(loaded, d, unit.data, unit.strip, rows());
+          if (i < 3) {
+            expect(display).toBeNull();
+          } else {
+            expect(rustPictureRows(loaded, display!)).toEqual(expected);
+          }
+        }
+      });
     });
   });
 });
