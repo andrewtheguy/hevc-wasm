@@ -13,8 +13,9 @@ rounds=${ROUNDS:-3}
 # PICTURES=all, the default, is no limit: neither decoder is then given a count.
 limit=() fflimit=()
 [ "${PICTURES:-all}" = all ] || { limit=("$PICTURES") fflimit=(-frames:v "$PICTURES"); }
-# The 1600×1000 Mac capture, dense screen content, and the 1080p camera video x265 coded in the Mac's shape.
-samples=${SAMPLES:-cap5 sample}
+# The 1600×1000 Mac capture, dense screen content, the 1080p camera video x265 coded in the Mac's shape, and 120
+# pictures of a Mac's 1440×900 display playing a busy animation.
+samples=${SAMPLES:-cap5 sample busy-1440x900}
 dir=$(bench/samples.sh $samples)
 
 # Waits, up to ten minutes, for the 1-minute load to fall under 1.5, so no run is timed against a build or the last run.
@@ -31,7 +32,7 @@ for s in $samples; do
   HEVC_WASM_DIR=$1 CHECK=1 bun bench/decode.ts "$dir/$s.h265" 4 "${limit[@]}" | sed "s|^|$s: |"
 done
 
-log=$(mktemp); trap 'rm -f "$log"' EXIT
+log=$(mktemp tmp/bench-run.XXXXXX); trap 'rm -f "$log"' EXIT
 for t in ${THREADS:-1 4}; do
   [ "$t" = 1 ] && cpus=${CPUS1:-2} || cpus=${CPUS4:-2-5}
   for s in $samples; do
