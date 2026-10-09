@@ -8,7 +8,7 @@
 
 use core::arch::wasm32::*;
 
-use crate::itx::Coded;
+use crate::itx::{place, Coded};
 use crate::tables::DCT32;
 
 #[inline(always)]
@@ -754,22 +754,17 @@ fn store_row<const N: usize>(r: &mut [i16], out: &[v128; 8]) {
 
 // ---- the inverse transform of a block with few coefficients ----
 
-/// The first pass down one column: the sum of its coefficients (in the
-/// `rows` of the block that have any) times their rows of the matrix,
+/// The first pass down one column: the sum of its coefficients, those of
+/// `list` from `i` on through `next`, times their rows of the matrix,
 /// rounded and clipped to 16 bits, eight outputs a vector.
 #[inline(always)]
-fn column<const N: usize>(d: &[i16], x: usize, rows: u32) -> [v128; 4] {
+fn column<const N: usize>(list: &[u32], next: &[u8; 64], mut i: usize) -> [v128; 4] {
     let mut acc = [i32x4_splat(0); 8];
-    let mut rs = rows;
-    while rs != 0 {
-        let k = rs.trailing_zeros() as usize;
-        rs &= rs - 1;
-        let c = d[k * N + x];
-        if c == 0 {
-            continue;
-        }
-        let cv = i16x8_splat(c);
-        let t = &DCT32[k * (32 / N)];
+    while i < list.len() {
+        let e = list[i];
+        let cv = i16x8_splat(e as i16);
+        let t = &DCT32[(place(e).1 * (32 / N)) & 31];
+        i = next[i & 63] as usize;
         for m in 0..N / 8 {
             let tv = load_i16x8(&t[8 * m..]);
             acc[2 * m] = i32x4_add(acc[2 * m], i32x4_extmul_low_i16x8(tv, cv));
@@ -784,15 +779,25 @@ fn column<const N: usize>(d: &[i16], x: usize, rows: u32) -> [v128; 4] {
     out
 }
 
-/// Both passes of an `N`×`N` block in proportion to its coefficients. The
+/// Both passes of an `N`×`N` block in proportion to its coefficients, the
+/// 64 at most of `list`, which are first chained by their columns. The
 /// coded columns go in pairs, as `dot` takes them: the first pass runs
 /// down each from its coefficients and writes the pair's two columns
 /// zipped, a 32-bit lane per row, next to the pair's two rows of the
 /// matrix zipped the same way; the second pass sums each row over the
 /// pairs with one splat and `N / 4` dots per pair.
 #[inline(always)]
-fn sparse<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], coded: Coded) {
+fn sparse<const N: usize>(list: &[u32], tmp: &mut [i16], res: &mut [i16], coded: Coded) {
     static NONE: [i16; 32] = [0; 32];
+    // Each column's coefficients from its last listed back to its first, the
+    // chain ending past the list.
+    let mut head = [0xffu8; 32];
+    let mut next = [0xffu8; 64];
+    for (i, &e) in list.iter().enumerate().take(64) {
+        let x = place(e).0;
+        next[i] = head[x];
+        head[x] = i as u8;
+    }
     let mut tabs = [[i16x8_splat(0); 8]; 8];
     let mut pairs = 0;
     let mut cs = coded.cols;
@@ -801,8 +806,8 @@ fn sparse<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], coded: Co
         cs &= cs - 1;
         let xb = if cs != 0 { cs.trailing_zeros() as usize } else { N };
         cs &= cs.wrapping_sub(1);
-        let a = column::<N>(d, xa, coded.rows);
-        let b = if xb < N { column::<N>(d, xb, coded.rows) } else { [i16x8_splat(0); 4] };
+        let a = column::<N>(list, &next, head[xa] as usize);
+        let b = if xb < N { column::<N>(list, &next, head[xb] as usize) } else { [i16x8_splat(0); 4] };
         let ra = &DCT32[xa * (32 / N)];
         let rb = if xb < N { &DCT32[xb * (32 / N)] } else { &NONE };
         let tab = &mut tabs[pairs];
@@ -827,14 +832,21 @@ fn sparse<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], coded: Co
     }
 }
 
-pub fn inverse_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) {
-    if !dst && n >= 8 && coded.count <= 2 * n as u32 && coded.cols.count_ones() <= 16 {
-        return match n {
-            8 => sparse::<8>(d, tmp, res, coded),
-            16 => sparse::<16>(d, tmp, res, coded),
-            _ => sparse::<32>(d, tmp, res, coded),
-        };
+/// The transform of a block with few coefficients, from their list; false
+/// for a block with more, which `dense_transform` takes.
+pub fn sparse_transform(list: &[u32], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) -> bool {
+    if dst || n < 8 || list.len() > 2 * n || coded.cols.count_ones() > 16 {
+        return false;
     }
+    match n {
+        8 => sparse::<8>(list, tmp, res, coded),
+        16 => sparse::<16>(list, tmp, res, coded),
+        _ => sparse::<32>(list, tmp, res, coded),
+    }
+    true
+}
+
+pub fn dense_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) {
     let (nz_w, nz_h) = coded.extent();
     let (nz_w, nz_h) = (nz_w.clamp(1, n), nz_h.clamp(1, n));
     match (n, dst) {

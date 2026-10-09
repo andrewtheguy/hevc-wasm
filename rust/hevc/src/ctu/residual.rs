@@ -201,45 +201,25 @@ impl<'a> Row<'a> {
             csbf_ctx: CTX_CSBF + if luma { 0 } else { 2 },
             gt1: [CTX_GT1 + if luma { 0 } else { 16 }, CTX_GT1 + if luma { 8 } else { 16 }],
             gt2: [CTX_GT2 + if luma { 0 } else { 4 }, CTX_GT2 + if luma { 2 } else { 4 }],
-            n,
             last_sb: sc.sb_inv[(last_y >> 2) * nsb + (last_x >> 2)] as usize,
             last_pos: sc.pos_inv[(last_y & 3) * 4 + (last_x & 3)] as usize,
         };
-        // The coefficients are zero between blocks (`reconstruct_residual`
-        // leaves them so), so the transform reads a zero wherever this block
-        // wrote nothing.
-        let co = &mut self.s.coeffs[..n * n];
+        // The coefficients are listed with their places, one after another,
+        // and the transform takes them from the list.
+        let list = &mut self.s.list[..n * n];
         let mut coded = itx::Coded::default();
-        let engine = match sub_blocks(cab.engine(), cab.cab, &blk, co, &dq, &mut coded) {
-            Ok(engine) => engine,
-            Err(e) => {
-                kernels::fill_i16(co, 0);
-                return Err(e);
-            }
-        };
+        let engine = sub_blocks(cab.engine(), cab.cab, &blk, list, &dq, &mut coded)?;
         self.cab.restore(engine);
         self.reconstruct_residual(x0, y0, log2, c_idx, coded);
         Ok(())
     }
 
-    /// §8.6.4 over the scaled coefficients, added to the picture; the
-    /// coefficients are cleared behind it.
+    /// §8.6.4 over the scaled coefficients, added to the picture.
     fn reconstruct_residual(&mut self, x0: usize, y0: usize, log2: usize, c_idx: usize, coded: itx::Coded) {
         let n = 1usize << log2;
         let dst = self.cu_intra && c_idx == 0 && n == 4;
         let s = &mut *self.s;
-        let co = &mut s.coeffs[..n * n];
-        itx::inverse_transform(co, &mut s.itx_tmp, &mut s.res, n, coded, dst);
-        if n == 4 {
-            kernels::fill_i16(co, 0);
-        } else {
-            let mut rows = coded.rows;
-            while rows != 0 {
-                let y = rows.trailing_zeros() as usize;
-                rows &= rows - 1;
-                kernels::fill_i16(&mut co[y * n..y * n + n], 0);
-            }
-        }
+        itx::inverse_transform(&s.list[..(coded.count as usize).min(n * n)], &mut s.coeffs[..n * n], &mut s.itx_tmp, &mut s.res, n, coded, dst);
         let plane = self.pic.planes[c_idx];
         // SAFETY: the block is this row's.
         let out = unsafe { plane.block_mut(x0, y0, n, n) };
@@ -257,7 +237,6 @@ struct Block {
     csbf_ctx: usize,
     gt1: [usize; 2],
     gt2: [usize; 2],
-    n: usize,
     /// The scan positions of the sub-block holding the block's last
     /// coefficient, and of the coefficient in it.
     last_sb: usize,
@@ -274,10 +253,9 @@ struct SubBlock<'s> {
     gt2_set: usize,
     /// The scan inside the sub-block.
     pos: &'s [(u8, u8); 16],
-    /// The sub-block's top left in the block, and the block's width.
+    /// The sub-block's top left in the block.
     x: usize,
     y: usize,
-    n: usize,
     /// The scan position of the block's last coefficient, when it is in
     /// this sub-block; 16 otherwise.
     last_pos: usize,
@@ -291,7 +269,7 @@ struct SubBlock<'s> {
 /// engine's registers stay in registers across the sub-blocks that are not
 /// coded.
 #[inline(never)]
-fn sub_blocks(engine: Engine, cab: &mut Cabac, blk: &Block, co: &mut [i16], dq: &Dequant, coded: &mut itx::Coded) -> Result<Engine> {
+fn sub_blocks(engine: Engine, cab: &mut Cabac, blk: &Block, list: &mut [u32], dq: &Dequant, coded: &mut itx::Coded) -> Result<Engine> {
     let mut v = View::new(engine, cab);
     let cab = &mut v;
     // The coded flags on a 9×9 grid with a zero border, so that a sub-block's
@@ -316,11 +294,10 @@ fn sub_blocks(engine: Engine, cab: &mut Cabac, blk: &Block, co: &mut [i16], dq: 
             pos: blk.sc.pos,
             x: (xs as usize) << 2,
             y: (ys as usize) << 2,
-            n: blk.n,
             last_pos: if i == blk.last_sb { blk.last_pos } else { 16 },
             infer_dc,
         };
-        let (engine, c1_next) = sub_block(cab.engine(), cab.cab, &sb, co, dq, c1, coded)?;
+        let (engine, c1_next) = sub_block(cab.engine(), cab.cab, &sb, list, dq, c1, coded)?;
         cab.restore(engine);
         c1 = c1_next;
     }
@@ -328,13 +305,13 @@ fn sub_blocks(engine: Engine, cab: &mut Cabac, blk: &Block, co: &mut [i16], dq: 
 }
 
 /// One coded sub-block after its flag (§7.3.8.11): the significance flags,
-/// the levels and the signs, each coefficient scaled as it lands in `co`;
-/// `coded` grows to cover them. `c1` is the greater-than-1 context the previous
+/// the levels and the signs, each coefficient scaled as it is added to
+/// `list` after the `coded.count` there; `coded` grows to cover them. `c1` is the greater-than-1 context the previous
 /// sub-block left, and the one this leaves is returned with the engine. Out
 /// of line, so that the engine's registers and the loops' few counters get
 /// the registers of a function of their own.
 #[inline(never)]
-fn sub_block(engine: Engine, cab: &mut Cabac, sb: &SubBlock, co: &mut [i16], dq: &Dequant, c1_in: usize, coded: &mut itx::Coded) -> Result<(Engine, usize)> {
+fn sub_block(engine: Engine, cab: &mut Cabac, sb: &SubBlock, list: &mut [u32], dq: &Dequant, c1_in: usize, coded: &mut itx::Coded) -> Result<(Engine, usize)> {
     let mut v = View::new(engine, cab);
     let cab = &mut v;
     // significant_coeff_flag, highest position first, as a bit per position.
@@ -385,6 +362,7 @@ fn sub_block(engine: Engine, cab: &mut Cabac, sb: &SubBlock, co: &mut [i16], dq:
     // coeff_abs_level_remaining
     let mut rice = 0u32;
     let (mut cols, mut rows) = (coded.cols, coded.rows);
+    let listed = coded.count as usize;
     let mut rest = sig;
     for k in 0..nsig {
         let np = (31 - rest.leading_zeros()) as usize;
@@ -404,7 +382,9 @@ fn sub_block(engine: Engine, cab: &mut Cabac, sb: &SubBlock, co: &mut [i16], dq:
         if base == threshold {
             // The level is clipped to 16 bits (§7.4.9.11); a magnitude past
             // that clips the same wherever past it is.
-            abs = (abs as u32).saturating_add(coeff_remaining(cab, rice)?).min(32768) as i32;
+            let (engine, rest) = coeff_remaining(cab.engine(), cab.cab, rice)?;
+            cab.restore(engine);
+            abs = (abs as u32).saturating_add(rest).min(32768) as i32;
             if abs > 3 * (1 << rice) {
                 rice = (rice + 1).min(4);
             }
@@ -415,27 +395,32 @@ fn sub_block(engine: Engine, cab: &mut Cabac, sb: &SubBlock, co: &mut [i16], dq:
         let (xc, yc) = (sb.x + sb.pos[np & 15].0 as usize, sb.y + sb.pos[np & 15].1 as usize);
         cols |= 1 << xc;
         rows |= 1 << yc;
-        co[yc * sb.n + xc] = dq.apply(v.clamp(-32768, 32767));
+        list[listed + k] = itx::entry(xc, yc, dq.apply(v.clamp(-32768, 32767)));
     }
     *coded = itx::Coded { cols, rows, count: coded.count + nsig as u32 };
     Ok((cab.engine(), c1))
 }
 
-/// `coeff_abs_level_remaining` (§9.3.3.11).
-#[inline(always)]
-fn coeff_remaining(cab: &mut View, rice: u32) -> Result<u32> {
+/// `coeff_abs_level_remaining` (§9.3.3.11), with the engine after it. Out of
+/// line: few coefficients have one, and its two loops of bypass bins are
+/// then no part of `sub_block`.
+#[inline(never)]
+fn coeff_remaining(engine: Engine, cab: &mut Cabac, rice: u32) -> Result<(Engine, u32)> {
+    let mut v = View::new(engine, cab);
+    let cab = &mut v;
     let prefix = cab.bypass_ones(32);
     if prefix >= 32 {
         return Err(Error::invalid("a coefficient prefix too long"));
     }
-    if prefix < 3 {
-        Ok((prefix << rice) + cab.bypass_bits(rice))
+    let rest = if prefix < 3 {
+        (prefix << rice) + cab.bypass_bits(rice)
     } else {
         let l = prefix - 3;
         if l + rice > 31 {
             return Err(Error::invalid("a coefficient suffix too long"));
         }
-        Ok((((1u32 << l) + 2) << rice).saturating_add(cab.bypass_bits(l + rice)))
-    }
+        (((1u32 << l) + 2) << rice).saturating_add(cab.bypass_bits(l + rice))
+    };
+    Ok((cab.engine(), rest))
 }
 
