@@ -184,11 +184,24 @@ picture, lower better:
 | 4 threads, ms | 2.2 | 2.2 | 2.3 |
 | 4 threads, M cycles | 13.2 | 13.1 | 19.0 |
 
+| 1440×900 Mac capture of a busy animation, 120 pictures | this decoder | release 0.0.7 | FFmpeg, native |
+|---|---|---|---|
+| 1 thread, ms | 27.8 | 28.1 | 35.0 |
+| 1 thread, M cycles | 110.5 | 109.4 | 104.5 |
+| 1 thread, M instructions | 224.3 | 219.8 | 179.4 |
+| 4 threads, ms | 15.5 | 14.8 | 23.9 |
+| 4 threads, M cycles | 115.5 | 115.0 | 106.6 |
+
 On one thread the module takes 11% fewer cycles than native FFmpeg on the
 capture and 40% fewer on the video, where most of a picture is the picture
 before and the module neither decodes nor copies it. FFmpeg's four threads
 each decode a picture of their own, where the module's decode one picture's
 rows, so its four-thread time matches the module's on both, for more cycles.
+The busy animation, where most of every picture changes, is the other way
+about: a picture costs nearly three times the first capture's, FFmpeg takes
+5% fewer cycles than the module on one thread, and the module is no faster
+than release 0.0.7, by 2% more instructions. FFmpeg's ms there is a
+process's wall time over only 120 pictures, start-up included.
 
 On the Mac's dense screen content the decoder spends its time where the
 stream does: CABAC residual parsing and
@@ -270,7 +283,7 @@ for wasm32. How it is put together, and where its time goes, is in
 The routine measurement of a change is `bench/run.sh [BUILD...]`, some
 minutes: each BUILD is a directory holding a build of the module, `build/out`
 when none is named, or the word `ffmpeg` for the host's native decoder. It
-decodes the capture and the video above, `cap5` and `sample`, which
+decodes the three streams above, `cap5`, `sample` and `busy-1440x900`, which
 `bench/samples.sh` copies once from the `bench` folder of the artifacts drive
 to `tmp/bench`, and no run reads the drive; `SAMPLES` names others of that
 folder to decode instead, and `PICTURES` cuts each short. The script does
