@@ -5,7 +5,7 @@ use crate::bits::BitReader;
 use crate::error::{Error, Result};
 
 /// `MaxLumaPs` of level 6.2 (Table A.8), the largest of any level.
-const MAX_LUMA_PS: u64 = 35_651_584;
+pub(crate) const MAX_LUMA_PS: u64 = 35_651_584;
 
 fn unsupported(what: &str) -> Error {
     Error::unsupported(format!("the stream uses {what}, which is not the Mac's shape"))

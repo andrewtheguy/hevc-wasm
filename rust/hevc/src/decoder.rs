@@ -24,6 +24,8 @@ pub struct Decoded {
     pub colour: Colour,
     /// An IDR picture: the stream can be joined here.
     pub keyframe: bool,
+    /// A picture predicted from no other, as an IDR is.
+    pub intra: bool,
 }
 
 /// A picture the next ones may refer to.
@@ -313,7 +315,7 @@ impl Decoder {
         let pic = Arc::new(pic);
         self.dpb.push(Reference { pic: pic.clone(), poc });
         let (w, h) = sps.output_size();
-        Ok(Some(Decoded { picture: pic, window: [sps.conf_win[0], sps.conf_win[2], w, h], colour: sps.colour, keyframe: idr }))
+        Ok(Some(Decoded { picture: pic, window: [sps.conf_win[0], sps.conf_win[2], w, h], colour: sps.colour, keyframe: idr, intra: sh.intra }))
     }
 
     /// A picture buffer of the sequence's size: a pooled one, or a new one.

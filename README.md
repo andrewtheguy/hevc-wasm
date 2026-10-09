@@ -46,7 +46,7 @@ until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.6.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.7.tar.gz"
 ```
 
 ## Testing
@@ -64,7 +64,8 @@ threads as workers that each run an instance of it. The `mac-*` streams in
 `-f framemd5`, recorded in `test/data/reference.json`, on one thread and on
 four; the other streams there, of other shapes, must be refused by name. The
 tests also cover where the planes are in the memory, joining a stream before
-its keyframe, two decoders side by side, and garbage units.
+its keyframe, two decoders side by side, garbage units, and a display put
+together from its strips.
 
 A run needs no ffmpeg. `bun run fixtures` regenerates the streams and their
 reference with the host's ffmpeg and libx265 from the specs in
@@ -108,9 +109,11 @@ takes it as a new version and checksum in `src/hevc_wasm.rs`.
 `rust/` holds the decoder, written for the one shape of stream the Mac sends
 and nothing else of HEVC: 4:4:4 at 8 bits, one slice per picture with its
 coding tree block rows coded as a wavefront, I and P pictures with short-term
-references. Any other stream is refused by name (tiles, B pictures, weighted
-prediction, PCM, scaling lists, transform skip, long-term references, other
-chroma formats or bit depths). Its decoding arithmetic was transcribed from
+references. Any other stream is refused by name (HEVC's tiles, B pictures,
+weighted prediction, PCM, scaling lists, transform skip, long-term references,
+other chroma formats or bit depths). A display the Mac sends as four strips
+(`tilesPerFrame` 4 in remotex's offer) is that same shape, each picture a strip
+of the display, and the decoder puts the display together from them. Its decoding arithmetic was transcribed from
 [rusty_h265](https://github.com/Remade-With-Rust/rusty_h265) 0.6.0
 (Apache-2.0, `rust/hevc/LICENSE`), which decodes 4:2:0 only; the 4:4:4 handling,
 the byte planes and the threading are this repository's.
@@ -135,8 +138,8 @@ the byte planes and the threading are this repository's.
   and the flags unrolled by position.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
-  (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode` and
-  `picture`. `picture` describes the picture in sixteen numbers: its size, the
+  (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode`,
+  `decodeStrip` for a display in strips, and `picture`. `picture` describes the picture in sixteen numbers: its size, the
   chroma layout, the colour the stream states, each plane's address and
   stride in the module's memory, and whether it is a keyframe, so the paint
   worker uploads the planes to WebGL from the module's shared memory

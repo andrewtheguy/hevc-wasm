@@ -15,6 +15,7 @@ releasing and the measurements against the release before.
 remotex's decode worker (frontend/src/hevcWasm.worker.ts)
    │  input(size)   the access unit's bytes go into the module's memory
    │  decode()      true when the unit completed a picture; throws when it does not decode
+   │  decodeStrip() the same for a strip of a display: true when the display is whole
    │  picture()     sixteen numbers: size, layout, colour, each plane's address and stride, keyframe
    ▼
 hevc-web, the wasm-bindgen module ── hevc::Decoder
@@ -60,6 +61,36 @@ first one decode to nothing. A new SPS of another size takes effect at the
 next IDR; a non-IDR picture whose size differs from its references' is
 refused.
 
+### A display in strips
+
+Offered four tiles (`tilesPerFrame` 4 in remotex's offer), the Mac sends the
+display as four strips: each the
+display's whole width and a quarter of its height rounded up to a multiple of
+16, lying top to bottom a strip's height apart, so the last runs past the
+display's last row. They are not HEVC's tiles. The strips are pictures of one
+stream with one set of parameter sets, which give the strip's size, and one
+decoding order: a keyframe is an IDR of strip 0 and an intra picture of each
+other strip, and a picture after it may refer to an earlier one of any strip. So
+one decoder takes every strip's access units in that order, as it takes a
+stream of whole pictures, and nothing of the decoding differs.
+
+Which strip a picture is, and how many rows the display has, are not in the
+stream: the Mac sends each strip under an RTP source of its own, and the
+parameter sets know only the strip. The caller gives both with the unit, and
+`strips` copies the decoded strip to its place in the display, three planes
+of the display's size. A frame carries the strips that changed and no
+others, so the display is whole once every strip has come since the keyframe
+and stays whole from then on, each later strip changing its own rows. A
+keyframe starts the display over, since what the other strips hold is from
+before whatever the keyframe mends. A picture whose height is not a quarter
+of the display's rounded up to a multiple of 16 is
+refused as invalid. A unit decoded whole, with `decode`, drops the display, so
+strips after it start one over.
+
+Remotex offers one tile for a display whose last strip would start past its
+last row (heights under 48, 65 to 95 and 129 to 143), which the Mac's encoder
+fails on in four; that stream is whole pictures, and `decode` takes it.
+
 ### What a failure means
 
 `decode` returns an `Invalid` error for a malformed unit, or one that refers
@@ -100,6 +131,7 @@ them.
 | `itx` | scaling and the inverse transforms, in 16 bits, as partial butterflies |
 | `deblock` | the deblocking filter, a coding tree block at a time |
 | `sao` | sample adaptive offset, in place, a coding tree block at a time |
+| `strips` | the display put together from the four strips the Mac may send it in |
 | `kernels` | the sample loops, plain Rust; `kernels::simd128` the same loops in 128-bit vectors |
 | `tables` | the specification's constant tables, built at compile time |
 | `error` | `Invalid` and `Unsupported` |
@@ -281,7 +313,8 @@ two loaders differ only in where the glue comes from:
 | `new Decoder(threads)` | one stream's decoder, its rows on `threads` of the pool, or on the caller for one |
 | `decoder.input(size)` | the address of `size` bytes for the next access unit; releases the previous picture |
 | `decoder.decode()` | decodes the unit written there: true when it completed a picture; throws for a unit that does not decode |
-| `decoder.picture()` | the address of sixteen `i32`s describing the picture |
+| `decoder.decodeStrip(strip, rows)` | decodes the unit written there as strip `strip`, from 0 at the top, of a display of `rows` rows: true when the display has every strip since its keyframe; throws as `decode` does, and for a picture that is not a strip of such a display |
+| `decoder.picture()` | the address of sixteen `i32`s describing the picture, or after `decodeStrip` the display |
 | `decoder.free()` | wasm-bindgen's |
 
 A page has no threads to spawn, so the pool's threads are seats: a worker of
@@ -301,7 +334,10 @@ read the planes from the module's memory without a copy:
 | 4, 5, 6 | the matrix, primaries and transfer as the stream codes them, `2` for unstated |
 | 7, 8, 9 | each plane's start in the module's memory, at the window's origin |
 | 10, 11, 12 | each plane's stride |
-| 13 | whether the picture is an IDR, where a stream can be joined |
+| 13 | whether the picture is an IDR, where a stream can be joined; for a display, whether its strips are all the keyframe's or intra pictures since, so that nothing before the keyframe is in it |
+
+A display's planes are the decoder's own and are written by the next
+`decodeStrip`, so they are good until the next `input` as a picture's are.
 
 The memory is shared and imported, so each thread's instance is given the
 one memory, with a maximum of 1 GiB; the build is `+simd128,+atomics,
@@ -342,8 +378,10 @@ module on a shared memory, its pool's threads as workers. The two `mac-*`
 fixtures, x265's nearest shape to the Mac's, must decode to native FFmpeg's
 digests on one thread and four; the streams of other shapes must be refused
 by name. The tests also cover where the planes are in the memory, joining a
-stream before its keyframe, two decoders side by side, and garbage units
-with and without start codes. The fixtures and their reference are
+stream before its keyframe, two decoders side by side, garbage units
+with and without start codes, and a display in strips: a fixture's pictures
+taken as strips, strip 0 at each keyframe, must come out as those pictures
+one under another, cut at the display's last row. The fixtures and their reference are
 committed, regenerated by `bun run fixtures` from `test/fixtures.ts`.
 
 ## Where the time goes
