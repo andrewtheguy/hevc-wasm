@@ -80,6 +80,19 @@ transform, two rows per pass and a widened matrix for multiply-adds.
   been run on Apple silicon, where V8 lowers SIMD128 to NEON differently and
   the memory system differs; the capture's transform and the video's
   memory-bound copy may rank differently there.
+- **A display in strips is not benchmarked as the page decodes it.**
+  `bench/run.sh` hands every unit to `decode`, a strip as if it were a whole
+  picture, where remotex's page calls `decodeStrip` and reads the display at a
+  frame's last strip. So the placing of each strip in the display and the
+  reading of it are not in any measurement of the `strips-*` samples, which
+  are of decoding alone, and a picture there is a strip, up to four to a
+  frame. What it wants: each unit's strip number beside a sample, read from
+  the references its slice header names as remotex's
+  `tests/hp_strips_video.py` reads them; `bench/decode.ts` decoding by
+  `decodeStrip` with it and reading the display once a frame; and the check
+  comparing each strip as placed with FFmpeg's digest of it. FFmpeg has no
+  such step, so the comparison it gives is the module in strips against the
+  module decoding alone.
 - **The native build runs scalar fallbacks**: the kernels are written for
   `core::arch::wasm32`. `hevc-bench` is for correctness, not speed. A native
   SIMD port is not a goal unless the decoder gets a native user.
