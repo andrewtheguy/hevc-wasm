@@ -72,6 +72,10 @@ pub struct Decoder {
     /// The picture the last unit decoded to, held until the next unit so the
     /// page can read its planes.
     held: Option<hevc::Decoded>,
+    /// The display the stream's strips are put together in, where it comes in
+    /// strips, and whether that is what the last unit completed.
+    display: Option<hevc::Display>,
+    shown: bool,
     picture: [i32; PICTURE_FIELDS],
 }
 
@@ -81,7 +85,7 @@ impl Decoder {
     /// the caller for one.
     #[wasm_bindgen(constructor)]
     pub fn new(threads: usize) -> Decoder {
-        Decoder { inner: hevc::Decoder::new(threads), input: Vec::new(), held: None, picture: [0; PICTURE_FIELDS] }
+        Decoder { inner: hevc::Decoder::new(threads), input: Vec::new(), held: None, display: None, shown: false, picture: [0; PICTURE_FIELDS] }
     }
 
     /// Room for an access unit of `size` bytes in this module's memory, where
@@ -98,6 +102,7 @@ impl Decoder {
     /// picture, which [`Self::picture`] describes. Throws for a unit that does
     /// not decode, after which the stream waits for a keyframe.
     pub fn decode(&mut self) -> Result<bool, JsError> {
+        self.shown = false;
         let unit = std::mem::take(&mut self.input);
         let r = self.inner.decode(&unit);
         self.input = unit;
@@ -106,7 +111,31 @@ impl Decoder {
         Ok(self.held.is_some())
     }
 
-    /// The picture the last unit decoded to, in sixteen numbers: its width and
+    /// Decode the unit written into [`Self::input`] as strip `strip`, from 0
+    /// at the top, of a display of `rows` rows that the Mac sends in four:
+    /// true when the display has every strip since its keyframe, and
+    /// [`Self::picture`] then describes the display, not the strip. Throws as
+    /// [`Self::decode`] does, and for a picture that is not a strip of such a
+    /// display.
+    #[wasm_bindgen(js_name = decodeStrip)]
+    pub fn decode_strip(&mut self, strip: usize, rows: usize) -> Result<bool, JsError> {
+        self.shown = false;
+        let unit = std::mem::take(&mut self.input);
+        let r = self.inner.decode(&unit);
+        self.input = unit;
+        let Some(part) = r.map_err(|e| JsError::new(&e.to_string()))? else {
+            return Ok(false);
+        };
+        if let Err(e) = hevc::Display::place(&mut self.display, strip, rows, &part) {
+            self.display = None;
+            return Err(JsError::new(&e.to_string()));
+        }
+        self.shown = self.display.as_ref().is_some_and(hevc::Display::whole);
+        Ok(self.shown)
+    }
+
+    /// The picture the last unit decoded to, or the display it completed, in
+    /// sixteen numbers: its width and
     /// height, `2` for 4:4:4, the colour range (`2` full, `1` limited, which
     /// an unstated one means), the matrix, primaries and transfer as the
     /// stream codes them (`2` for unstated), each plane's start in this
@@ -116,7 +145,20 @@ impl Decoder {
     pub fn picture(&mut self) -> *const i32 {
         let p = &mut self.picture;
         *p = [0; PICTURE_FIELDS];
-        if let Some(d) = &self.held {
+        if let Some(d) = self.display.as_ref().filter(|_| self.shown) {
+            p[0] = d.planes[0].width as i32;
+            p[1] = d.planes[0].height as i32;
+            p[2] = 2;
+            p[3] = if d.colour.full_range { 2 } else { 1 };
+            p[4] = d.colour.matrix as i32;
+            p[5] = d.colour.primaries as i32;
+            p[6] = d.colour.transfer as i32;
+            for (i, plane) in d.planes.iter().enumerate() {
+                p[7 + i] = plane.data.as_ptr() as i32;
+                p[10 + i] = plane.stride as i32;
+            }
+            p[13] = d.keyframe() as i32;
+        } else if let Some(d) = &self.held {
             let [x, y, w, h] = d.window;
             p[0] = w as i32;
             p[1] = h as i32;

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import { accessUnits } from "./annexb";
 import { type Fixture, type FixtureName, loadFixtures } from "./fixtures";
-import { decodeUnit, type LoadedRust, loadRust, type RustDecoder, type RustPicture, rustPictureMd5 } from "./rust";
+import { decodeStrip, decodeUnit, type LoadedRust, loadRust, type RustDecoder, type RustPicture, rustPictureMd5, rustPictureRows } from "./rust";
 
 // The pool remotex would start, at most.
 const POOL = 4;
@@ -102,6 +102,80 @@ describe("the Mac's shape of stream", () => {
         expect(got.b).toEqual(b.md5s);
       }),
     );
+  });
+});
+
+describe("a display in strips", () => {
+  // The fixture's pictures stand for strips, as the Mac orders them: a
+  // keyframe is strip 0's, and the strips follow it in turn. The display is
+  // 40 rows short of four strips, as the Mac's last strip runs past the end.
+  const STRIPS = 4;
+  const fixture = () => fixtures["mac-352x256"];
+  const rows = () => STRIPS * fixture().height - 40;
+
+  /** Each unit's strip: 0 at a keyframe, then in turn. */
+  function strips(): { data: Uint8Array; strip: number; keyframe: boolean }[] {
+    let since = 0;
+    return accessUnits(fixture().stream).map((unit) => {
+      since = unit.keyframe ? 0 : since + 1;
+      return { data: unit.data, strip: since % STRIPS, keyframe: unit.keyframe };
+    });
+  }
+
+  for (const threads of [1, POOL]) {
+    test(`is its strips' pictures one under another, whole once every strip has come since the keyframe, on ${threads} thread(s)`, () => {
+      const { width, height } = fixture();
+      withDecoder(1, (alone) =>
+        withDecoder(threads, (d) => {
+          const expected = [0, 1, 2].map(() => new Uint8Array(width * rows()));
+          let placed = 0;
+          let shown = 0;
+          for (const unit of strips()) {
+            const part = rustPictureRows(loaded, decodeUnit(loaded, alone, unit.data)!);
+            const at = unit.strip * height * width;
+            expected.forEach((plane, i) => plane.set(part[i]!.subarray(0, plane.length - at), at));
+            placed = (unit.keyframe ? 0 : placed) | (1 << unit.strip);
+            const display = decodeStrip(loaded, d, unit.data, unit.strip, rows());
+            if (placed !== 15) {
+              expect(display).toBeNull();
+              continue;
+            }
+            shown++;
+            expect([display!.width, display!.height, display!.format]).toEqual([width, rows(), 2]);
+            expect(rustPictureRows(loaded, display!)).toEqual(expected);
+          }
+          expect(shown).toBeGreaterThan(0);
+        }),
+      );
+    });
+  }
+
+  test("is refused of a height its strips are not quarters of, and of a fifth strip", () => {
+    const { height } = fixture();
+    const [unit] = strips();
+    for (const [strip, displayRows] of [[0, STRIPS * height + 1], [0, (STRIPS - 1) * height - 1], [STRIPS, rows()]] as const) {
+      withDecoder(1, (d) => {
+        expect(() => decodeStrip(loaded, d, unit!.data, strip, displayRows)).toThrow(/not strip/);
+      });
+    }
+    // A last strip that starts at the display's end holds none of it.
+    withDecoder(1, (d) => {
+      expect(decodeStrip(loaded, d, unit!.data, 0, (STRIPS - 1) * height)).toBeNull();
+    });
+  });
+
+  test("a decoder goes from strips to whole pictures and back", () => {
+    const units = strips();
+    withDecoder(1, (d) => {
+      const whole = (unit: { data: Uint8Array }) => {
+        const picture = decodeUnit(loaded, d, unit.data)!;
+        expect(picture.height).toBe(fixture().height);
+      };
+      for (const unit of units.slice(0, 4)) decodeStrip(loaded, d, unit.data, unit.strip, rows());
+      whole(units[4]!);
+      const display = decodeStrip(loaded, d, units[5]!.data, units[5]!.strip, rows());
+      expect(display!.height).toBe(rows());
+    });
   });
 });
 

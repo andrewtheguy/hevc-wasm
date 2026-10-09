@@ -7,6 +7,9 @@
 //! of bytes at the coded size, with the window to show and the colour the
 //! stream states. A picture's rows decode in parallel on rayon's pool when the
 //! decoder is made with threads.
+//!
+//! A display the Mac sends in strips is the same stream, each picture a strip
+//! of it, which [`Display`] puts together.
 
 mod bits;
 mod cabac;
@@ -23,6 +26,7 @@ mod ps;
 mod sao;
 mod shared;
 mod slice;
+mod strips;
 mod tables;
 mod wavefront;
 
@@ -31,3 +35,4 @@ pub use nal::access_units;
 pub use error::{Error, Result};
 pub use pic::{Picture, Plane};
 pub use ps::Colour;
+pub use strips::{Display, STRIPS};

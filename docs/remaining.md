@@ -122,3 +122,8 @@ displays).
   checked by hand with `hevc-bench` and the Node bench under `tmp/`. A
   fixture nearer the Mac's size, and a size change at an IDR mid-stream,
   belong in `test/`.
+- **Strips.** The fixtures taken as strips are x265's, whose pictures refer
+  to each other as a whole picture's do. The Mac's own four-strip streams,
+  with their keyframe of one IDR and three intra pictures, are checked by
+  hand: captures at 1280×800, 1440×900 and 1920×1080 decode bit for bit as
+  FFmpeg decodes them, and come out of the module as the display.

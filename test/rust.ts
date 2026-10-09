@@ -19,6 +19,7 @@ interface Glue {
 export interface RustDecoder {
   input(size: number): number;
   decode(): boolean;
+  decodeStrip(strip: number, rows: number): boolean;
   picture(): number;
   free(): void;
 }
@@ -89,9 +90,18 @@ export async function loadRust(threads: number): Promise<LoadedRust> {
 
 /** Feeds `unit` to `decoder` and reads the picture it decoded to, if any. */
 export function decodeUnit(loaded: LoadedRust, decoder: RustDecoder, unit: Uint8Array): RustPicture | null {
+  return decoded(loaded, decoder, unit, () => decoder.decode());
+}
+
+/** Feeds `unit` to `decoder` as strip `strip` of a display of `rows` rows, and reads the display if it is whole. */
+export function decodeStrip(loaded: LoadedRust, decoder: RustDecoder, unit: Uint8Array, strip: number, rows: number): RustPicture | null {
+  return decoded(loaded, decoder, unit, () => decoder.decodeStrip(strip, rows));
+}
+
+function decoded(loaded: LoadedRust, decoder: RustDecoder, unit: Uint8Array, decode: () => boolean): RustPicture | null {
   const at = decoder.input(unit.length);
   new Uint8Array(loaded.memory.buffer, at, unit.length).set(unit);
-  if (!decoder.decode()) return null;
+  if (!decode()) return null;
   const p = new Int32Array(loaded.memory.buffer, decoder.picture(), 16);
   return {
     width: p[0]!,
@@ -104,6 +114,18 @@ export function decodeUnit(loaded: LoadedRust, decoder: RustDecoder, unit: Uint8
     planes: [0, 1, 2].map((i) => ({ address: p[7 + i]!, stride: p[10 + i]! })),
     keyframe: p[13] === 1,
   };
+}
+
+/** The picture's three planes, rows packed, copied out of the module's memory. */
+export function rustPictureRows(loaded: LoadedRust, picture: RustPicture): Uint8Array[] {
+  const heap = new Uint8Array(loaded.memory.buffer);
+  return picture.planes.map((plane) => {
+    const rows = new Uint8Array(picture.width * picture.height);
+    for (let y = 0; y < picture.height; y++) {
+      rows.set(heap.subarray(plane.address + y * plane.stride, plane.address + y * plane.stride + picture.width), y * picture.width);
+    }
+    return rows;
+  });
 }
 
 /** `ffmpeg -f framemd5`'s digest of the picture: its three planes, rows packed. */
