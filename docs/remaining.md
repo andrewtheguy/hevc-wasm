@@ -9,69 +9,84 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 ## Speed
 
-### The capture
+The streams are the Mac's own, taken on 2026-10-12: seven scenes of a
+1440×900 display in four strips, at 1x and at 2x, a picture being a strip.
+Per picture on one thread, release 0.0.8 against native FFmpeg
+(`bench/run.sh`, `perf stat`):
 
-Nothing untried is left on the capture's three hot spots, the sub-block walk
-(14%), the context-coded bin and the transform's row pass (21%): each is at
-the shape of the loop V8 compiles, the bin's cost being the dependency chain
-from one bin's range to the next's. Measured and no faster, so not to be
-tried again as they were: for the walk, an inner loop or a function of their
-own for the uncoded sub-blocks, with or without the two contexts' models in
-registers; for the bin, carrying the model from one bin to the next where
-the contexts repeat, and a renormalisation written as a select, which LLVM
-turns into a shift by the flag and not a conditional move; for the
-transform, two rows per pass and a widened matrix for multiply-adds.
+| | 1x, M cycles | FFmpeg | 2x, M cycles | FFmpeg |
+|---|---|---|---|---|
+| A still page | 1.8 | 2.4 | 4.2 | 8.9 |
+| A window dragged | 2.0 | 2.6 | 5.9 | 9.5 |
+| A quarter of the display in a loop | 2.7 | 3.2 | 7.7 | 11.0 |
+| Typing in a terminal | 2.3 | 3.0 | 5.9 | 10.6 |
+| Chrome scrolling an article | 4.9 | 4.9 | 13.5 | 15.5 |
+| The same four times as fast | 10.1 | 8.8 | 25.4 | 24.0 |
+| A video over the whole display | 21.0 | 17.1 | 41.9 | 34.2 |
 
-### The video
+The module is ahead wherever most of a picture is the picture before, and
+behind where a picture is new: by 23% on the video at either density, by 15%
+and 6% on the fast scroll. Those are also the streams that cost anything. The
+video at 2x is 12.8 ms a strip on one thread, 51 ms for a frame's four where
+30 frames a second leave 33 ms, and 5.0 ms a strip on four threads.
 
-1. **The row-start copy**, about 10% with the wavefront's waits. A third of
-   the coding tree blocks are still copied: 18% of them because a coding
-   unit wrote samples, 10% because the deblocking of an edge reached into
-   them and nothing else did, 6% for their SAO. The deblocked ones are
-   copied whole for the three samples along one side the filter can change;
-   copying those lines or columns alone is the untried lever. The copy a
-   stripe ahead of the decode rather than whole rows ahead measured slower
-   at every width, one coding tree block to eight, by vector or by
-   `memory.copy`: the copy is bound by the reference's lines arriving, not
-   by the picture's being touched twice. The capture has almost no still
-   blocks (13 of 1,600) and fifteen references between the first and a free
-   buffer, so it gains nothing.
+In the order the work would go:
 
-2. **`coding_quadtree`**, 10.3%, is a 20 KB function with no hot spot: the
-   recursion, the skip and merge flags, the map fills. Moving the coding unit
-   out into a function of its own makes no measurable difference. What is
-   left is the fills: the `memory.fill` calls into V8 (`memory_fill_wrapper`)
-   are not free even at the word size, and the 4×4-granular maps (prediction
-   mode, motion, QP, transform depth) could shrink to the 8×8 the smallest
-   coding unit has where nothing reads them finer.
+1. **A profile of the video and of the fast scroll at 2x**, which there is
+   none of. Every ranking before this one was of `cap5`, a 1600×1000 capture
+   in which 140 of 236 pictures decode to the picture before them at 37 KB
+   each, or of an x265 video, and neither is what the Mac sends of a display
+   that moves. Release 0.0.8, 8% fewer cycles than 0.0.7 on `cap5`, is 3%
+   fewer on the video and 2% or less on every other stream. What the profile is expected to rank, and has not: the parsing
+   and the transforms of a strip's 24 KB, the intra prediction of the rows a
+   scroll brings in, and the in-loop filters over a picture that all changed.
 
-3. **Intra prediction's reference gathering**, 9.6%: about 950 cycles a call
-   for 1,166 calls a picture, most of it collecting the neighbouring samples
-   with an availability check per four samples and a byte-wise substitution of
-   the unavailable ones. The availability of the left column and top row is a
-   per-block mask that is computable once; the gather and the substitution
-   then run by vector.
+2. **Threads on a small picture.** Four threads cost more than one wherever a
+   strip is light: a still page at 1x is 1.8 M cycles and a 0.26 ms median on
+   one thread, 2.4 M and 0.48 ms on four, and so with the drag, the loop and
+   the typing, 20% to 40% more cycles. They pay only on the heavy streams:
+   2.6× on the video at 2x, 2.1× at 1x, 1.6× on the scroll at 2x. Whether a
+   strip under some size should be decoded on the calling thread, and by what
+   the decoder would know it before decoding, is not tried. The wavefront's
+   waits (`wait_for` spinning 256 times before it sleeps), the row-start
+   copies and rayon's scope per picture are the three places the loss can be,
+   and `perf stat` on the pool threads separately would say which.
 
-4. **The in-loop filters**, about 20% together (`edge_strengths` 7.4%, the
-   deblocking 7.5%, SAO 2.9%, `filter_after` 2.1%). A block with no strength
-   is no longer scanned, so the deblocking's share is the 4,600 edges a
-   picture it filters, and the strengths' is their computation per coding
-   and transform unit, a skipped unit among skipped ones included. Neither
-   is profiled to the instruction yet.
+3. **What the earlier profiles named**, on the x265 video, each to be looked
+   at again only if the profile of item 1 ranks it:
+   - **The row-start copy.** A third of the coding tree blocks were still
+     copied: 18% because a coding unit wrote samples, 10% because the
+     deblocking of an edge reached into them, 6% for their SAO. Copying the
+     three lines or columns the filter can change, and not the block, is
+     untried.
+   - **`coding_quadtree`'s fills**: the `memory.fill` calls into V8 are not
+     free even at the word size, and the 4×4-granular maps (prediction mode,
+     motion, QP, transform depth) could shrink to the 8×8 the smallest coding
+     unit has where nothing reads them finer.
+   - **Intra prediction's reference gathering**: an availability check per
+     four samples and a byte-wise substitution, where the availability of the
+     left column and top row is a mask computable once per block and the
+     gather could run by vector.
+   - **The in-loop filters** (`edge_strengths`, the deblocking, SAO,
+     `filter_after`) and **`prediction_unit` with `merge_motion`**, neither
+     profiled to the instruction.
 
-5. **`prediction_unit` and `merge_motion`**, 9.1% together: for 3,880
-   prediction units, mostly merge index zero on a still block. The parsing is
-   a few bins; the cost is the per-unit motion fill and the availability
-   lookups for the first candidate. Not profiled to the instruction yet.
+Measured on `cap5` or the x265 video and no faster, so not to be tried again
+as they were:
 
-6. **Four-thread scaling.** On the capture four threads are 2.6× one; on the
-   video slower (1.9 ms on one, 2.3 ms on four), while the cycles rise from 11 M to 13 M.
-   The video's picture is 2 ms of work spread over its few coding tree
-   block rows, and the wavefront's waits (`wait_for` spinning 256
-   times before it sleeps) are a visible share. Whether the loss is the waits,
-   the row-start copies contending for memory bandwidth, or rayon's scope per
-   picture is not measured; `perf stat` on the pool threads separately would
-   say.
+- **The sub-block walk:** an inner loop or a function of their own for the
+  uncoded sub-blocks, with or without the two contexts' models in registers.
+- **The context-coded bin:** carrying the model from one bin to the next
+  where the contexts repeat, and a renormalisation written as a select, which
+  LLVM turns into a shift by the flag and not a conditional move.
+- **The transform:** two rows per pass, and a widened matrix for
+  multiply-adds.
+- **The row-start copy a stripe ahead of the decode** rather than whole rows
+  ahead, at every width from one coding tree block to eight, by vector or by
+  `memory.copy`: the copy is bound by the reference's lines arriving, not by
+  the picture's being touched twice.
+- **The coding unit moved out of `coding_quadtree`** into a function of its
+  own.
 
 ### Elsewhere
 
@@ -84,9 +99,11 @@ transform, two rows per pass and a widened matrix for multiply-adds.
   `bench/run.sh` hands every unit to `decode`, a strip as if it were a whole
   picture, where remotex's page calls `decodeStrip` and reads the display at a
   frame's last strip. So the placing of each strip in the display and the
-  reading of it are not in any measurement of the `strips-*` samples, which
-  are of decoding alone, and a picture there is a strip, up to four to a
-  frame. What it wants: each unit's strip number beside a sample, read from
+  reading of it are not in any measurement above, which are of decoding
+  alone, and a picture there is a strip, up to four to a frame. The Mac does
+  not send every strip of every frame: of the loop it sent about two and a
+  half a frame, so a strip's number cannot be counted from its place in the
+  stream. What it wants: each unit's strip number beside a sample, read from
   the references its slice header names as remotex's
   `tests/hp_strips_video.py` reads them; `bench/decode.ts` decoding by
   `decodeStrip` with it and reading the display once a frame; and the check
