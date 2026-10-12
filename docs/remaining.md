@@ -56,14 +56,49 @@ In the order the work would go:
    transforms next to nothing. Past that the two differ. The video is inter
    prediction, a quarter of it in `prediction_unit` with whatever of the
    interpolation is inlined there, then SAO. The scroll is intra prediction,
-   18%, and the deblocking. So the candidates are `prediction_unit` and
-   `intra_predict`, neither yet profiled to the instruction, and SAO's
-   component; the residual's parsing is the largest and is where the changes
-   listed below as no faster were made. Every ranking before this one was of
+   18%, and the deblocking. Every ranking before this one was of
    `cap5`, a 1600×1000 capture in which 140 of 236 pictures decode to the
    picture before them at 37 KB each, or of an x265 video. Release 0.0.8, 8%
    fewer cycles than 0.0.7 on `cap5`, is 3% fewer on the video and 2% or less
    on every other stream.
+
+   To the instruction, with a build that keeps the inlined parts as
+   functions to name them (its totals are the release's, 24.4% for 24.0% and
+   16.8% for 17.7%):
+
+   | `prediction_unit` on the video | | `intra_predict` on the fast scroll | |
+   |---|---|---|---|
+   | `fir_hv_uni::<8>`, luma's second pass | 5.2% | `angular_t`, the modes along the left column | 4.5% |
+   | `fir_hv_uni::<4>`, chroma's | 5.0% | the availability and the gathering | 4.4% |
+   | `fir_h::<4>`, chroma's first pass | 3.5% | `substitute` | 2.7% |
+   | `fir_h::<8>`, luma's | 3.2% | `predict`: the mode, DC, the projected reference | 1.9% |
+   | The one-pass filters, both sizes | 3.5% | `angular` | 1.3% |
+   | The whole-sample copy | 1.2% | `planar` | 1.1% |
+   | Parsing, `amvp`, `mvd_coding`, `pb_avail` | 2.8% | `filter` | 1.0% |
+   | `motion_compensate`, the padding | 1.3% | | |
+
+   The filters are 20 of `prediction_unit`'s 24 points, and the chroma, two
+   whole planes under 4:4:4, costs what the luma does. In the order of what
+   each could return:
+
+   - **The second pass of an interpolation**, 10% of the video. Each tap is
+     widened to 32 bits and multiplied by `vpmulld`, once for the low half
+     and once for the high, sixteen such multiplies for eight luma samples.
+     `i32x4_dot_i16x8` over rows interleaved in pairs is `pmaddwd`, half as
+     many multiplies and a cheaper one.
+   - **`angular_t`'s turn**, 3.8% of the fast scroll: every column is made as
+     a row in a temporary and then copied into place a byte at a time, each
+     byte with its bounds check, and a division a row for that check that is
+     itself 1%.
+   - **The first pass**, 6.7% of the video, which loads the source again for
+     every tap, eight overlapping loads and eight `vpmullw` for eight luma
+     samples.
+   - **The gathering**, in three parts of 1.3% to 2.7% each: the decoding
+     order looked up for every four samples, the left column read a byte at a
+     time, and `substitute`'s loops over the flags a byte at a time.
+
+   The libc share is neither function's: by call graph all of it is under the
+   wavefront's row loop, the row-start copy of item 3.
 
 2. **Threads on a small picture.** Four threads cost more than one wherever a
    strip is light: a still page at 1x is 1.8 M cycles and a 0.26 ms median on
