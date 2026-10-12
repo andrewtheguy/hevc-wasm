@@ -283,7 +283,9 @@ for wasm32. How it is put together, and where its time goes, is in
 The routine measurement of a change is `bench/run.sh [BUILD...]`, some
 minutes: each BUILD is a directory holding a build of the module, `build/out`
 when none is named, or the word `ffmpeg` for the host's native decoder. It
-decodes the three streams above, `cap5`, `sample` and `busy-1440x900`, which
+decodes four streams of a Mac's 1440×900 display in strips, `video-1x` and
+`video-2x`, a video over the whole of it at 1x and at 2x, `scroll-2x`, Chrome
+scrolling an article, and `typing-1x`, typing in a terminal, which
 `bench/samples.sh` copies once from the `bench` folder of the artifacts drive
 to `tmp/bench`, and no run reads the drive; `SAMPLES` names others of that
 folder to decode instead, and `PICTURES` cuts each short. The script does

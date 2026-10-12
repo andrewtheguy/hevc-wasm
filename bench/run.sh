@@ -13,9 +13,9 @@ rounds=${ROUNDS:-3}
 # PICTURES=all, the default, is no limit: neither decoder is then given a count.
 limit=() fflimit=()
 [ "${PICTURES:-all}" = all ] || { limit=("$PICTURES") fflimit=(-frames:v "$PICTURES"); }
-# The 1600×1000 Mac capture, dense screen content, the 1080p camera video x265 coded in the Mac's shape, and 120
-# pictures of a Mac's 1440×900 display playing a busy animation.
-samples=${SAMPLES:-cap5 sample busy-1440x900}
+# A Mac's 1440×900 display in four strips, each picture a strip: a video over the whole of it at 1x and at 2x, Chrome
+# scrolling an article at 2x, and typing in a terminal at 1x.
+samples=${SAMPLES:-video-1x video-2x scroll-2x typing-1x}
 dir=$(bench/samples.sh $samples)
 
 # Waits, up to ten minutes, for the 1-minute load to fall under 1.5, so no run is timed against a build or the last run.
