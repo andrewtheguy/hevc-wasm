@@ -32,14 +32,38 @@ video at 2x is 12.8 ms a strip on one thread, 51 ms for a frame's four where
 
 In the order the work would go:
 
-1. **A profile of the video and of the fast scroll at 2x**, which there is
-   none of. Every ranking before this one was of `cap5`, a 1600×1000 capture
-   in which 140 of 236 pictures decode to the picture before them at 37 KB
-   each, or of an x265 video, and neither is what the Mac sends of a display
-   that moves. Release 0.0.8, 8% fewer cycles than 0.0.7 on `cap5`, is 3%
-   fewer on the video and 2% or less on every other stream. What the profile is expected to rank, and has not: the parsing
-   and the transforms of a strip's 24 KB, the intra prediction of the rows a
-   scroll brings in, and the in-loop filters over a picture that all changed.
+1. **What the profile of the video and of the fast scroll at 2x ranks.**
+   Release 0.0.8 on one thread under Node, `perf record` with V8's JIT
+   symbols, as shares of the samples:
+
+   | | Video | Fast scroll |
+   |---|---|---|
+   | `prediction_unit` | 23.9% | 8.6% |
+   | `residual::sub_block` | 15.5% | 18.8% |
+   | `residual_block` | 14.2% | 8.0% |
+   | `SaoCtx::component` | 11.6% | 6.3% |
+   | `DeblockCtx::ctb` | 6.0% | 9.7% |
+   | `intra_predict` | 4.7% | 17.6% |
+   | `coding_quadtree` | 3.2% | 5.3% |
+   | libc under V8, one address | 2.6% | 4.2% |
+   | `residual::sub_blocks` | 2.2% | 2.1% |
+   | `edge_strengths` | 2.0% | 2.7% |
+   | `transform_tree` | 1.3% | 1.6% |
+   | `simd128::dense_transform` | 1.3% | 1.9% |
+
+   The residual's parsing is a third of either stream (`sub_block`,
+   `residual_block`, `sub_blocks`, `coeff_remaining`: 33% and 30%), and the
+   transforms next to nothing. Past that the two differ. The video is inter
+   prediction, a quarter of it in `prediction_unit` with whatever of the
+   interpolation is inlined there, then SAO. The scroll is intra prediction,
+   18%, and the deblocking. So the candidates are `prediction_unit` and
+   `intra_predict`, neither yet profiled to the instruction, and SAO's
+   component; the residual's parsing is the largest and is where the changes
+   listed below as no faster were made. Every ranking before this one was of
+   `cap5`, a 1600×1000 capture in which 140 of 236 pictures decode to the
+   picture before them at 37 KB each, or of an x265 video. Release 0.0.8, 8%
+   fewer cycles than 0.0.7 on `cap5`, is 3% fewer on the video and 2% or less
+   on every other stream.
 
 2. **Threads on a small picture.** Four threads cost more than one wherever a
    strip is light: a still page at 1x is 1.8 M cycles and a 0.26 ms median on
