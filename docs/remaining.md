@@ -78,24 +78,44 @@ In the order the work would go:
    | `motion_compensate`, the padding | 1.3% | | |
 
    The filters are 20 of `prediction_unit`'s 24 points, and the chroma, two
-   whole planes under 4:4:4, costs what the luma does. In the order of what
-   each could return:
+   whole planes under 4:4:4, costs what the luma does.
 
-   - **The second pass of an interpolation**, 10% of the video. Each tap is
-     widened to 32 bits and multiplied by `vpmulld`, once for the low half
-     and once for the high, sixteen such multiplies for eight luma samples.
-     `i32x4_dot_i16x8` over rows interleaved in pairs is `pmaddwd`, half as
-     many multiplies and a cheaper one.
-   - **`angular_t`'s turn**, 3.8% of the fast scroll: every column is made as
-     a row in a temporary and then copied into place a byte at a time, each
-     byte with its bounds check, and a division a row for that check that is
-     itself 1%.
-   - **The first pass**, 6.7% of the video, which loads the source again for
-     every tap, eight overlapping loads and eight `vpmullw` for eight luma
-     samples.
-   - **The gathering**, in three parts of 1.3% to 2.7% each: the decoding
-     order looked up for every four samples, the left column read a byte at a
-     time, and `substitute`'s loops over the flags a byte at a time.
+   Three of these are done since 0.0.8, every picture of every stream still
+   FFmpeg's. In M cycles a picture on one thread:
+
+   | | 0.0.8 | Now | FFmpeg |
+   |---|---|---|---|
+   | The video at 2x | 41.8 | 39.2 | 34.2 |
+   | The fast scroll at 2x | 25.4 | 23.3 | 24.0 |
+   | The fast scroll at 1x | 10.1 | 9.4 | 8.8 |
+   | Typing at 1x | 2.3 | 2.3 | 3.0 |
+
+   - **The second pass of an interpolation** was 10% of the video, each tap
+     widened to 32 bits and multiplied by `vpmulld` once for each half. It is
+     `i32x4_dot_i16x8`, `pmaddwd`, over two rows interleaved: 4% fewer cycles
+     on the video at 2x, 2% at 1x.
+   - **`angular_t`'s turn** was 3.8% of the fast scroll, a byte at a time with
+     a bounds check each and a division a row. It is turned by vector, and
+     the temporary is not cleared: 3.5% to 4% fewer on the fast scroll.
+   - **The gathering** kept a flag a sample and looked the decoding order up
+     for every four. What is there of a side is a run from the block's
+     corner, so it is two lengths and one lookup a side: 4.5% fewer on the
+     fast scroll, 2% on the video.
+
+   What is left of `prediction_unit` is the first pass, 6.7% of the video,
+   eight loads and eight `vpmullw` for eight luma samples, and two things
+   tried on it were no faster (the video at 2x and at 1x, five rounds):
+
+   - **The reference's rows read ahead**, a sample of every cache line of all
+     three planes' footprints before the first is filtered, since the first
+     load of a row holds 40% to 50% of the loop's samples: 2.8% and 1.9% more
+     cycles, the cache misses as many as before.
+   - **A symmetric filter's samples added in pairs** before the multiply,
+     which the half-sample filters allow: 39.4 M for 39.3 M and 21.0 M for
+     21.0 M.
+
+   Untried there: leaving out the tap that is zero in luma's quarter-sample
+   filters, an eighth of a 3% loop at most.
 
    The libc share is neither function's: by call graph all of it is under the
    wavefront's row loop, the row-start copy of item 3.
