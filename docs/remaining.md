@@ -68,12 +68,11 @@ In the order the work would go:
    Then the five experiments dropped on the old streams, listed at the end
    of this section with what each came to. None of their code was kept, so
    each is written again on the module as it is and measured on the
-   captures. Three are done and no faster there either: the context-coded
-   bin's two, the sub-block walk's models in registers, and the coding unit
-   out of `coding_quadtree`. Two are left: the row-start copy a stripe
-   ahead, tried in a form that did not test it and put off, a round of it
-   being half an hour of the machine; and the transform's two, last, the
-   dense transform being 1% to 2% of any capture. The three dropped since,
+   captures. Four are done and no faster there either: the context-coded
+   bin's two, the sub-block walk's models in registers, the coding unit
+   out of `coding_quadtree`, and the transform's two. One is left: the
+   row-start copy a stripe ahead, tried in a form that did not test it and
+   put off, a round of it being half an hour of the machine. The three dropped since,
    the first pass read ahead and its taps added in pairs (item 2) and one
    thread for a small picture (item 4), were dropped on the captures and
    stand.
@@ -234,7 +233,7 @@ In the order the work would go:
 
 Measured on `cap5` or the x265 video and no faster, which ruled none of
 them out on the captures, so each is tried again there (item 1), written
-again from its description here, the code not having been kept. Three are
+again from its description here, the code not having been kept. Four are
 no faster there either, one thread, against the module as it is:
 
 - **The sub-block walk:** an inner loop or a function of their own for the
@@ -252,7 +251,12 @@ no faster there either, one thread, against the module as it is:
   5% to 9% more cycles on the video and the scrolls, 40.8 M for 38.9 M on
   the video at 2x, the branch being one the processor cannot guess.
 - **The transform:** two rows per pass, and a widened matrix for
-  multiply-adds. Not tried again yet.
+  multiply-adds, both of a block with few coefficients. On the captures,
+  its second pass two rows at a time, each table vector loaded once for
+  both, and its column pass against the matrix in 32-bit lanes, one
+  multiply-add where there are two `extmul`s, each alone and the two
+  together: level on all nine streams measured, the video at 2x 38.7 M,
+  38.4 M and 38.4 M cycles for 38.5 M and the typing at 2x 4.6 M all four.
 - **The row-start copy a stripe ahead of the decode** rather than whole rows
   ahead, at every width from one coding tree block to eight, by vector or by
   `memory.copy`: the copy is bound by the reference's lines arriving, not by
