@@ -82,10 +82,11 @@ In the order the work would go:
    The filters are 20 of `prediction_unit`'s 24 points, and the chroma, two
    whole planes under 4:4:4, costs what the luma does.
 
-   Three of these are done since 0.0.8, every picture of every stream still
-   FFmpeg's. In M cycles a picture on one thread:
+   Three of these were done in release 0.0.9, every picture of every stream
+   still FFmpeg's. In M cycles a picture on one thread, as measured then and
+   before item 2 was done (the table above is the module as it is):
 
-   | | 0.0.8 | Now | FFmpeg |
+   | | 0.0.8 | 0.0.9 | FFmpeg |
    |---|---|---|---|
    | The video at 2x | 41.8 | 39.2 | 34.2 |
    | The fast scroll at 2x | 25.4 | 23.3 | 24.0 |
