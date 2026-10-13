@@ -28,7 +28,7 @@ quiet() {
 }
 
 for s in $samples; do
-  [[ $1 = ffmpeg* ]] && break
+  [[ $1 = ffmpeg || $1 = ffmpeg-rows ]] && break
   HEVC_WASM_DIR=$1 CHECK=1 bun bench/decode.ts "$dir/$s.h265" 4 "${limit[@]}" | sed "s|^|$s: |"
 done
 
@@ -39,7 +39,7 @@ for t in ${THREADS:-1 4}; do
     quiet; : >"$log"
     for ((r = 0; r < rounds; r++)); do
       for b in "$@"; do
-        if [[ $b = ffmpeg* ]]; then
+        if [[ $b = ffmpeg || $b = ffmpeg-rows ]]; then
           # ffmpeg's threads each decode a picture of their own; ffmpeg-rows' share one picture's rows, as the module's do.
           rows=(); [ "$b" = ffmpeg-rows ] && rows=(-thread_type slice)
           out=$(taskset -c "$cpus" perf stat -e instructions:u,cycles:u -x, ffmpeg -hide_banner -nostats -threads "$t" "${rows[@]}" -i "$dir/$s.h265" "${fflimit[@]}" -benchmark -f null - 2>&1)
