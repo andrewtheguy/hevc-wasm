@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bench/run.sh [BUILD...]: the routine benchmark, a few minutes. Each BUILD is a directory holding a build of the module
-# (hevc.js, hevc.wasm), build/out when none is named, or the word ffmpeg for the host's native FFmpeg. They decode the samples of bench/samples.sh alternately, round by
+# (hevc.js, hevc.wasm), build/out when none is named, or the word ffmpeg for the host's native FFmpeg, ffmpeg-rows for it with its threads on the rows of one picture. They decode the samples of bench/samples.sh alternately, round by
 # round on the same cores, on one thread and on four, and the medians over the rounds are printed per picture: the
 # user-space instructions and cycles of the whole process, which do not depend on the host's load, and the mean and
 # median milliseconds.
@@ -13,9 +13,9 @@ rounds=${ROUNDS:-3}
 # PICTURES=all, the default, is no limit: neither decoder is then given a count.
 limit=() fflimit=()
 [ "${PICTURES:-all}" = all ] || { limit=("$PICTURES") fflimit=(-frames:v "$PICTURES"); }
-# The 1600×1000 Mac capture, dense screen content, the 1080p camera video x265 coded in the Mac's shape, and 120
-# pictures of a Mac's 1440×900 display playing a busy animation.
-samples=${SAMPLES:-cap5 sample busy-1440x900}
+# A Mac's 1440×900 display in four strips, each picture a strip: a video over the whole of it at 1x and at 2x, Chrome
+# scrolling an article at 2x, and typing in a terminal at 1x.
+samples=${SAMPLES:-video-1x video-2x scroll-2x typing-1x}
 dir=$(bench/samples.sh $samples)
 
 # Waits, up to ten minutes, for the 1-minute load to fall under 1.5, so no run is timed against a build or the last run.
@@ -28,7 +28,7 @@ quiet() {
 }
 
 for s in $samples; do
-  [ "$1" = ffmpeg ] && break
+  [[ $1 = ffmpeg || $1 = ffmpeg-rows ]] && break
   HEVC_WASM_DIR=$1 CHECK=1 bun bench/decode.ts "$dir/$s.h265" 4 "${limit[@]}" | sed "s|^|$s: |"
 done
 
@@ -39,8 +39,10 @@ for t in ${THREADS:-1 4}; do
     quiet; : >"$log"
     for ((r = 0; r < rounds; r++)); do
       for b in "$@"; do
-        if [ "$b" = ffmpeg ]; then
-          out=$(taskset -c "$cpus" perf stat -e instructions:u,cycles:u -x, ffmpeg -hide_banner -nostats -threads "$t" -i "$dir/$s.h265" "${fflimit[@]}" -benchmark -f null - 2>&1)
+        if [[ $b = ffmpeg || $b = ffmpeg-rows ]]; then
+          # ffmpeg's threads each decode a picture of their own; ffmpeg-rows' share one picture's rows, as the module's do.
+          rows=(); [ "$b" = ffmpeg-rows ] && rows=(-thread_type slice)
+          out=$(taskset -c "$cpus" perf stat -e instructions:u,cycles:u -x, ffmpeg -hide_banner -nostats -threads "$t" "${rows[@]}" -i "$dir/$s.h265" "${fflimit[@]}" -benchmark -f null - 2>&1)
           n=$(grep -o 'frame= *[0-9]*' <<<"$out" | tail -1 | tr -dc 0-9)
           # Its wall time over the pictures; ffmpeg gives no time per picture, so the median is the mean.
           mean=$(grep -o 'rtime=[0-9.]*' <<<"$out" | cut -d= -f2 | awk -v n="$n" '{print $1 * 1000 / n}'); median=$mean

@@ -11,15 +11,11 @@ pub const MODE_HOR: u8 = 10;
 pub const MODE_VER: u8 = 26;
 
 /// The neighbours of an N×N block: `left[y] = p[-1][y]` for `y` in `0..2N`,
-/// `top[x] = p[x][-1]` for `x` in `0..2N`, and `corner = p[-1][-1]`, each with
-/// whether it exists.
+/// `top[x] = p[x][-1]` for `x` in `0..2N`, and `corner = p[-1][-1]`.
 pub struct RefSamples {
     pub left: [u8; 64],
     pub top: [u8; 64],
     pub corner: u8,
-    pub left_avail: [bool; 64],
-    pub top_avail: [bool; 64],
-    pub corner_avail: bool,
     /// The projected reference of an angular mode, indices `-N..=2N` at an
     /// offset of N, with room past the end for the kernel's last read.
     refb: [i16; 128],
@@ -30,60 +26,36 @@ pub struct RefSamples {
 
 impl Default for RefSamples {
     fn default() -> Self {
-        RefSamples { left: [0; 64], top: [0; 64], corner: 0, left_avail: [false; 64], top_avail: [false; 64], corner_avail: false, refb: [0; 128], pl: [0; 33], pt: [0; 33] }
+        RefSamples { left: [0; 64], top: [0; 64], corner: 0, refb: [0; 128], pl: [0; 33], pt: [0; 33] }
     }
 }
 
 impl RefSamples {
-    pub fn reset(&mut self, n: usize) {
-        self.left_avail[..2 * n].fill(false);
-        self.top_avail[..2 * n].fill(false);
-        self.corner_avail = false;
-    }
-
     /// §8.4.4.2.2: missing neighbours take the nearest present one, searching
     /// from the bottom of the left column round to the end of the top row.
-    pub fn substitute(&mut self, n: usize) {
+    /// The first `left` of the left column and the first `top` of the top row
+    /// are present, each a multiple of four, and the corner when both are
+    /// more than none: a neighbour is missing only past the end of its side.
+    pub fn substitute(&mut self, n: usize, left: usize, top: usize) {
         let n2 = 2 * n;
-        if !(self.corner_avail || self.left_avail[..n2].iter().any(|&a| a) || self.top_avail[..n2].iter().any(|&a| a)) {
+        if left == 0 && top == 0 {
             self.left[..n2].fill(128);
             self.top[..n2].fill(128);
             self.corner = 128;
             return;
         }
-        if !self.left_avail[n2 - 1] {
-            let mut found = None;
-            for y in (0..n2 - 1).rev() {
-                if self.left_avail[y] {
-                    found = Some(self.left[y]);
-                    break;
-                }
-            }
-            if found.is_none() && self.corner_avail {
-                found = Some(self.corner);
-            }
-            if found.is_none() {
-                found = (0..n2).find(|&x| self.top_avail[x]).map(|x| self.top[x]);
-            }
-            self.left[n2 - 1] = found.unwrap_or(0);
-            self.left_avail[n2 - 1] = true;
+        // Past the end of the left column the search finds its last sample,
+        // or with no column the first of the top row.
+        let v = if left > 0 { self.left[left - 1] } else { self.top[0] };
+        for k in left / 4..n2 / 4 {
+            self.left[4 * k..4 * k + 4].fill(v);
         }
-        let mut prev = self.left[n2 - 1];
-        for y in (0..n2 - 1).rev() {
-            if !self.left_avail[y] {
-                self.left[y] = prev;
-            }
-            prev = self.left[y];
+        if left == 0 || top == 0 {
+            self.corner = self.left[0];
         }
-        if !self.corner_avail {
-            self.corner = prev;
-        }
-        prev = self.corner;
-        for x in 0..n2 {
-            if !self.top_avail[x] {
-                self.top[x] = prev;
-            }
-            prev = self.top[x];
+        let v = if top > 0 { self.top[top - 1] } else { self.corner };
+        for k in top / 4..n2 / 4 {
+            self.top[4 * k..4 * k + 4].fill(v);
         }
     }
 
@@ -212,13 +184,20 @@ mod tests {
         let mut r = RefSamples::default();
         for x in 0..8 {
             r.top[x] = 100 + x as u8;
-            r.top_avail[x] = true;
         }
-        r.substitute(4);
+        r.substitute(4, 0, 8);
         assert!(r.left[..8].iter().all(|&v| v == 100));
         assert_eq!(r.corner, 100);
         let mut r = RefSamples::default();
-        r.substitute(8);
+        for y in 0..4 {
+            r.left[y] = 10 + y as u8;
+            r.top[y] = 20 + y as u8;
+        }
+        r.substitute(4, 4, 4);
+        assert!(r.left[4..8].iter().all(|&v| v == 13));
+        assert!(r.top[4..8].iter().all(|&v| v == 23));
+        let mut r = RefSamples::default();
+        r.substitute(8, 0, 0);
         assert!(r.left[..16].iter().all(|&v| v == 128));
     }
 }

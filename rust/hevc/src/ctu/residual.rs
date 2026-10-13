@@ -92,43 +92,29 @@ impl<'a> Row<'a> {
     /// neighbours in the picture.
     fn intra_predict(&mut self, c: usize, xb: usize, yb: usize, n: usize, mode: u8) {
         let plane = self.pic.planes[c];
-        let n2 = 2 * n;
-        // Availability is per 4×4 block, so it is asked once per four samples;
-        // beside and above the block it is a matter of the picture's edge,
-        // below and to the right of it one of decoding order too.
-        let mut left_ok = [false; 16];
-        let mut top_ok = [false; 16];
-        for k in 0..n / 4 {
-            left_ok[k] = self.in_picture(xb as i32 - 1, (yb + 4 * k) as i32);
-            top_ok[k] = self.in_picture((xb + 4 * k) as i32, yb as i32 - 1);
-        }
-        for k in n / 4..n2 / 4 {
-            left_ok[k] = self.available(xb, yb, xb as i32 - 1, (yb + 4 * k) as i32);
-            top_ok[k] = self.available(xb, yb, (xb + 4 * k) as i32, yb as i32 - 1);
-        }
-        let corner_ok = self.in_picture(xb as i32 - 1, yb as i32 - 1);
+        let m = &self.pic.maps;
+        // What is there of each side is a run from the block's corner: the
+        // side itself whole wherever the block is off the picture's edge, and
+        // the `n` past it, which lie in one block of the block's size and so
+        // are before it in decoding order together or not at all, as far as
+        // the picture reaches, in fours.
+        let past = |there: bool, room: usize| if there { (room.div_ceil(4) * 4).min(n) } else { 0 };
+        let left = if xb == 0 { 0 } else { n + past(yb + n < m.height && self.available(xb, yb, xb as i32 - 1, (yb + n) as i32), m.height.saturating_sub(yb + n)) };
+        let top = if yb == 0 { 0 } else { n + past(xb + n < m.width && self.available(xb, yb, (xb + n) as i32, yb as i32 - 1), m.width.saturating_sub(xb + n)) };
         let refs = &mut self.s.iref;
-        refs.reset(n);
-        for k in 0..n2 / 4 {
-            if left_ok[k] {
-                for j in 4 * k..4 * k + 4 {
-                    // SAFETY: the left neighbours are decoded, in this row.
-                    refs.left[j] = unsafe { plane.get(xb - 1, yb + j) };
-                }
-                refs.left_avail[4 * k..4 * k + 4].fill(true);
-            }
-            if top_ok[k] {
-                // SAFETY: the row above is decoded there, or it is this row.
-                refs.top[4 * k..4 * k + 4].copy_from_slice(unsafe { plane.row(xb + 4 * k, yb - 1, 4) });
-                refs.top_avail[4 * k..4 * k + 4].fill(true);
-            }
+        for j in 0..left {
+            // SAFETY: the left neighbours are decoded, in this row.
+            refs.left[j] = unsafe { plane.get(xb - 1, yb + j) };
         }
-        if corner_ok {
+        for k in 0..top / 4 {
+            // SAFETY: the row above is decoded there, or it is this row.
+            refs.top[4 * k..4 * k + 4].copy_from_slice(unsafe { plane.row(xb + 4 * k, yb - 1, 4) });
+        }
+        if left > 0 && top > 0 {
             // SAFETY: as above.
             refs.corner = unsafe { plane.get(xb - 1, yb - 1) };
-            refs.corner_avail = true;
         }
-        refs.substitute(n);
+        refs.substitute(n, left, top);
         // SAFETY: the block is this row's.
         let out = unsafe { plane.block_mut(xb, yb, n, n) };
         intra::predict(refs, n, mode, c == 0, out, plane.stride);

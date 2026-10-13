@@ -340,11 +340,16 @@ pub fn fir_v_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usi
     }
 }
 
-/// The pass over the intermediate needs 32-bit sums.
+/// The pass over the intermediate needs 32-bit sums: two rows interleaved,
+/// each pair of values against its pair of taps and summed by one
+/// multiply-add. A tap is never -32768, so the multiply-add cannot saturate.
 pub fn fir_hv_uni<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
     holds(src, stride, w, h + N - 1);
     holds(dst, dst_stride, w, h);
-    let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
+    let mut taps = [i32x4_splat(0); 4];
+    for k in 0..N / 2 {
+        taps[k] = i32x4_splat((t[2 * k] as u16 as i32) | ((t[2 * k + 1] as i32) << 16));
+    }
     let (s, d) = (src.as_ptr(), dst.as_mut_ptr());
     for y in 0..h {
         // SAFETY: as in `fir_h`.
@@ -354,10 +359,11 @@ pub fn fir_hv_uni<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: u
             while x < w {
                 let mut lo = i32x4_splat(0);
                 let mut hi = i32x4_splat(0);
-                for i in 0..N {
-                    let v = i16s_at(sr.add(i * stride + x), w);
-                    lo = i32x4_add(lo, i32x4_extmul_low_i16x8(v, taps[i]));
-                    hi = i32x4_add(hi, i32x4_extmul_high_i16x8(v, taps[i]));
+                for k in 0..N / 2 {
+                    let a = i16s_at(sr.add(2 * k * stride + x), w);
+                    let b = i16s_at(sr.add((2 * k + 1) * stride + x), w);
+                    lo = i32x4_add(lo, i32x4_dot_i16x8(i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(a, b), taps[k]));
+                    hi = i32x4_add(hi, i32x4_dot_i16x8(i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(a, b), taps[k]));
                 }
                 store_uni(dr.add(x), w, i16x8_narrow_i32x4(i32x4_shr(lo, 6), i32x4_shr(hi, 6)));
                 x += 8;
@@ -427,41 +433,124 @@ pub fn planar(dst: &mut [u8], stride: usize, n: usize, left: &[u8], top: &[u8]) 
 
 /// One row of an angular prediction: `refb[base..]` and `refb[base + 1..]`
 /// blended by `ifact` in 32nds.
+///
+/// # Safety
+/// `n` bytes are writable at `out`.
 #[inline(always)]
-fn angular_row(out: &mut [u8], n: usize, refb: &[i16], base: usize, ifact: i32) {
+unsafe fn angular_row(out: *mut u8, n: usize, refb: &[i16], base: usize, ifact: i32) {
     let (fa, fb) = (i16x8_splat((32 - ifact) as i16), i16x8_splat(ifact as i16));
     let round = i16x8_splat(16);
     let mut x = 0;
     while x < n {
         let (a, b) = if n >= 8 { (load_i16x8(&refb[base + x..]), load_i16x8(&refb[base + x + 1..])) } else { (load_i16x4(&refb[base + x..]), load_i16x4(&refb[base + x + 1..])) };
         let v = if ifact == 0 { a } else { i16x8_shr(i16x8_add(i16x8_add(i16x8_mul(a, fa), i16x8_mul(b, fb)), round), 5) };
-        store_samples(&mut out[x..], n, v);
+        let s = u8x16_narrow_i16x8(v, v);
+        // SAFETY: the caller's; a width of four writes only its four.
+        unsafe {
+            if n >= 8 {
+                v128_store64_lane::<0>(s, out.add(x) as *mut u64);
+            } else {
+                v128_store32_lane::<0>(s, out.add(x) as *mut u32);
+            }
+        }
         x += 8;
     }
 }
 
 pub fn angular(dst: &mut [u8], stride: usize, n: usize, refb: &[i16], off: usize, angle: i32) {
+    holds(dst, stride, n, n);
+    let d = dst.as_mut_ptr();
     for y in 0..n {
         let pos = (y as i32 + 1) * angle;
         let base = (off as i32 + (pos >> 5) + 1) as usize;
-        angular_row(&mut dst[y * stride..y * stride + n], n, refb, base, pos & 31);
+        // SAFETY: inside the block `holds` checked.
+        unsafe { angular_row(d.add(y * stride), n, refb, base, pos & 31) };
+    }
+}
+
+#[inline(always)]
+fn zip_lo(a: v128, b: v128) -> v128 {
+    i8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(a, b)
+}
+
+#[inline(always)]
+fn zip_hi(a: v128, b: v128) -> v128 {
+    i8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(a, b)
+}
+
+/// `d[y][x] = s[x][y]` over 16×16: the rows zipped with the rows eight below
+/// them, four times over.
+///
+/// # Safety
+/// Sixteen rows of sixteen are readable at `s` and writable at `d`, each at
+/// its stride.
+#[inline(always)]
+unsafe fn turn16(s: *const u8, s_stride: usize, d: *mut u8, d_stride: usize) {
+    // SAFETY: the caller's.
+    unsafe {
+        let mut v: [v128; 16] = core::array::from_fn(|i| v128_load(s.add(i * s_stride) as *const v128));
+        for _ in 0..4 {
+            v = core::array::from_fn(|i| if i % 2 == 0 { zip_lo(v[i / 2], v[i / 2 + 8]) } else { zip_hi(v[i / 2], v[i / 2 + 8]) });
+        }
+        for (i, r) in v.iter().enumerate() {
+            v128_store(d.add(i * d_stride) as *mut v128, *r);
+        }
+    }
+}
+
+/// `d[y][x] = s[x * n + y]` over `n`×`n`.
+///
+/// # Safety
+/// `n * n` bytes are readable at `s`, and `n` rows of `n` writable at `d`.
+#[inline(always)]
+unsafe fn turn(s: *const u8, d: *mut u8, stride: usize, n: usize) {
+    // SAFETY: the caller's.
+    unsafe {
+        match n {
+            4 => {
+                let v: [v128; 4] = core::array::from_fn(|i| v128_load32_zero(s.add(4 * i) as *const u32));
+                let rows = zip_lo(zip_lo(v[0], v[2]), zip_lo(v[1], v[3]));
+                v128_store32_lane::<0>(rows, d as *mut u32);
+                v128_store32_lane::<1>(rows, d.add(stride) as *mut u32);
+                v128_store32_lane::<2>(rows, d.add(2 * stride) as *mut u32);
+                v128_store32_lane::<3>(rows, d.add(3 * stride) as *mut u32);
+            }
+            8 => {
+                let v: [v128; 8] = core::array::from_fn(|i| v128_load64_zero(s.add(8 * i) as *const u64));
+                let w: [v128; 4] = core::array::from_fn(|i| zip_lo(v[i], v[i + 4]));
+                let x = [zip_lo(w[0], w[2]), zip_hi(w[0], w[2]), zip_lo(w[1], w[3]), zip_hi(w[1], w[3])];
+                let rows = [zip_lo(x[0], x[2]), zip_hi(x[0], x[2]), zip_lo(x[1], x[3]), zip_hi(x[1], x[3])];
+                for (k, r) in rows.iter().enumerate() {
+                    v128_store64_lane::<0>(*r, d.add(2 * k * stride) as *mut u64);
+                    v128_store64_lane::<1>(*r, d.add((2 * k + 1) * stride) as *mut u64);
+                }
+            }
+            _ => {
+                for y in (0..n).step_by(16) {
+                    for x in (0..n).step_by(16) {
+                        turn16(s.add(x * n + y), n, d.add(y * stride + x), stride);
+                    }
+                }
+            }
+        }
     }
 }
 
 pub fn angular_t(dst: &mut [u8], stride: usize, n: usize, refb: &[i16], off: usize, angle: i32) {
-    // The columns, each made as a row, then turned.
-    let mut tmp = [0u8; 32 * 32];
+    assert!(matches!(n, 4 | 8 | 16 | 32));
+    holds(dst, stride, n, n);
+    // The columns, each made as a row, then turned. Every row is written
+    // whole before the turn reads it.
+    let mut tmp = [core::mem::MaybeUninit::<u8>::uninit(); 32 * 32];
+    let t = tmp.as_mut_ptr() as *mut u8;
     for x in 0..n {
         let pos = (x as i32 + 1) * angle;
         let base = (off as i32 + (pos >> 5) + 1) as usize;
-        angular_row(&mut tmp[x * n..x * n + n], n, refb, base, pos & 31);
+        // SAFETY: row `x` of `n` rows of `n` in `tmp`.
+        unsafe { angular_row(t.add(x * n), n, refb, base, pos & 31) };
     }
-    for y in 0..n {
-        let row = &mut dst[y * stride..y * stride + n];
-        for x in 0..n {
-            row[x] = tmp[x * n + y];
-        }
-    }
+    // SAFETY: `tmp` holds `n * n` written bytes, and `holds` checked `dst`.
+    unsafe { turn(t, dst.as_mut_ptr(), stride, n) };
 }
 
 // ---- the inverse transform ----

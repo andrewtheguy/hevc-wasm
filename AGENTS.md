@@ -1,7 +1,8 @@
 # Repository instructions
 
-Keep this file to rules that change how work is performed. Design explanations,
-measurements, and build details belong in the [README](README.md).
+Keep this file to rules that change how work is performed. Design explanations
+and build details belong in the [README](README.md), measurements in
+[docs/benchmarks.md](docs/benchmarks.md).
 
 ## Workflow
 
