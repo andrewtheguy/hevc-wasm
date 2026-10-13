@@ -251,9 +251,8 @@ struct SubBlock<'s> {
 
 /// The sub-blocks from the one holding the last coefficient back to the
 /// first (§7.3.8.11): each one's coded_sub_block_flag, and the syntax of the
-/// coded ones through `sub_block`. Out of line, as that is, so that the
-/// engine's registers stay in registers across the sub-blocks that are not
-/// coded.
+/// coded ones through `sub_block`. Out of line, so that the engine's
+/// registers stay in registers across the sub-blocks that are not coded.
 #[inline(never)]
 fn sub_blocks(engine: Engine, cab: &mut Cabac, blk: &Block, list: &mut [u32], dq: &Dequant, coded: &mut itx::Coded) -> Result<Engine> {
     let mut v = View::new(engine, cab);
@@ -293,10 +292,10 @@ fn sub_blocks(engine: Engine, cab: &mut Cabac, blk: &Block, list: &mut [u32], dq
 /// One coded sub-block after its flag (§7.3.8.11): the significance flags,
 /// the levels and the signs, each coefficient scaled as it is added to
 /// `list` after the `coded.count` there; `coded` grows to cover them. `c1` is the greater-than-1 context the previous
-/// sub-block left, and the one this leaves is returned with the engine. Out
-/// of line, so that the engine's registers and the loops' few counters get
-/// the registers of a function of their own.
-#[inline(never)]
+/// sub-block left, and the one this leaves is returned with the engine. Part
+/// of the walk's function: out of line it took 1% to 3% more cycles on a
+/// stream whose pictures are new.
+#[inline(always)]
 fn sub_block(engine: Engine, cab: &mut Cabac, sb: &SubBlock, list: &mut [u32], dq: &Dequant, c1_in: usize, coded: &mut itx::Coded) -> Result<(Engine, usize)> {
     let mut v = View::new(engine, cab);
     let cab = &mut v;

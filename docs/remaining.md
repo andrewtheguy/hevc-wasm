@@ -12,29 +12,72 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 The streams are the Mac's own, taken on 2026-10-12: seven scenes of a
 1440×900 display in four strips, at 1x and at 2x, a picture being a strip.
-Per picture on one thread, the module as it is against native FFmpeg
+Per picture on one thread, release 0.0.10 against native FFmpeg
 (`bench/run.sh`, `perf stat`):
 
 | | 1x, M cycles | FFmpeg | 2x, M cycles | FFmpeg |
 |---|---|---|---|---|
-| A still page | 1.5 | 2.5 | 2.8 | 9.0 |
+| A still page | 1.5 | 2.4 | 2.8 | 9.0 |
 | A window dragged | 2.0 | 2.6 | 5.8 | 9.7 |
-| A quarter of the display in a loop | 2.5 | 3.2 | 7.2 | 11.3 |
-| Typing in a terminal | 2.1 | 3.0 | 4.9 | 10.8 |
+| A quarter of the display in a loop | 2.5 | 3.2 | 7.0 | 11.2 |
+| Typing in a terminal | 2.1 | 3.0 | 4.7 | 10.7 |
 | Chrome scrolling an article | 4.8 | 4.9 | 13.2 | 15.6 |
-| The same four times as fast | 9.5 | 8.8 | 23.7 | 24.1 |
-| A video over the whole display | 20.3 | 17.1 | 39.2 | 34.1 |
+| The same four times as fast | 9.4 | 8.8 | 23.5 | 24.0 |
+| A video over the whole display | 20.3 | 17.0 | 39.2 | 34.0 |
 
 The module is ahead wherever most of a picture is the picture before, and on
 the scroll; it is behind where a picture is new, by 19% and 15% on the video
-and by 8% on the fast scroll at 1x. Those are also the streams that cost
+and by 7% on the fast scroll at 1x. Those are also the streams that cost
 anything. The video at 2x is 12 ms a strip on one thread, 48 ms for a
-frame's four where 30 frames a second leave 33 ms, and 4.6 ms a strip on
+frame's four where 30 frames a second leave 33 ms, and 4.5 ms a strip on
 four threads.
 
 In the order the work would go:
 
-1. **What the profile of the video and of the fast scroll at 2x ranks.**
+1. **The earlier decisions, measured again.** Every step kept before
+   2026-10-12 was kept on `cap5`, a 1600×1000 capture in which 140 of 236
+   pictures decode to the picture before them, or on an x265 video, and
+   every experiment dropped was dropped on them. The module as each kept
+   step left it, built from that step's commit, has now been measured on the
+   fourteen captures
+   ([the benchmarks](benchmarks.md#the-steps-that-got-here)), and all but
+   three earn their place there:
+
+   - **The transform of a block with few coefficients over its coded columns
+     alone**, a fifth of `cap5`'s instructions: on the captures no stream
+     but the typing at 2x took fewer cycles for it as it was made, 3%, and
+     the video took 2% to 4% more. Measured since in the module as it is,
+     where the coefficient list feeds it: every block sent to the dense
+     transform is 8% more cycles on the typing at 2x, 2% on the video and 1%
+     on the scrolls, and none of three narrower rules for which blocks take
+     it (32×32 alone, a quarter of the coefficients, both) is ahead of the
+     rule there is on any stream. It stays.
+   - **The walk over a block's sub-blocks in a function of its own**: level
+     on every stream as it was made, 1% more on the video. Inlined again in
+     the module as it is, it is level still, and stays. What was not level
+     is the function beside it, a coded sub-block's: decoded in the walk's
+     function and not one of its own it is 2% fewer cycles on the video at
+     1x, the fast scroll at 1x and the scroll, 1% on the video and the fast
+     scroll at 2x, and level where little is coded. That is done, and is not
+     in the table above, which is of the night before.
+   - **A row copying only the blocks changed since its buffer's picture**:
+     up to 5% more on a light strip, since no strip ever found such a
+     buffer. It pays since item 3 keeps the buffer, 35% of a still strip's
+     cycles at 2x and 20% of the typing's, and nothing is to be done.
+
+   Then the five experiments dropped on the old streams, listed at the end
+   of this section with what each came to. None of their code was kept, so
+   each is written again on the module as it is and measured on the
+   captures. Four are done and no faster there either: the context-coded
+   bin's two, the sub-block walk's models in registers, the coding unit
+   out of `coding_quadtree`, and the transform's two. One is left: the
+   row-start copy a stripe ahead, tried in a form that did not test it and
+   put off, a round of it being half an hour of the machine. The three dropped since,
+   the first pass read ahead and its taps added in pairs (item 2) and one
+   thread for a small picture (item 4), were dropped on the captures and
+   stand.
+
+2. **What the profile of the video and of the fast scroll at 2x ranks.**
    Release 0.0.8 on one thread under Node, `perf record` with V8's JIT
    symbols, as shares of the samples:
 
@@ -84,7 +127,7 @@ In the order the work would go:
 
    Three of these were done in release 0.0.9, every picture of every stream
    still FFmpeg's. In M cycles a picture on one thread, as measured then and
-   before item 2 was done (the table above is the module as it is):
+   before item 3 was done (the table above is release 0.0.10):
 
    | | 0.0.8 | 0.0.9 | FFmpeg |
    |---|---|---|---|
@@ -121,9 +164,9 @@ In the order the work would go:
    filters, an eighth of a 3% loop at most.
 
    The libc share is neither function's: by call graph all of it is under the
-   wavefront's row loop, the row-start copy of item 2.
+   wavefront's row loop, the row-start copy of item 3.
 
-2. **The reference copied whole for every strip**, done. Each row starts as
+3. **The reference copied whole for every strip**, done. Each row starts as
    its reference's, and the copy is spared where a free buffer holds a
    picture the reference descends from. With a display in strips that never
    happened: a strip's reference is the same strip of the frame before, and
@@ -137,14 +180,14 @@ In the order the work would go:
    page at 2x and 17% at 1x, 20% and 9% on the typing, 7% on the loop, and
    level on the drag; the scrolls and the video take 1% more, their changed
    blocks copied by the run where a whole row went in one `memmove`. On four
-   threads a light strip at 1x is no quicker by the clock for it (item 3).
+   threads a light strip at 1x is no quicker by the clock for it (item 4).
 
    What is copied is what the reference changed, whether or not this
    picture changes it again: of the video's blocks 896 have a coding unit
    that wrote samples, 848 an edge the deblocking reached and 841 SAO, so
    copying only the lines a filter can change is worth little there.
 
-3. **Threads on a small picture.** Four threads cost more than one wherever a
+4. **Threads on a small picture.** Four threads cost more than one wherever a
    strip is light, and less than they did: the thread that asks for the
    picture is now one of the four, with the first row under way while the
    pool's wake, where it had slept until the pool was done. Every strip is
@@ -164,7 +207,7 @@ In the order the work would go:
    pool's threads woken only once a picture is known to be worth them, by
    something the decoder learns as it decodes; it has no clock in the page.
 
-4. **SAO's edge offset**, done for what it was worth. `SaoCtx::component`
+5. **SAO's edge offset**, done for what it was worth. `SaoCtx::component`
    was 12.8% of the video at 2x, two thirds of it the edge offset's loop,
    which kept its constants in memory and loaded them again for every
    sixteen samples. A row of it is now a function of its own, whose
@@ -178,8 +221,8 @@ In the order the work would go:
    reads its neighbours from; copying the column to the right with the
    block, in place of a loop down it, was 1.5 M instructions a picture more.
 
-5. **What the earlier profiles named**, on the x265 video, each to be looked
-   at again only if the profile of item 1 ranks it:
+6. **What the earlier profiles named**, on the x265 video, each to be looked
+   at again only if the profile of item 2 ranks it:
    - **`coding_quadtree`'s fills**: the `memory.fill` calls into V8 are not
      free even at the word size, and the 4×4-granular maps (prediction mode,
      motion, QP, transform depth) could shrink to the 8×8 the smallest coding
@@ -188,22 +231,48 @@ In the order the work would go:
      `filter_after`) and **`prediction_unit` with `merge_motion`**, neither
      profiled to the instruction.
 
-Measured on `cap5` or the x265 video and no faster, so not to be tried again
-as they were:
+Measured on `cap5` or the x265 video and no faster, which ruled none of
+them out on the captures, so each is tried again there (item 1), written
+again from its description here, the code not having been kept. Four are
+no faster there either, one thread, against the module as it is:
 
 - **The sub-block walk:** an inner loop or a function of their own for the
   uncoded sub-blocks, with or without the two contexts' models in registers.
+  On the captures, the two models held in registers through the walk and
+  stored after it: level on all nine streams measured, the video at 2x
+  39.1 M cycles for 39.1 M and the typing at 2x 4.7 M for 4.6 M.
 - **The context-coded bin:** carrying the model from one bin to the next
   where the contexts repeat, and a renormalisation written as a select, which
-  LLVM turns into a shift by the flag and not a conditional move.
+  LLVM turns into a shift by the flag and not a conditional move. On the
+  captures, the model of a sub-block's greater-than-1 flags carried while
+  their context repeats: level, the video at 2x 39.2 M cycles for 38.9 M.
+  And the probable symbol's renormalisation as a branch with the refill
+  inside it, the shift as it is being the select's: fewer instructions and
+  5% to 9% more cycles on the video and the scrolls, 40.8 M for 38.9 M on
+  the video at 2x, the branch being one the processor cannot guess.
 - **The transform:** two rows per pass, and a widened matrix for
-  multiply-adds.
+  multiply-adds, both of a block with few coefficients. On the captures,
+  its second pass two rows at a time, each table vector loaded once for
+  both, and its column pass against the matrix in 32-bit lanes, one
+  multiply-add where there are two `extmul`s, each alone and the two
+  together: level on all nine streams measured, the video at 2x 38.7 M,
+  38.4 M and 38.4 M cycles for 38.5 M and the typing at 2x 4.6 M all four.
 - **The row-start copy a stripe ahead of the decode** rather than whole rows
   ahead, at every width from one coding tree block to eight, by vector or by
   `memory.copy`: the copy is bound by the reference's lines arriving, not by
-  the picture's being touched twice.
+  the picture's being touched twice. Tried again on the captures in one
+  form only, each block copied by the vector loop just before it is decoded
+  or two or six blocks before: 23% more instructions and 22% more cycles on
+  the scroll at 2x on one thread, the same at every distance, which is the
+  cost of the vector loop where a row with no block to keep goes in one
+  `memory.copy`, and says nothing of copying ahead. To be tried again later
+  as it should be, several blocks' width at a time by `memory.copy`, on one
+  thread and on four, where the copy as it is falls in a row's wait on the
+  row above; a round of it is half an hour of the machine.
 - **The coding unit moved out of `coding_quadtree`** into a function of its
-  own.
+  own. On the captures: level on all nine streams measured, a still strip
+  at 2x 2.9 M cycles either way and the typing 4.7 M for 4.6 M. Forced
+  inline it is the module as it is, byte for byte.
 
 ### Elsewhere
 
