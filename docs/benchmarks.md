@@ -147,8 +147,12 @@ they were aimed at. Three do not:
   found a buffer holding its reference's ancestor; it is the buffers kept,
   six steps later, that it pays through.
 
-What is to be done about the first two is in
-[what remains](remaining.md#speed). The counts are printed to 0.1 M, a
+Each of the first two has since been measured against its plain form in the
+module as it is ([what remains](remaining.md#speed)): both stay, the
+transform being worth 8% of the typing's cycles at 2x there, and a coded
+sub-block is decoded in the walk's function where it had one of its own, 1%
+to 2% fewer cycles on the scrolls and the video, which the tables above, of
+the night before, do not have. The counts are printed to 0.1 M, a
 twentieth of a light strip's, so a row that differs from the one above by
 that digit on a light stream may not differ at all.
 

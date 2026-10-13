@@ -45,13 +45,21 @@ In the order the work would go:
 
    - **The transform of a block with few coefficients over its coded columns
      alone**, a fifth of `cap5`'s instructions: on the captures no stream
-     but the typing at 2x takes fewer cycles for it, 3%, and the video takes
-     2% to 4% more. The coefficient list was built on it since, so it is not
-     undone by a revert: what is to be measured is the module as it is with
-     every block sent to the dense transform.
+     but the typing at 2x took fewer cycles for it as it was made, 3%, and
+     the video took 2% to 4% more. Measured since in the module as it is,
+     where the coefficient list feeds it: every block sent to the dense
+     transform is 8% more cycles on the typing at 2x, 2% on the video and 1%
+     on the scrolls, and none of three narrower rules for which blocks take
+     it (32×32 alone, a quarter of the coefficients, both) is ahead of the
+     rule there is on any stream. It stays.
    - **The walk over a block's sub-blocks in a function of its own**: level
-     on every stream, 1% more on the video. To be measured the same way,
-     inlined again in the module as it is.
+     on every stream as it was made, 1% more on the video. Inlined again in
+     the module as it is, it is level still, and stays. What was not level
+     is the function beside it, a coded sub-block's: decoded in the walk's
+     function and not one of its own it is 2% fewer cycles on the video at
+     1x, the fast scroll at 1x and the scroll, 1% on the video and the fast
+     scroll at 2x, and level where little is coded. That is done, and is not
+     in the table above, which is of the night before.
    - **A row copying only the blocks changed since its buffer's picture**:
      up to 5% more on a light strip, since no strip ever found such a
      buffer. It pays since item 3 keeps the buffer, 35% of a still strip's

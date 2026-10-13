@@ -253,8 +253,9 @@ starts before the range is known and the range selects a byte by a shift.
 The most probable symbol, which most bins are, takes a short path: the
 range shrinks by the other symbol's share and doubles at most once to put
 it back. The walk over a block's sub-blocks, most of them not coded, is a
-small function of its own, and each coded sub-block another, since V8
-spills what a large one holds: the walk keeps the coded flags on a bordered
+function of its own, since V8 spills what a large one holds, and a coded
+sub-block is decoded in it and not in another, which on the captures took
+1% to 3% more cycles where a picture is new: the walk keeps the coded flags on a bordered
 grid so a neighbour is a load, and takes the sixteen significance contexts
 of a sub-block from a table built at compile time, by the block's size,
 component and scan, the sub-block's place and its neighbours' flags; the
@@ -401,7 +402,7 @@ of the samples, and the ms a picture under the profiler:
 | function | the video, 14.3 ms | the fast scroll, 8.6 ms | typing, 1.6 ms | a still page, 1.1 ms |
 |---|---|---|---|---|
 | `prediction_unit`, with the interpolation in it | 20.0% | 8.7% | 6.3% | 9.0% |
-| `sub_block`: a coded sub-block's flags, levels and signs | 16.3% | 19.8% | 13.4% | 1.5% |
+| `sub_block`: a coded sub-block's flags, levels and signs, then a function of its own | 16.3% | 19.8% | 13.4% | 1.5% |
 | `residual_block`: the last position, the setup, the residual added | 15.2% | 8.6% | 12.3% | 1.9% |
 | SAO `component` | 12.8% | 7.0% | 2.9% | 1.7% |
 | deblock `ctb` | 6.6% | 10.6% | 3.7% | 2.4% |

@@ -136,8 +136,8 @@ the byte planes and the threading are this repository's.
   products, over the coded columns alone of a block with few coefficients;
   coefficients are scaled as they are parsed, and CABAC keeps its two
   registers in locals and its LPS table packed by model, the walk over a
-  block's sub-blocks and each coded sub-block decoding in functions of
-  their own, the significance contexts from a table built at compile time
+  block's sub-blocks, with the coded ones decoded in it, in a function of
+  its own, the significance contexts from a table built at compile time
   and the flags unrolled by position.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
