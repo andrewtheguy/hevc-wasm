@@ -50,7 +50,7 @@ picture, lower better:
 
 On one thread the module takes fewer cycles than native FFmpeg wherever most
 of a picture is the picture before, which it neither decodes nor filters nor,
-since 0.0.9, copies: two fifths fewer on the still page at 1x and two thirds
+as release 0.0.9 still did, copies: two fifths fewer on the still page at 1x and two thirds
 at 2x, a third and a half on the typing, and a fifth to two fifths on the
 drag and the loop; 15% fewer on the scroll at 2x. Where a picture is new it
 takes more: 8% on the fast scroll at 1x, and 19% and 15% on the video, whose
