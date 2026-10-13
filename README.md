@@ -120,7 +120,8 @@ the byte planes and the threading are this repository's.
 
 - `rust/hevc` is the decoder: one access unit in, its picture out as three
   planes of bytes at the coded size, with the window to show and the colour the
-  stream states. A picture's rows decode on rayon's pool, each two coding tree
+  stream states. A picture's rows decode on the calling thread and rayon's
+  pool, each two coding tree
   blocks behind the row above, and each row's thread deblocks a block behind
   its decoding and applies SAO, in place, a block behind that, as FFmpeg's
   does: the filters run while the block is still in cache, and nothing waits

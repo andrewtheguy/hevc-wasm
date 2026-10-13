@@ -65,8 +65,9 @@ pub struct Decoder {
 }
 
 impl Decoder {
-    /// A decoder that decodes a picture's rows on `threads` threads: rayon's
-    /// pool, which the caller has made, when more than one.
+    /// A decoder that decodes a picture's rows on `threads` threads: when
+    /// more than one, the thread that calls `decode` and the rest of
+    /// rayon's pool, which the caller has made.
     pub fn new(threads: usize) -> Self {
         let threads = threads.max(1);
         Decoder {
@@ -336,11 +337,12 @@ impl Decoder {
         }
     }
 
-    /// Whether a reference's rows started as the picture `buffer` holds, so
-    /// that a picture decoded from that reference can take the buffer as it
-    /// is but for the blocks changed since.
+    /// Whether a reference's rows started as the picture `buffer` holds and
+    /// it left some block of it as it was, so that a picture decoded from
+    /// that reference can take the buffer as it is but for the blocks
+    /// changed since.
     fn awaited(&self, buffer: &Picture) -> bool {
-        buffer.serial != 0 && self.dpb.iter().any(|e| e.pic.base_serial == buffer.serial)
+        buffer.serial != 0 && self.dpb.iter().any(|e| e.pic.base_serial == buffer.serial && e.pic.same.contains(&1))
     }
 
     /// The pooled buffer that holds a picture `base` descends from, each

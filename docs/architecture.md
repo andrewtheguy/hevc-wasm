@@ -21,7 +21,7 @@ remotex's decode worker (frontend/src/hevcWasm.worker.ts)
    ▼
 hevc-web, the wasm-bindgen module ── hevc::Decoder
    NAL units → SPS, PPS → slice header → reference picture set
-   → the picture's coding tree block rows, as a wavefront on the pool's threads:
+   → the picture's coding tree block rows, as a wavefront on the caller and the pool's threads:
        CABAC → coding quadtree → prediction (intra, or merge and motion vectors from one reference)
        → residual → samples in place; deblocking a block behind, SAO a block behind that
    → three planes of bytes at the coded size, the window to show, the colour, keyframe or not
