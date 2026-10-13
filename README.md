@@ -46,7 +46,7 @@ until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.9.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.10.tar.gz"
 ```
 
 ## Testing
