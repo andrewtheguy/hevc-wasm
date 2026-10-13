@@ -66,16 +66,17 @@ In the order the work would go:
      cycles at 2x and 20% of the typing's, and nothing is to be done.
 
    Then the five experiments dropped on the old streams, listed at the end
-   of this section. None of their code was kept, so each is to be written
-   again on the module as it is and measured on the captures, in the order
-   the profile of item 2 ranks what they touch: the context-coded bin and
-   the sub-block walk, in the residual's parsing, a third of the video and
-   of the fast scroll; the coding unit out of `coding_quadtree`, 14% of a
-   still strip; the row-start copy a stripe ahead; and the transform's two
-   last, the transforms being next to nothing on any capture. The three
-   dropped since, the first pass read ahead and its taps added in pairs
-   (item 2) and one thread for a small picture (item 4), were dropped on the
-   captures and stand.
+   of this section with what each came to. None of their code was kept, so
+   each is written again on the module as it is and measured on the
+   captures. Three are done and no faster there either: the context-coded
+   bin's two, the sub-block walk's models in registers, and the coding unit
+   out of `coding_quadtree`. Two are left: the row-start copy a stripe
+   ahead, tried in a form that did not test it and put off, a round of it
+   being half an hour of the machine; and the transform's two, last, the
+   dense transform being 1% to 2% of any capture. The three dropped since,
+   the first pass read ahead and its taps added in pairs (item 2) and one
+   thread for a small picture (item 4), were dropped on the captures and
+   stand.
 
 2. **What the profile of the video and of the fast scroll at 2x ranks.**
    Release 0.0.8 on one thread under Node, `perf record` with V8's JIT
@@ -231,16 +232,27 @@ In the order the work would go:
      `filter_after`) and **`prediction_unit` with `merge_motion`**, neither
      profiled to the instruction.
 
-Measured on `cap5` or the x265 video and no faster, which rules none of
-them out on the captures: each is to be tried again there (item 1).
+Measured on `cap5` or the x265 video and no faster, which ruled none of
+them out on the captures, so each is tried again there (item 1), written
+again from its description here, the code not having been kept. Three are
+no faster there either, one thread, against the module as it is:
 
 - **The sub-block walk:** an inner loop or a function of their own for the
   uncoded sub-blocks, with or without the two contexts' models in registers.
+  On the captures, the two models held in registers through the walk and
+  stored after it: level on all nine streams measured, the video at 2x
+  39.1 M cycles for 39.1 M and the typing at 2x 4.7 M for 4.6 M.
 - **The context-coded bin:** carrying the model from one bin to the next
   where the contexts repeat, and a renormalisation written as a select, which
-  LLVM turns into a shift by the flag and not a conditional move.
+  LLVM turns into a shift by the flag and not a conditional move. On the
+  captures, the model of a sub-block's greater-than-1 flags carried while
+  their context repeats: level, the video at 2x 39.2 M cycles for 38.9 M.
+  And the probable symbol's renormalisation as a branch with the refill
+  inside it, the shift as it is being the select's: fewer instructions and
+  5% to 9% more cycles on the video and the scrolls, 40.8 M for 38.9 M on
+  the video at 2x, the branch being one the processor cannot guess.
 - **The transform:** two rows per pass, and a widened matrix for
-  multiply-adds.
+  multiply-adds. Not tried again yet.
 - **The row-start copy a stripe ahead of the decode** rather than whole rows
   ahead, at every width from one coding tree block to eight, by vector or by
   `memory.copy`: the copy is bound by the reference's lines arriving, not by
@@ -254,7 +266,9 @@ them out on the captures: each is to be tried again there (item 1).
   thread and on four, where the copy as it is falls in a row's wait on the
   row above; a round of it is half an hour of the machine.
 - **The coding unit moved out of `coding_quadtree`** into a function of its
-  own.
+  own. On the captures: level on all nine streams measured, a still strip
+  at 2x 2.9 M cycles either way and the typing 4.7 M for 4.6 M. Forced
+  inline it is the module as it is, byte for byte.
 
 ### Elsewhere
 
