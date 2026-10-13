@@ -17,19 +17,19 @@ Per picture on one thread, the module as it is against native FFmpeg
 
 | | 1x, M cycles | FFmpeg | 2x, M cycles | FFmpeg |
 |---|---|---|---|---|
-| A still page | 1.8 | 2.4 | 4.3 | 9.0 |
-| A window dragged | 2.0 | 2.6 | 6.0 | 9.7 |
-| A quarter of the display in a loop | 2.7 | 3.2 | 7.7 | 11.2 |
-| Typing in a terminal | 2.3 | 3.0 | 6.0 | 10.7 |
-| Chrome scrolling an article | 4.7 | 4.9 | 13.0 | 15.6 |
-| The same four times as fast | 9.4 | 8.8 | 23.4 | 24.1 |
-| A video over the whole display | 20.5 | 17.1 | 39.7 | 34.1 |
+| A still page | 1.5 | 2.5 | 2.8 | 9.0 |
+| A window dragged | 2.0 | 2.6 | 5.8 | 9.7 |
+| A quarter of the display in a loop | 2.5 | 3.2 | 7.2 | 11.3 |
+| Typing in a terminal | 2.1 | 3.0 | 4.9 | 10.8 |
+| Chrome scrolling an article | 4.8 | 4.9 | 13.2 | 15.6 |
+| The same four times as fast | 9.5 | 8.8 | 23.7 | 24.1 |
+| A video over the whole display | 20.5 | 17.1 | 39.9 | 34.1 |
 
 The module is ahead wherever most of a picture is the picture before, and on
-the scroll; it is behind where a picture is new, by 20% and 16% on the video
-and by 7% on the fast scroll at 1x. Those are also the streams that cost
+the scroll; it is behind where a picture is new, by 20% and 17% on the video
+and by 8% on the fast scroll at 1x. Those are also the streams that cost
 anything. The video at 2x is 12 ms a strip on one thread, 48 ms for a
-frame's four where 30 frames a second leave 33 ms, and 4.7 ms a strip on
+frame's four where 30 frames a second leave 33 ms, and 4.8 ms a strip on
 four threads.
 
 In the order the work would go:
@@ -122,28 +122,32 @@ In the order the work would go:
    The libc share is neither function's: by call graph all of it is under the
    wavefront's row loop, the row-start copy of item 2.
 
-2. **The reference copied whole for every strip.** Each row starts as its
-   reference's, and the copy is spared only where a free buffer holds a
+2. **The reference copied whole for every strip**, done. Each row starts as
+   its reference's, and the copy is spared where a free buffer holds a
    picture the reference descends from. With a display in strips that never
-   happens: a strip's reference is the same strip of the frame before, and
-   the buffer that has come free by then was another strip's, which the next
-   picture takes for want of a better. Counted over the streams, no picture
-   reused a buffer, and all of a strip's 1,350 coding tree blocks at 2x are
-   copied whether 342 of them are left as the picture before (the video) or
-   1,257 (a still page). The copy is 38% of a still strip's samples at 2x,
-   25% of the typing's, 20% of the loop's, 11% of the scroll's, 6% of the
-   fast scroll's and 3% of the video's. What it wants is a buffer kept for
-   each strip's lineage, by not handing a strip the buffer another's
-   reference descends from while a spare can be had, at the cost of up to
-   four more buffers. Past that, of the video's blocks 896 have a coding
-   unit that wrote samples, 848 an edge the deblocking reached and 841 SAO,
-   so copying only the lines a filter can change is worth less there.
+   happened: a strip's reference is the same strip of the frame before, and
+   the buffer free by then was another strip's, which the next picture took
+   for want of a better. A free buffer that a reference descends from is now
+   left for the picture decoded from that reference, and a new one is made
+   when no other is free; the pool is four buffers as before. Of a strip's
+   1,350 coding tree blocks at 2x, 126 are now copied a picture on the still
+   page, 299 on the typing, 556 on the loop, 1,067 on the video and some
+   1,210 on the scrolls. On one thread that is 35% fewer cycles on the still
+   page at 2x and 17% at 1x, 20% and 9% on the typing, 7% on the loop, and
+   level on the drag; the scrolls and the video take 1% more, their changed
+   blocks copied by the run where a whole row went in one `memmove`. On four
+   threads a light strip at 1x is no quicker by the clock for it (item 3).
+
+   What is copied is what the reference changed, whether or not this
+   picture changes it again: of the video's blocks 896 have a coding unit
+   that wrote samples, 848 an edge the deblocking reached and 841 SAO, so
+   copying only the lines a filter can change is worth little there.
 
 3. **Threads on a small picture.** Four threads cost more than one wherever a
-   strip is light: a still page at 1x is 1.8 M cycles and a 0.26 ms median on
-   one thread, 2.4 M and 0.48 ms on four, and so with the drag, the loop and
-   the typing, 20% to 40% more cycles. They pay only on the heavy streams:
-   2.6× on the video at 2x, 2.1× at 1x, 1.9× on the fast scroll at 2x, 1.5× on
+   strip is light: a still page at 1x is 1.5 M cycles and a 0.17 ms median on
+   one thread, 2.1 M and 0.56 ms on four, and so with the drag, the loop and
+   the typing, 30% to 40% more cycles. They pay only on the heavy streams:
+   2.6× on the video at 2x, 2.0× at 1x, 1.9× on the fast scroll at 2x, 1.5× on
    the scroll. Whether a
    strip under some size should be decoded on the calling thread, and by what
    the decoder would know it before decoding, is not tried. The wavefront's

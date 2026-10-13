@@ -34,6 +34,10 @@ struct Reference {
     poc: i32,
 }
 
+/// The free picture buffers kept: one for each strip of a display to
+/// descend from (`Decoder::take_buffer`).
+const POOL: usize = crate::strips::STRIPS;
+
 pub struct Decoder {
     threads: usize,
     sps: Vec<Option<Sps>>,
@@ -318,11 +322,25 @@ impl Decoder {
         Ok(Some(Decoded { picture: pic, window: [sps.conf_win[0], sps.conf_win[2], w, h], colour: sps.colour, keyframe: idr, intra: sh.intra }))
     }
 
-    /// A picture buffer of the sequence's size: a pooled one, or a new one.
+    /// A picture buffer of the sequence's size: a pooled one that no
+    /// reference descends from, or a new one. A display in strips is why: a
+    /// strip's reference is that strip of the frame before, and the buffers
+    /// that come free between the two are the other strips', each the one
+    /// its own strip's next picture will want (`descended`).
     fn take_buffer(&mut self, sps: &Sps) -> Picture {
         let (w, h) = (sps.width as usize, sps.height as usize);
         self.pool.retain(|p| p.width() == w && p.height() == h);
-        self.pool.pop().unwrap_or_else(|| Picture::new(w, h))
+        match self.pool.iter().position(|p| !self.awaited(p)) {
+            Some(i) => self.pool.swap_remove(i),
+            None => Picture::new(w, h),
+        }
+    }
+
+    /// Whether a reference's rows started as the picture `buffer` holds, so
+    /// that a picture decoded from that reference can take the buffer as it
+    /// is but for the blocks changed since.
+    fn awaited(&self, buffer: &Picture) -> bool {
+        buffer.serial != 0 && self.dpb.iter().any(|e| e.pic.base_serial == buffer.serial)
     }
 
     /// The pooled buffer that holds a picture `base` descends from, each
@@ -348,11 +366,14 @@ impl Decoder {
         }
     }
 
-    /// Returns a picture's buffer to the pool once nothing else holds it.
+    /// Returns a picture's buffer to the pool once nothing else holds it. A
+    /// full pool gives up a buffer no reference descends from for it.
     fn release(&mut self, pic: Arc<Picture>) {
         if let Ok(p) = Arc::try_unwrap(pic) {
-            if self.pool.len() < 4 {
+            if self.pool.len() < POOL {
                 self.pool.push(p);
+            } else if let Some(i) = self.pool.iter().position(|q| !self.awaited(q)) {
+                self.pool[i] = p;
             }
         }
     }
