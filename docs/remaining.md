@@ -229,7 +229,20 @@ In the order the work would go:
      unit has where nothing reads them finer.
    - **The in-loop filters** (`edge_strengths`, the deblocking, SAO,
      `filter_after`) and **`prediction_unit` with `merge_motion`**, neither
-     profiled to the instruction.
+     profiled to the instruction. The deblocking has been since, in the
+     module after release 0.0.11: 11.8% of the fast scroll at 2x and 7.7%
+     of the video, of which the luma filter is 5.3 and 3.7 points, the
+     chroma's 2.3 and 0.9, the thresholds of an edge 2.4 and 1.6 and the
+     scan of the strengths 1.8 and 1.5, and flat within each. A filter took
+     four lines of an edge in vectors that hold eight; it takes eight, the
+     two segments an edge on the 8×8 grid always comes in, each with its own
+     thresholds and decision: 1% fewer cycles on the fast scroll and the
+     video at 2x on one thread, 22.8 M for 23.0 M and 38.1 M for 38.5 M,
+     five rounds, and level at 1x and on the light streams. That is less
+     than half the filter's share, and what is hot in it now is the first
+     load of each line of a plane, whose lines at 2x are 2,880 bytes apart
+     in three planes; whether those are misses of the cache or of the page
+     table has not been measured.
 
 Measured on `cap5` or the x265 video and no faster, which ruled none of
 them out on the captures, so each is tried again there (item 1), written
