@@ -19,27 +19,34 @@ do not depend on the load. The module's ms is the median of its own clock's
 per picture, and FFmpeg's its process's wall time over the pictures. The
 streams are seven scenes of the display, each at 1x and at 2x, thirty seconds
 of each; a picture is a strip, a quarter of the display, and the Mac sends
-only the strips that changed. Per picture, lower better:
+only the strips that changed. Each ratio is the module's ms over FFmpeg's
+beside it, under 1.00 where the module is the quicker; it sets a median
+against a mean, so a few long pictures weigh on FFmpeg's figure and not on
+the module's. On four threads FFmpeg is run with `-thread_type slice`, its
+threads on the rows of one picture as the module's are, so both figures are
+how long a strip takes; left to itself it decodes four pictures at once,
+which is quicker over a file and no use to a display that is watched. Per
+picture, lower better:
 
-| 1440×240, a strip | pictures | 1 thread, M cycles | 0.0.8 | FFmpeg | 1 thread, ms | FFmpeg | 4 threads, ms | FFmpeg |
-|---|---|---|---|---|---|---|---|---|
-| A still page | 1,450 | 1.8 | 1.8 | 2.4 | 0.27 | 0.82 | 0.48 | 0.40 |
-| A window dragged | 2,403 | 2.0 | 2.0 | 2.6 | 0.36 | 0.87 | 0.62 | 0.42 |
-| A quarter of the display in a loop | 2,273 | 2.7 | 2.7 | 3.2 | 0.74 | 1.07 | 0.85 | 0.46 |
-| Typing in a terminal | 2,248 | 2.3 | 2.3 | 3.0 | 0.25 | 1.03 | 0.55 | 0.45 |
-| Chrome scrolling an article | 2,588 | 4.7 | 5.0 | 4.9 | 1.00 | 1.62 | 1.18 | 0.69 |
-| The same four times as fast | 2,362 | 9.4 | 10.1 | 8.8 | 2.58 | 2.83 | 1.72 | 1.01 |
-| A video over the whole display | 1,978 | 20.5 | 21.1 | 17.1 | 6.30 | 5.39 | 3.04 | 2.28 |
+| 1440×240, a strip | pictures | 1 thread, M cycles | 0.0.8 | FFmpeg | 1 thread, ms | FFmpeg | Ratio | 4 threads, ms | FFmpeg by rows | Ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A still page | 1,450 | 1.8 | 1.8 | 2.4 | 0.27 | 0.82 | $\color{green}{0.33}$ | 0.49 | 0.79 | $\color{green}{0.62}$ |
+| A window dragged | 2,403 | 2.0 | 2.0 | 2.6 | 0.36 | 0.87 | $\color{green}{0.41}$ | 0.59 | 0.74 | $\color{green}{0.80}$ |
+| A quarter of the display in a loop | 2,273 | 2.7 | 2.7 | 3.2 | 0.74 | 1.07 | $\color{green}{0.69}$ | 0.87 | 0.86 | $\color{red}{1.01}$ |
+| Typing in a terminal | 2,248 | 2.3 | 2.3 | 3.0 | 0.25 | 1.03 | $\color{green}{0.24}$ | 0.55 | 0.81 | $\color{green}{0.68}$ |
+| Chrome scrolling an article | 2,588 | 4.7 | 5.0 | 4.9 | 1.00 | 1.62 | $\color{green}{0.62}$ | 1.21 | 1.18 | $\color{red}{1.03}$ |
+| The same four times as fast | 2,362 | 9.4 | 10.1 | 8.8 | 2.58 | 2.83 | $\color{green}{0.91}$ | 1.76 | 1.63 | $\color{red}{1.08}$ |
+| A video over the whole display | 1,978 | 20.5 | 21.1 | 17.1 | 6.30 | 5.39 | $\color{red}{1.17}$ | 3.03 | 2.52 | $\color{red}{1.20}$ |
 
-| 2880×464, a strip | pictures | 1 thread, M cycles | 0.0.8 | FFmpeg | 1 thread, ms | FFmpeg | 4 threads, ms | FFmpeg |
-|---|---|---|---|---|---|---|---|---|
-| A still page | 1,694 | 4.3 | 4.4 | 9.0 | 1.02 | 2.92 | 0.90 | 1.01 |
-| A window dragged | 2,507 | 6.0 | 6.1 | 9.7 | 1.56 | 3.12 | 1.13 | 1.11 |
-| A quarter of the display in a loop | 2,230 | 7.7 | 7.9 | 11.2 | 2.38 | 3.59 | 1.62 | 1.24 |
-| Typing in a terminal | 2,424 | 6.0 | 6.1 | 10.7 | 0.98 | 3.42 | 0.99 | 1.20 |
-| Chrome scrolling an article | 2,579 | 13.0 | 13.6 | 15.6 | 3.11 | 4.94 | 2.03 | 1.78 |
-| The same four times as fast | 2,501 | 23.4 | 25.6 | 24.1 | 6.61 | 7.56 | 3.54 | 2.72 |
-| A video over the whole display | 2,446 | 39.7 | 42.1 | 34.1 | 12.06 | 10.69 | 4.72 | 4.08 |
+| 2880×464, a strip | pictures | 1 thread, M cycles | 0.0.8 | FFmpeg | 1 thread, ms | FFmpeg | Ratio | 4 threads, ms | FFmpeg by rows | Ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A still page | 1,694 | 4.3 | 4.4 | 9.0 | 1.02 | 2.92 | $\color{green}{0.35}$ | 0.91 | 1.34 | $\color{green}{0.68}$ |
+| A window dragged | 2,507 | 6.0 | 6.1 | 9.7 | 1.56 | 3.12 | $\color{green}{0.50}$ | 1.13 | 1.41 | $\color{green}{0.80}$ |
+| A quarter of the display in a loop | 2,230 | 7.7 | 7.9 | 11.2 | 2.38 | 3.59 | $\color{green}{0.66}$ | 1.64 | 1.73 | $\color{green}{0.95}$ |
+| Typing in a terminal | 2,424 | 6.0 | 6.1 | 10.7 | 0.98 | 3.42 | $\color{green}{0.29}$ | 1.03 | 1.49 | $\color{green}{0.69}$ |
+| Chrome scrolling an article | 2,579 | 13.0 | 13.6 | 15.6 | 3.11 | 4.94 | $\color{green}{0.63}$ | 2.04 | 2.35 | $\color{green}{0.87}$ |
+| The same four times as fast | 2,501 | 23.4 | 25.6 | 24.1 | 6.61 | 7.56 | $\color{green}{0.87}$ | 3.43 | 3.64 | $\color{green}{0.94}$ |
+| A video over the whole display | 2,446 | 39.7 | 42.1 | 34.1 | 12.06 | 10.69 | $\color{red}{1.13}$ | 4.72 | 3.85 | $\color{red}{1.23}$ |
 
 On one thread the module takes fewer cycles than native FFmpeg wherever most
 of a picture is the picture before, which it neither decodes nor filters: a
@@ -47,20 +54,26 @@ quarter fewer at 1x and up to half at 2x on the still page, the drag, the
 loop and the typing, and 17% fewer on the scroll at 2x. Where a picture is
 new it takes more: 7% on the fast scroll at 1x, and 20% and 16% on the
 video, whose strip at 2x is 12 ms on one thread, four of them more than the
-33 ms of a frame at thirty a second, and 4.7 ms on four. FFmpeg's four
-threads each decode a picture of their own, and here a picture is a strip,
-so by the clock it is quicker on four than the module on all but the still
-page and the typing at 2x; its figure is of pictures passing through, each
-held back by the others in hand, which a display that is watched cannot
-wait for. The module's four threads share one strip's rows, and on a light
-strip that costs more than it returns: a still strip at 1x is 0.27 ms on one
-thread and 0.48 ms on four.
+33 ms of a frame at thirty a second, and 4.7 ms on four.
+
+On four threads, strip for strip, the module is the quicker on nine of the
+fourteen: a fifth to two fifths quicker on the
+still page, the drag and the typing at either scale, and 5% to 13% on the
+loop and both scrolls at 2x. At 1x the loop and the scroll are level with
+FFmpeg and the fast scroll 8% behind, and the video is a fifth behind at
+both, further than on one thread. Neither gains from threads on a light
+strip, whose few rows cost more to share than to decode: a still strip at 1x
+is 0.27 ms on one thread and 0.49 ms on four in the module, 0.82 ms and
+0.79 ms in FFmpeg. With its threads on pictures of their own FFmpeg passes
+a still strip at 1x in 0.39 ms and the fast scroll's at 2x in 2.62 ms, but
+the video's at 2x in 4.15 ms, no sooner than by rows.
 
 ## Measuring a change
 
 The routine measurement of a change is `bench/run.sh [BUILD...]`, some
 minutes: each BUILD is a directory holding a build of the module, `build/out`
-when none is named, or the word `ffmpeg` for the host's native decoder. It
+when none is named, the word `ffmpeg` for the host's native decoder, or
+`ffmpeg-rows` for it with its threads on the rows of one picture. It
 decodes four streams of a Mac's 1440×900 display in strips, `video-1x` and
 `video-2x`, a video over the whole of it at 1x and at 2x, `scroll-2x`, Chrome
 scrolling an article, and `typing-1x`, typing in a terminal, which
