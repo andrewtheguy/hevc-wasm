@@ -29,7 +29,7 @@ The module is ahead wherever most of a picture is the picture before, and on
 the scroll; it is behind where a picture is new, by 20% and 17% on the video
 and by 8% on the fast scroll at 1x. Those are also the streams that cost
 anything. The video at 2x is 12 ms a strip on one thread, 48 ms for a
-frame's four where 30 frames a second leave 33 ms, and 4.8 ms a strip on
+frame's four where 30 frames a second leave 33 ms, and 4.6 ms a strip on
 four threads.
 
 In the order the work would go:
@@ -145,16 +145,24 @@ In the order the work would go:
    copying only the lines a filter can change is worth little there.
 
 3. **Threads on a small picture.** Four threads cost more than one wherever a
-   strip is light: a still page at 1x is 1.5 M cycles and a 0.17 ms median on
-   one thread, 2.1 M and 0.56 ms on four, and so with the drag, the loop and
-   the typing, 30% to 40% more cycles. They pay only on the heavy streams:
-   2.6× on the video at 2x, 2.0× at 1x, 1.9× on the fast scroll at 2x, 1.5× on
-   the scroll. Whether a
-   strip under some size should be decoded on the calling thread, and by what
-   the decoder would know it before decoding, is not tried. The wavefront's
-   waits (`wait_for` spinning 256 times before it sleeps), the row-start
-   copies and rayon's scope per picture are the three places the loss can be,
-   and `perf stat` on the pool threads separately would say which.
+   strip is light, and less than they did: the thread that asks for the
+   picture is now one of the four, with the first row under way while the
+   pool's wake, where it had slept until the pool was done. Every strip is
+   0.1 to 0.2 ms sooner for it on four threads: a still page at 1x 0.29 ms
+   for 0.49 ms, the typing 0.39 ms for 0.61 ms, the video at 2x 4.55 ms for
+   4.66 ms. One thread still does a still strip at 1x in 0.17 ms, since the
+   picture is not done until the pool's threads have woken to find nothing
+   left. Threads pay on the heavy streams: 2.7× on the video at 2x, 2.2× at
+   1x, 2.1× on the fast scroll at 2x, 1.6× on the scroll.
+
+   Tried and not kept: one thread for a picture under some size in bytes.
+   The size says little of the time: of the strips under 200 bytes at 2x,
+   whose median is 0.61 ms on one thread and 0.67 ms on four, four threads
+   were the quicker for 63%. No threshold beat four threads for every
+   picture at 2x, and the best at 1x, 400 bytes, saved 4% of the time of six
+   streams, by a constant fitted to this machine. What would do it is the
+   pool's threads woken only once a picture is known to be worth them, by
+   something the decoder learns as it decodes; it has no clock in the page.
 
 4. **What the earlier profiles named**, on the x265 video, each to be looked
    at again only if the profile of item 1 ranks it:

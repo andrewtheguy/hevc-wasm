@@ -1,9 +1,9 @@
 //! Running a picture's rows across threads as a wavefront, each two coding
 //! tree blocks behind the row above.
 //!
-//! The threads are rayon's pool when the `threads` feature is on and the
-//! decoder was made with more than one; otherwise the rows run on the caller,
-//! in order.
+//! The threads are the caller and rayon's pool when the `threads` feature is
+//! on and the decoder was made with more than one; otherwise the rows run on
+//! the caller, in order.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
@@ -109,10 +109,13 @@ pub fn run_rows(threads: usize, n: usize, progress: &[Progress], f: impl Fn(usiz
     let first = Mutex::new(None);
     if threads > 1 {
         #[cfg(feature = "threads")]
-        rayon::scope(|s| {
-            for _ in 0..threads {
+        rayon::in_place_scope(|s| {
+            for _ in 1..threads {
                 s.spawn(|_| worker(&next, &stop, &first));
             }
+            // The caller is one of the threads: it has the first row under
+            // way while the pool's wake.
+            worker(&next, &stop, &first);
         });
         #[cfg(not(feature = "threads"))]
         worker(&next, &stop, &first);

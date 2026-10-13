@@ -163,7 +163,8 @@ slice's active count.
 ### The wavefront
 
 Each coding tree block row is a substream of the slice, entered at its entry
-point, and decodes on its own thread of rayon's pool, two coding tree blocks
+point, and decodes on a thread of its own, the caller's or one of rayon's
+pool, which the caller's first row does not wait for, two coding tree blocks
 behind the row above: a block waits until the row above has finished the
 block up and to the right of it, which is what its prediction and its
 context models need. The models start as the row above left them after its
@@ -450,7 +451,7 @@ release 0.0.9 and before, every strip was copied whole, all 1,350 blocks.
 What is copied is what the reference changed from its own reference, not
 what this picture changes, which it writes over all the same.
 
-On four threads the video decodes 2.6× as fast as on one at 2x and 2.0× at
-1x, the fast scroll at 2x 1.9× and the scroll 1.5×. A light strip is slower
+On four threads the video decodes 2.7× as fast as on one at 2x and 2.2× at
+1x, the fast scroll at 2x 2.1× and the scroll 1.6×. A light strip is slower
 on four: a still strip at 1x is 0.17 ms and 1.5 M cycles on one thread,
-0.56 ms and 2.1 M on four.
+0.29 ms and 1.9 M on four.
