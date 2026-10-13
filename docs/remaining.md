@@ -68,11 +68,10 @@ In the order the work would go:
    Then the five experiments dropped on the old streams, listed at the end
    of this section with what each came to. None of their code was kept, so
    each is written again on the module as it is and measured on the
-   captures. Four are done and no faster there either: the context-coded
-   bin's two, the sub-block walk's models in registers, the coding unit
-   out of `coding_quadtree`, and the transform's two. One is left: the
-   row-start copy a stripe ahead, tried in a form that did not test it and
-   put off, a round of it being half an hour of the machine. The three dropped since,
+   captures. All five are done and no faster there either: the
+   context-coded bin's two, the sub-block walk's models in registers, the
+   coding unit out of `coding_quadtree`, the transform's two, and the
+   row-start copy a stripe ahead. The three dropped since,
    the first pass read ahead and its taps added in pairs (item 2) and one
    thread for a small picture (item 4), were dropped on the captures and
    stand.
@@ -203,7 +202,14 @@ In the order the work would go:
    whose median is 0.61 ms on one thread and 0.67 ms on four, four threads
    were the quicker for 63%. No threshold beat four threads for every
    picture at 2x, and the best at 1x, 400 bytes, saved 4% of the time of six
-   streams, by a constant fitted to this machine. What would do it is the
+   streams, by a constant fitted to this machine. Nor is the wait for the
+   pool's threads what a light strip pays: with the picture closed to a
+   thread that wakes after the rows are done, so that the caller returns
+   without it, in place of rayon's scope, which waits for each to wake, all
+   ten streams measured were level on four threads, a still page at 1x
+   0.28 ms either way and the typing 0.36 ms for 0.39 ms. The cost is then
+   in waking them or in their sharing the picture, which of the two not
+   having been measured. What would do it is the
    pool's threads woken only once a picture is known to be worth them, by
    something the decoder learns as it decodes; it has no clock in the page.
 
@@ -243,11 +249,24 @@ In the order the work would go:
      load of each line of a plane, whose lines at 2x are 2,880 bytes apart
      in three planes; whether those are misses of the cache or of the page
      table has not been measured.
+   - **`residual_block`**, 15.8% of the video at 2x after the eight-line
+     deblocking, is little of the parsing its name suggests, that being
+     `sub_blocks`, 18.4% and flat: it is the transform of a block with few
+     coefficients, whose second pass is 17% of the function, and the
+     residual added to the picture, 16% of it, eight samples at a time. A
+     row of sixteen or more is now added sixteen at a time: 37.9 M cycles
+     for 38.2 M on the video at 2x and 12.7 M for 12.8 M on the scroll, one
+     thread, five rounds, and level on the video at 1x, the fast scroll and
+     the typing. On the typing at 2x the largest shares after `sub_blocks`
+     and `residual_block` are the copy of the blocks the reference changed,
+     10% and waiting on the reference's lines, `coding_quadtree`, 9% and
+     flat, and `edge_strengths`, 7.5%.
 
 Measured on `cap5` or the x265 video and no faster, which ruled none of
 them out on the captures, so each is tried again there (item 1), written
-again from its description here, the code not having been kept. Four are
-no faster there either, one thread, against the module as it is:
+again from its description here, the code not having been kept. None is
+faster there either, on one thread unless said, against the module as it
+is:
 
 - **The sub-block walk:** an inner loop or a function of their own for the
   uncoded sub-blocks, with or without the two contexts' models in registers.
@@ -278,10 +297,16 @@ no faster there either, one thread, against the module as it is:
   or two or six blocks before: 23% more instructions and 22% more cycles on
   the scroll at 2x on one thread, the same at every distance, which is the
   cost of the vector loop where a row with no block to keep goes in one
-  `memory.copy`, and says nothing of copying ahead. To be tried again later
-  as it should be, several blocks' width at a time by `memory.copy`, on one
-  thread and on four, where the copy as it is falls in a row's wait on the
-  row above; a round of it is half an hour of the machine.
+  `memory.copy`, and said nothing of copying ahead. Then as it should be,
+  the runs of blocks to copy taken a stripe at a time before the stripe's
+  first block is decoded, a line of 128 samples or more by `memory.copy`,
+  three rounds: four blocks ahead is 5% to 7% more cycles on the scrolls
+  at 2x on one thread, 13.6 M for 12.7 M and 23.8 M for 22.7 M, and 1% on
+  the video; sixteen ahead is level to 1% more, 12.8 M, 22.9 M and 38.3 M
+  for 38.1 M. On four threads, where the copy as it is falls in a row's
+  wait on the row above, neither is ahead by the clock: the scroll at 2x a
+  median 1.90 ms and 1.93 ms for 1.88 ms, the video 4.42 ms and 4.36 ms
+  for 4.44 ms, the typing 0.65 ms and 0.72 ms for 0.68 ms.
 - **The coding unit moved out of `coding_quadtree`** into a function of its
   own. On the captures: level on all nine streams measured, a still strip
   at 2x 2.9 M cycles either way and the typing 4.7 M for 4.6 M. Forced
