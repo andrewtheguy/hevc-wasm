@@ -20,7 +20,10 @@ do not depend on the load. The module's ms is the median of its own clock's
 per picture, and FFmpeg's its process's wall time over the pictures. The
 streams are seven scenes of the display, each at 1x and at 2x, thirty seconds
 of each; a picture is a strip, a quarter of the display, and the Mac sends
-only the strips that changed. Each ratio is the module's ms over FFmpeg's
+only the strips that changed. Strips are what remotex asks of every such
+session; one picture of the whole display is what it asks only for a display
+too low for strips, under 144 rows, and for a probe, so it is not measured
+here. Each ratio is the module's ms over FFmpeg's
 beside it, under 1.00 where the module is the quicker; it sets a median
 against a mean, so a few long pictures weigh on FFmpeg's figure and not on
 the module's. On four threads FFmpeg is run with `-thread_type slice`, its
