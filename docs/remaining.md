@@ -203,7 +203,14 @@ In the order the work would go:
    whose median is 0.61 ms on one thread and 0.67 ms on four, four threads
    were the quicker for 63%. No threshold beat four threads for every
    picture at 2x, and the best at 1x, 400 bytes, saved 4% of the time of six
-   streams, by a constant fitted to this machine. What would do it is the
+   streams, by a constant fitted to this machine. Nor is the wait for the
+   pool's threads what a light strip pays: with the picture closed to a
+   thread that wakes after the rows are done, so that the caller returns
+   without it, in place of rayon's scope, which waits for each to wake, all
+   ten streams measured were level on four threads, a still page at 1x
+   0.28 ms either way and the typing 0.36 ms for 0.39 ms. The cost is then
+   in waking them or in their sharing the picture, which of the two not
+   having been measured. What would do it is the
    pool's threads woken only once a picture is known to be worth them, by
    something the decoder learns as it decodes; it has no clock in the page.
 
