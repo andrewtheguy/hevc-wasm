@@ -23,10 +23,10 @@ Per picture on one thread, the module as it is against native FFmpeg
 | Typing in a terminal | 2.1 | 3.0 | 4.9 | 10.8 |
 | Chrome scrolling an article | 4.8 | 4.9 | 13.2 | 15.6 |
 | The same four times as fast | 9.5 | 8.8 | 23.7 | 24.1 |
-| A video over the whole display | 20.5 | 17.1 | 39.9 | 34.1 |
+| A video over the whole display | 20.3 | 17.1 | 39.2 | 34.1 |
 
 The module is ahead wherever most of a picture is the picture before, and on
-the scroll; it is behind where a picture is new, by 20% and 17% on the video
+the scroll; it is behind where a picture is new, by 19% and 15% on the video
 and by 8% on the fast scroll at 1x. Those are also the streams that cost
 anything. The video at 2x is 12 ms a strip on one thread, 48 ms for a
 frame's four where 30 frames a second leave 33 ms, and 4.6 ms a strip on
@@ -164,7 +164,21 @@ In the order the work would go:
    pool's threads woken only once a picture is known to be worth them, by
    something the decoder learns as it decodes; it has no clock in the page.
 
-4. **What the earlier profiles named**, on the x265 video, each to be looked
+4. **SAO's edge offset**, done for what it was worth. `SaoCtx::component`
+   was 12.8% of the video at 2x, two thirds of it the edge offset's loop,
+   which kept its constants in memory and loaded them again for every
+   sixteen samples. A row of it is now a function of its own, whose
+   constants stay in registers, and an offset is added as a signed
+   saturating add of bytes where the samples had been widened to 16 bits and
+   narrowed again: 3.4% fewer instructions on the video at 2x and 2% at 1x,
+   1% to 6% on the scrolls and the loop, and in cycles 39.2 M for 39.9 M on
+   the video at 2x, 20.3 M for 20.4 M at 1x, and 0.1 to 0.2 M on the scrolls
+   and the loop at 2x. SAO is 10.9% of the video after it. What is left of
+   `component` is the copy of a block and its borders that the edge offset
+   reads its neighbours from; copying the column to the right with the
+   block, in place of a loop down it, was 1.5 M instructions a picture more.
+
+5. **What the earlier profiles named**, on the x265 video, each to be looked
    at again only if the profile of item 1 ranks it:
    - **`coding_quadtree`'s fills**: the `memory.fill` calls into V8 are not
      free even at the word size, and the 4×4-granular maps (prediction mode,

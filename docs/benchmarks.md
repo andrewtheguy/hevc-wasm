@@ -36,7 +36,7 @@ picture, lower better:
 | Typing in a terminal | 2,248 | 2.1 | 2.3 | 3.0 | 0.18 | 1.02 | $\color{green}{0.18}$ | 0.39 | 0.80 | $\color{green}{0.49}$ |
 | Chrome scrolling an article | 2,588 | 4.8 | 4.7 | 4.9 | 1.02 | 1.62 | $\color{green}{0.63}$ | 1.06 | 1.16 | $\color{green}{0.91}$ |
 | The same four times as fast | 2,362 | 9.5 | 9.5 | 8.8 | 2.59 | 2.85 | $\color{green}{0.91}$ | 1.60 | 1.67 | $\color{green}{0.96}$ |
-| A video over the whole display | 1,978 | 20.5 | 20.3 | 17.1 | 6.33 | 5.44 | $\color{red}{1.16}$ | 2.91 | 2.49 | $\color{red}{1.17}$ |
+| A video over the whole display | 1,978 | 20.3 | 20.3 | 17.1 | 6.33 | 5.44 | $\color{red}{1.16}$ | 2.91 | 2.49 | $\color{red}{1.17}$ |
 
 | 2880×464, a strip | pictures | 1 thread, M cycles | 0.0.9 | FFmpeg | 1 thread, ms | FFmpeg | Ratio | 4 threads, ms | FFmpeg by rows | Ratio |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -46,14 +46,14 @@ picture, lower better:
 | Typing in a terminal | 2,424 | 4.9 | 6.1 | 10.8 | 0.67 | 3.73 | $\color{green}{0.18}$ | 0.67 | 1.47 | $\color{green}{0.46}$ |
 | Chrome scrolling an article | 2,579 | 13.2 | 13.0 | 15.6 | 3.17 | 4.97 | $\color{green}{0.64}$ | 1.94 | 2.35 | $\color{green}{0.83}$ |
 | The same four times as fast | 2,501 | 23.7 | 23.4 | 24.1 | 6.80 | 7.64 | $\color{green}{0.89}$ | 3.29 | 3.51 | $\color{green}{0.94}$ |
-| A video over the whole display | 2,446 | 39.9 | 39.5 | 34.1 | 12.28 | 10.76 | $\color{red}{1.14}$ | 4.55 | 3.82 | $\color{red}{1.19}$ |
+| A video over the whole display | 2,446 | 39.2 | 39.5 | 34.1 | 12.28 | 10.76 | $\color{red}{1.14}$ | 4.55 | 3.82 | $\color{red}{1.19}$ |
 
 On one thread the module takes fewer cycles than native FFmpeg wherever most
 of a picture is the picture before, which it neither decodes nor filters nor,
 since 0.0.9, copies: two fifths fewer on the still page at 1x and two thirds
 at 2x, a third and a half on the typing, and a fifth to two fifths on the
 drag and the loop; 15% fewer on the scroll at 2x. Where a picture is new it
-takes more: 8% on the fast scroll at 1x, and 20% and 17% on the video, whose
+takes more: 8% on the fast scroll at 1x, and 19% and 15% on the video, whose
 strip at 2x is 12 ms on one thread, four of them more than the 33 ms of a
 frame at thirty a second, and 4.6 ms on four.
 
@@ -65,7 +65,8 @@ nothing from threads, whose waking costs more than its few rows do to
 decode: a still strip at 1x is 0.17 ms on one thread and 0.29 ms on four in
 the module, 0.85 ms and 0.90 ms in FFmpeg. The four-thread columns are of a
 later run than the others, made when the calling thread became one of the
-four.
+four, and the video's cycles of a later one again, made when SAO's edge
+offset was last changed.
 
 ## Measuring a change
 
