@@ -2,7 +2,7 @@
 //! unit in, at most one picture out, the picture's planes left in this module's
 //! memory for the paint worker to upload to the GPU from there.
 //!
-//! A picture's rows are decoded side by side on rayon's pool, and a page has no
+//! A picture's rows are decoded side by side on the caller and rayon's pool, and a page has no
 //! threads to spawn: a thread is a worker the page starts, running an instance
 //! of this module on the one memory. So the pool's threads are seats the page's
 //! workers take ([`run_pool_thread`]) before the pool is made of them
@@ -81,8 +81,8 @@ pub struct Decoder {
 
 #[wasm_bindgen]
 impl Decoder {
-    /// A decoder whose pictures' rows decode on `threads` of the pool, or on
-    /// the caller for one.
+    /// A decoder whose pictures' rows decode on `threads` threads: the caller
+    /// and, for more than one, that many less one of the pool's.
     #[wasm_bindgen(constructor)]
     pub fn new(threads: usize) -> Decoder {
         Decoder { inner: hevc::Decoder::new(threads), input: Vec::new(), held: None, display: None, shown: false, picture: [0; PICTURE_FIELDS] }

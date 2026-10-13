@@ -46,7 +46,7 @@ until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.9.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.10.tar.gz"
 ```
 
 ## Testing
@@ -120,13 +120,16 @@ the byte planes and the threading are this repository's.
 
 - `rust/hevc` is the decoder: one access unit in, its picture out as three
   planes of bytes at the coded size, with the window to show and the colour the
-  stream states. A picture's rows decode on rayon's pool, each two coding tree
+  stream states. A picture's rows decode on the calling thread and rayon's
+  pool, each two coding tree
   blocks behind the row above, and each row's thread deblocks a block behind
   its decoding and applies SAO, in place, a block behind that, as FFmpeg's
   does: the filters run while the block is still in cache, and nothing waits
   for a pass over the whole picture. A P picture's rows start as the first
   reference's, so the still blocks that are most of a screen are already in
-  place. The sample loops are SIMD128
+  place, and a buffer that held the picture before the reference, of a
+  display in strips the same strip two frames back, is taken for it so that
+  only the blocks changed since are copied. The sample loops are SIMD128
   (`core::arch::wasm32`): the interpolation filters, which write samples
   straight from their last pass, block copies, the residual add, planar and
   angular intra prediction, SAO and a 16-bit inverse transform by dot
@@ -160,9 +163,9 @@ threads. The `mac-*` fixtures in `test/data` are x265's nearest shape to the
 Mac's.
 
 On one thread it takes fewer cycles than native FFmpeg wherever most of a
-picture is the picture before, a quarter fewer on a strip at 1x and up to
-half at 2x, and up to a fifth more where a picture is new, a video over the
-whole display. The tables, how a change is measured (`bench/run.sh`) and
+picture is the picture before, up to two fifths fewer on a strip at 1x and
+two thirds at 2x, and up to a fifth more where a picture is new, a video
+over the whole display. The tables, how a change is measured (`bench/run.sh`) and
 what each step that got here was worth are in
 [docs/benchmarks.md](docs/benchmarks.md).
 

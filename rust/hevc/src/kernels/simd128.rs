@@ -1132,13 +1132,13 @@ pub unsafe fn chroma_edge(p: *mut u8, stride: usize, dir: usize, tc: i32) {
 
 // ---- sample adaptive offset ----
 
-/// `v + off`, `off` a signed offset of at most ±7, clipped to the sample range.
+/// `v + off`, `off` a signed offset of at most ±7, clipped to the sample
+/// range: with the top bit turned the samples are signed, and a signed sum
+/// saturates where the sample range ends.
 #[inline(always)]
 fn add_offset(v: v128, off: v128) -> v128 {
-    let zero = i8x16_splat(0);
-    let pos = i8x16_max(off, zero);
-    let neg = i8x16_max(i8x16_sub(zero, off), zero);
-    u8x16_sub_sat(u8x16_add_sat(v, pos), neg)
+    let top = u8x16_splat(0x80);
+    v128_xor(i8x16_add_sat(v128_xor(v, top), off), top)
 }
 
 /// # Safety
@@ -1176,34 +1176,46 @@ pub unsafe fn sao_edge(d: *mut u8, dst_stride: usize, src: &[u8], origin: usize,
     assert!(w > 0 && h > 0 && origin as isize + lo >= 0 && origin + (h - 1) * src_stride + w - 1 < (src.len() as isize - hi) as usize);
     let table = [offs[0], offs[1], 0, offs[2], offs[3]];
     let tab = i8x16(table[0], table[1], 0, table[3], table[4], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-    let two = i8x16_splat(2);
     let s = src.as_ptr();
     for y in 0..h {
         // SAFETY: `src` checked above, the block at `d` the caller's.
-        unsafe {
-            let dr = d.add(y * dst_stride);
-            let sr = s.add(origin + y * src_stride);
-            let mut x = 0;
-            while x + 16 <= w {
-                let p = sr.add(x);
-                let v = v128_load(p as *const v128);
-                let a = v128_load(p.offset(oa) as *const v128);
-                let b = v128_load(p.offset(ob) as *const v128);
-                // sign(v - a) is (v < a) - (v > a) with the masks being -1.
-                let sa = i8x16_sub(u8x16_lt(v, a), u8x16_gt(v, a));
-                let sb = i8x16_sub(u8x16_lt(v, b), u8x16_gt(v, b));
-                let e = i8x16_add(two, i8x16_add(sa, sb));
-                v128_store(dr.add(x) as *mut v128, add_offset(v, u8x16_swizzle(tab, e)));
-                x += 16;
-            }
-            for x in x..w {
-                let p = sr.add(x);
-                let v = *p as i32;
-                let a = *p.offset(oa) as i32;
-                let b = *p.offset(ob) as i32;
-                let e = (2 + (v - a).signum() + (v - b).signum()) as usize;
-                *dr.add(x) = (v + table[e] as i32).clamp(0, 255) as u8;
-            }
+        unsafe { sao_edge_row(d.add(y * dst_stride), s.add(origin + y * src_stride), w, oa, ob, tab, &table) };
+    }
+}
+
+/// A row of `sao_edge`. Out of line: inlined, each row's vectors have
+/// pointers of their own to step and V8 keeps them in memory, which costs a
+/// row of 32 as much again as the samples do.
+///
+/// # Safety
+/// `w` samples at `d`, and at `s` with those `oa` and `ob` from each.
+#[inline(never)]
+unsafe fn sao_edge_row(d: *mut u8, s: *const u8, w: usize, oa: isize, ob: isize, tab: v128, table: &[i8; 5]) {
+    let two = i8x16_splat(2);
+    let mut x = 0;
+    // SAFETY: the caller's.
+    unsafe {
+        while x + 16 <= w {
+            let p = s.add(x);
+            let v = v128_load(p as *const v128);
+            let a = v128_load(p.offset(oa) as *const v128);
+            let b = v128_load(p.offset(ob) as *const v128);
+            // sign(v - a) is (v <= a) - (v >= a) with the masks being -1:
+            // each a minimum or a maximum and an equality, where a
+            // strict comparison of bytes without sign is that negated.
+            let sa = i8x16_sub(u8x16_le(v, a), u8x16_ge(v, a));
+            let sb = i8x16_sub(u8x16_le(v, b), u8x16_ge(v, b));
+            let e = i8x16_add(two, i8x16_add(sa, sb));
+            v128_store(d.add(x) as *mut v128, add_offset(v, u8x16_swizzle(tab, e)));
+            x += 16;
+        }
+        for x in x..w {
+            let p = s.add(x);
+            let v = *p as i32;
+            let a = *p.offset(oa) as i32;
+            let b = *p.offset(ob) as i32;
+            let e = (2 + (v - a).signum() + (v - b).signum()) as usize;
+            *d.add(x) = (v + table[e] as i32).clamp(0, 255) as u8;
         }
     }
 }

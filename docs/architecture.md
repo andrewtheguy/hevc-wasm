@@ -21,7 +21,7 @@ remotex's decode worker (frontend/src/hevcWasm.worker.ts)
    ▼
 hevc-web, the wasm-bindgen module ── hevc::Decoder
    NAL units → SPS, PPS → slice header → reference picture set
-   → the picture's coding tree block rows, as a wavefront on the pool's threads:
+   → the picture's coding tree block rows, as a wavefront on the caller and the pool's threads:
        CABAC → coding quadtree → prediction (intra, or merge and motion vectors from one reference)
        → residual → samples in place; deblocking a block behind, SAO a block behind that
    → three planes of bytes at the coded size, the window to show, the colour, keyframe or not
@@ -163,7 +163,8 @@ slice's active count.
 ### The wavefront
 
 Each coding tree block row is a substream of the slice, entered at its entry
-point, and decodes on its own thread of rayon's pool, two coding tree blocks
+point, and decodes on a thread of its own, the caller's or one of rayon's
+pool, which the caller's first row does not wait for, two coding tree blocks
 behind the row above: a block waits until the row above has finished the
 block up and to the right of it, which is what its prediction and its
 context models need. The models start as the row above left them after its
@@ -397,27 +398,29 @@ Profiled as the module under Node on one thread of an x86 workstation, with
 its 1440×900 display in strips at 2x, each picture a 2880×464 strip. Shares
 of the samples, and the ms a picture under the profiler:
 
-| function | the video, 13.8 ms | the fast scroll, 8.2 ms | typing, 2.0 ms | a still page, 1.4 ms |
+| function | the video, 14.3 ms | the fast scroll, 8.6 ms | typing, 1.6 ms | a still page, 1.1 ms |
 |---|---|---|---|---|
-| `prediction_unit`, with the interpolation in it | 20.4% | 9.0% | 5.6% | 6.0% |
-| `sub_block`: a coded sub-block's flags, levels and signs | 15.9% | 19.6% | 10.6% | 0.9% |
-| `residual_block`: the last position, the setup, the residual added | 15.0% | 8.8% | 9.6% | 1.3% |
-| SAO `component` | 12.6% | 7.1% | 2.4% | 1.1% |
-| deblock `ctb` | 6.6% | 10.5% | 2.7% | 1.7% |
-| `coding_quadtree` | 3.5% | 5.9% | 7.4% | 9.4% |
-| `intra_predict` | 3.1% | 11.1% | 2.2% | 1.3% |
-| libc `memmove`: the copy of the reference each row starts as | 3.1% | 5.7% | 25.4% | 38.0% |
-| `sub_blocks`: the walk over a block's sub-blocks | 2.3% | 2.5% | 4.0% | |
-| `edge_strengths` | 2.1% | 2.8% | 5.4% | 6.4% |
-| `transform_tree` | 1.5% | 1.6% | | |
-| `dense_transform` | 1.3% | 2.1% | 1.8% | |
-| `run_rows`: the wavefront's waits | 1.3% | 1.3% | 2.8% | 5.7% |
-| `copy`: the whole-sample blocks | 1.3% | 1.1% | 1.3% | 1.4% |
+| `prediction_unit`, with the interpolation in it | 20.0% | 8.7% | 6.3% | 9.0% |
+| `sub_block`: a coded sub-block's flags, levels and signs | 16.3% | 19.8% | 13.4% | 1.5% |
+| `residual_block`: the last position, the setup, the residual added | 15.2% | 8.6% | 12.3% | 1.9% |
+| SAO `component` | 12.8% | 7.0% | 2.9% | 1.7% |
+| deblock `ctb` | 6.6% | 10.6% | 3.7% | 2.4% |
+| `run_rows`: the wavefront's waits, and the copy of the reference's changed blocks each row starts with | 3.9% | 6.9% | 9.4% | 13.1% |
+| `coding_quadtree` | 3.5% | 5.9% | 8.4% | 13.7% |
+| `intra_predict` | 3.1% | 11.0% | 2.5% | 2.0% |
+| `sub_blocks`: the walk over a block's sub-blocks | 2.2% | 2.5% | 5.2% | |
+| `edge_strengths` | 2.2% | 3.0% | 6.0% | 9.0% |
+| `transform_tree` | 1.4% | 1.6% | 0.8% | |
+| `dense_transform` | 1.4% | 2.0% | 2.3% | |
+| `copy`: the whole-sample blocks | 1.3% | 1.0% | 1.9% | 1.9% |
+| libc | | | 3.2% | 3.8% |
 
 The video is inter prediction and the residual's parsing; the scroll the
 parsing, intra prediction of what it brings in, and the deblocking; and a
-strip that hardly changes is the copy of its reference, which is made whole
-for every strip (below). The transforms are next to nothing on any of them.
+strip that hardly changes is the walk over its coding units and the
+wavefront itself, the copy of its reference, 38% of a still strip in release
+0.0.9, being now of the changed blocks alone (below). The transforms are
+next to nothing on any of them.
 
 Per picture, counted by a build with counters:
 
@@ -438,15 +441,17 @@ Per picture, counted by a build with counters:
 | Intra blocks, a component each | 1,468 | 3,117 | 123 | 37 |
 | Coding tree blocks, of 1,350, with no edge of a strength | 608 | 789 | 1,299 | 1,321 |
 | left as the picture before | 342 | 354 | 1,151 | 1,257 |
-| copied from the reference at the row's start | 1,346 | 1,346 | 1,348 | 1,340 |
+| copied from the reference at the row's start | 1,067 | 1,217 | 299 | 126 |
 
-The last two rows are the copy's share above. A picture's buffer is reused,
-and only the blocks changed since copied, when a free buffer holds a picture
-the reference descends from; with a display in strips the buffer that comes
-free is another strip's, so none is ever reused, and a still strip, 93% of
-whose blocks are the picture before, is copied whole all the same.
+A picture's buffer is one that holds a picture its reference descends from,
+and only the blocks changed since are copied into it. With a display in
+strips that buffer is the one the same strip held two frames before, which
+the decoder keeps for it rather than hand to another strip: until it did,
+release 0.0.9 and before, every strip was copied whole, all 1,350 blocks.
+What is copied is what the reference changed from its own reference, not
+what this picture changes, which it writes over all the same.
 
-On four threads the video decodes 2.6× as fast as on one at 2x and 2.1× at
-1x, the fast scroll at 2x 1.9× and the scroll 1.5×. A light strip is slower
-on four: a still strip at 1x is 0.27 ms and 1.8 M cycles on one thread,
-0.48 ms and 2.4 M on four.
+On four threads the video decodes 2.7× as fast as on one at 2x and 2.2× at
+1x, the fast scroll at 2x 2.1× and the scroll 1.6×. A light strip is slower
+on four: a still strip at 1x is 0.17 ms and 1.5 M cycles on one thread,
+0.29 ms and 1.9 M on four.

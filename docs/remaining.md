@@ -17,19 +17,19 @@ Per picture on one thread, the module as it is against native FFmpeg
 
 | | 1x, M cycles | FFmpeg | 2x, M cycles | FFmpeg |
 |---|---|---|---|---|
-| A still page | 1.8 | 2.4 | 4.3 | 9.0 |
-| A window dragged | 2.0 | 2.6 | 6.0 | 9.7 |
-| A quarter of the display in a loop | 2.7 | 3.2 | 7.7 | 11.2 |
-| Typing in a terminal | 2.3 | 3.0 | 6.0 | 10.7 |
-| Chrome scrolling an article | 4.7 | 4.9 | 13.0 | 15.6 |
-| The same four times as fast | 9.4 | 8.8 | 23.4 | 24.1 |
-| A video over the whole display | 20.5 | 17.1 | 39.7 | 34.1 |
+| A still page | 1.5 | 2.5 | 2.8 | 9.0 |
+| A window dragged | 2.0 | 2.6 | 5.8 | 9.7 |
+| A quarter of the display in a loop | 2.5 | 3.2 | 7.2 | 11.3 |
+| Typing in a terminal | 2.1 | 3.0 | 4.9 | 10.8 |
+| Chrome scrolling an article | 4.8 | 4.9 | 13.2 | 15.6 |
+| The same four times as fast | 9.5 | 8.8 | 23.7 | 24.1 |
+| A video over the whole display | 20.3 | 17.1 | 39.2 | 34.1 |
 
 The module is ahead wherever most of a picture is the picture before, and on
-the scroll; it is behind where a picture is new, by 20% and 16% on the video
-and by 7% on the fast scroll at 1x. Those are also the streams that cost
+the scroll; it is behind where a picture is new, by 19% and 15% on the video
+and by 8% on the fast scroll at 1x. Those are also the streams that cost
 anything. The video at 2x is 12 ms a strip on one thread, 48 ms for a
-frame's four where 30 frames a second leave 33 ms, and 4.7 ms a strip on
+frame's four where 30 frames a second leave 33 ms, and 4.6 ms a strip on
 four threads.
 
 In the order the work would go:
@@ -82,10 +82,11 @@ In the order the work would go:
    The filters are 20 of `prediction_unit`'s 24 points, and the chroma, two
    whole planes under 4:4:4, costs what the luma does.
 
-   Three of these are done since 0.0.8, every picture of every stream still
-   FFmpeg's. In M cycles a picture on one thread:
+   Three of these were done in release 0.0.9, every picture of every stream
+   still FFmpeg's. In M cycles a picture on one thread, as measured then and
+   before item 2 was done (the table above is the module as it is):
 
-   | | 0.0.8 | Now | FFmpeg |
+   | | 0.0.8 | 0.0.9 | FFmpeg |
    |---|---|---|---|
    | The video at 2x | 41.8 | 39.2 | 34.2 |
    | The fast scroll at 2x | 25.4 | 23.3 | 24.0 |
@@ -122,36 +123,62 @@ In the order the work would go:
    The libc share is neither function's: by call graph all of it is under the
    wavefront's row loop, the row-start copy of item 2.
 
-2. **The reference copied whole for every strip.** Each row starts as its
-   reference's, and the copy is spared only where a free buffer holds a
+2. **The reference copied whole for every strip**, done. Each row starts as
+   its reference's, and the copy is spared where a free buffer holds a
    picture the reference descends from. With a display in strips that never
-   happens: a strip's reference is the same strip of the frame before, and
-   the buffer that has come free by then was another strip's, which the next
-   picture takes for want of a better. Counted over the streams, no picture
-   reused a buffer, and all of a strip's 1,350 coding tree blocks at 2x are
-   copied whether 342 of them are left as the picture before (the video) or
-   1,257 (a still page). The copy is 38% of a still strip's samples at 2x,
-   25% of the typing's, 20% of the loop's, 11% of the scroll's, 6% of the
-   fast scroll's and 3% of the video's. What it wants is a buffer kept for
-   each strip's lineage, by not handing a strip the buffer another's
-   reference descends from while a spare can be had, at the cost of up to
-   four more buffers. Past that, of the video's blocks 896 have a coding
-   unit that wrote samples, 848 an edge the deblocking reached and 841 SAO,
-   so copying only the lines a filter can change is worth less there.
+   happened: a strip's reference is the same strip of the frame before, and
+   the buffer free by then was another strip's, which the next picture took
+   for want of a better. A free buffer that a reference descends from is now
+   left for the picture decoded from that reference, and a new one is made
+   when no other is free; the pool is four buffers as before. Of a strip's
+   1,350 coding tree blocks at 2x, 126 are now copied a picture on the still
+   page, 299 on the typing, 556 on the loop, 1,067 on the video and some
+   1,210 on the scrolls. On one thread that is 35% fewer cycles on the still
+   page at 2x and 17% at 1x, 20% and 9% on the typing, 7% on the loop, and
+   level on the drag; the scrolls and the video take 1% more, their changed
+   blocks copied by the run where a whole row went in one `memmove`. On four
+   threads a light strip at 1x is no quicker by the clock for it (item 3).
+
+   What is copied is what the reference changed, whether or not this
+   picture changes it again: of the video's blocks 896 have a coding unit
+   that wrote samples, 848 an edge the deblocking reached and 841 SAO, so
+   copying only the lines a filter can change is worth little there.
 
 3. **Threads on a small picture.** Four threads cost more than one wherever a
-   strip is light: a still page at 1x is 1.8 M cycles and a 0.26 ms median on
-   one thread, 2.4 M and 0.48 ms on four, and so with the drag, the loop and
-   the typing, 20% to 40% more cycles. They pay only on the heavy streams:
-   2.6× on the video at 2x, 2.1× at 1x, 1.9× on the fast scroll at 2x, 1.5× on
-   the scroll. Whether a
-   strip under some size should be decoded on the calling thread, and by what
-   the decoder would know it before decoding, is not tried. The wavefront's
-   waits (`wait_for` spinning 256 times before it sleeps), the row-start
-   copies and rayon's scope per picture are the three places the loss can be,
-   and `perf stat` on the pool threads separately would say which.
+   strip is light, and less than they did: the thread that asks for the
+   picture is now one of the four, with the first row under way while the
+   pool's wake, where it had slept until the pool was done. Every strip is
+   0.1 to 0.2 ms sooner for it on four threads: a still page at 1x 0.29 ms
+   for 0.49 ms, the typing 0.39 ms for 0.61 ms, the video at 2x 4.55 ms for
+   4.66 ms. One thread still does a still strip at 1x in 0.17 ms, since the
+   picture is not done until the pool's threads have woken to find nothing
+   left. Threads pay on the heavy streams: 2.7× on the video at 2x, 2.2× at
+   1x, 2.1× on the fast scroll at 2x, 1.6× on the scroll.
 
-4. **What the earlier profiles named**, on the x265 video, each to be looked
+   Tried and not kept: one thread for a picture under some size in bytes.
+   The size says little of the time: of the strips under 200 bytes at 2x,
+   whose median is 0.61 ms on one thread and 0.67 ms on four, four threads
+   were the quicker for 63%. No threshold beat four threads for every
+   picture at 2x, and the best at 1x, 400 bytes, saved 4% of the time of six
+   streams, by a constant fitted to this machine. What would do it is the
+   pool's threads woken only once a picture is known to be worth them, by
+   something the decoder learns as it decodes; it has no clock in the page.
+
+4. **SAO's edge offset**, done for what it was worth. `SaoCtx::component`
+   was 12.8% of the video at 2x, two thirds of it the edge offset's loop,
+   which kept its constants in memory and loaded them again for every
+   sixteen samples. A row of it is now a function of its own, whose
+   constants stay in registers, and an offset is added as a signed
+   saturating add of bytes where the samples had been widened to 16 bits and
+   narrowed again: 3.4% fewer instructions on the video at 2x and 2% at 1x,
+   1% to 6% on the scrolls and the loop, and in cycles 39.2 M for 39.9 M on
+   the video at 2x, 20.3 M for 20.4 M at 1x, and 0.1 to 0.2 M on the scrolls
+   and the loop at 2x. SAO is 10.9% of the video after it. What is left of
+   `component` is the copy of a block and its borders that the edge offset
+   reads its neighbours from; copying the column to the right with the
+   block, in place of a loop down it, was 1.5 M instructions a picture more.
+
+5. **What the earlier profiles named**, on the x265 video, each to be looked
    at again only if the profile of item 1 ranks it:
    - **`coding_quadtree`'s fills**: the `memory.fill` calls into V8 are not
      free even at the word size, and the 4×4-granular maps (prediction mode,

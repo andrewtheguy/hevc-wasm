@@ -5,8 +5,8 @@
 //!
 //! Each access unit decodes to its picture, which comes back as three planes
 //! of bytes at the coded size, with the window to show and the colour the
-//! stream states. A picture's rows decode in parallel on rayon's pool when the
-//! decoder is made with threads.
+//! stream states. A picture's rows decode in parallel when the decoder is
+//! made with threads, on the calling thread and on rayon's pool.
 //!
 //! A display the Mac sends in strips is the same stream, each picture a strip
 //! of it, which [`Display`] puts together.
