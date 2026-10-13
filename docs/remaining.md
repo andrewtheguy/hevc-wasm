@@ -12,7 +12,7 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 The streams are the Mac's own, taken on 2026-10-12: seven scenes of a
 1440×900 display in four strips, at 1x and at 2x, a picture being a strip.
-Per picture on one thread, the module as it is against native FFmpeg
+Per picture on one thread, release 0.0.10 against native FFmpeg
 (`bench/run.sh`, `perf stat`):
 
 | | 1x, M cycles | FFmpeg | 2x, M cycles | FFmpeg |
@@ -128,7 +128,7 @@ In the order the work would go:
 
    Three of these were done in release 0.0.9, every picture of every stream
    still FFmpeg's. In M cycles a picture on one thread, as measured then and
-   before item 3 was done (the table above is the module as it is):
+   before item 3 was done (the table above is release 0.0.10):
 
    | | 0.0.8 | 0.0.9 | FFmpeg |
    |---|---|---|---|

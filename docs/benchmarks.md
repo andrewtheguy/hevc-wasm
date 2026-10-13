@@ -8,8 +8,9 @@ gain, in [what remains](remaining.md).
 
 ## Against FFmpeg and release 0.0.9
 
-The comparison is of the module under Bun, as it is, which is release
-0.0.10, and as release 0.0.9,
+The comparison is of the module under Bun, as release 0.0.10, which is
+before the one change since ([below](#the-steps-that-got-here)), and as
+release 0.0.9,
 against FFmpeg's native decoder: Debian 13's ffmpeg 7.1.5-0+deb13u1, built by
 gcc 14 with `--toolchain=hardened`, which picks its vector code as it runs,
 AVX2 on this i5-8500T, run as `ffmpeg -threads N -i FILE -benchmark -f null -`.
