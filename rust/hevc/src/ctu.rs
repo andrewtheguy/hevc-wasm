@@ -12,7 +12,10 @@ use crate::deblock::DeblockCtx;
 use crate::error::{Error, Result};
 use crate::intra::RefSamples;
 use crate::kernels;
-use crate::pic::{Motion, PicState, Picture, SaoParams, EDGED_INSIDE, EDGED_LEFT, EDGED_TOP, PRED_INTER, PRED_INTRA, PRED_SKIP};
+use crate::pic::{
+    EDGED_INSIDE, EDGED_LEFT, EDGED_TOP, Motion, PRED_INTER, PRED_INTRA, PRED_SKIP, PicState,
+    Picture, SaoParams,
+};
 use crate::ps::{Pps, Sps};
 use crate::sao::SaoCtx;
 use crate::shared::{MapPtr, PlanePtr};
@@ -154,7 +157,11 @@ impl<'a> PictureCtx<'a> {
         }
         let Some(sao) = &self.sao else { return };
         let mut up_to = |row: usize, behind: usize, done: &mut usize| {
-            let end = if x_end { m.ctb_w } else { (x + 1).saturating_sub(behind) };
+            let end = if x_end {
+                m.ctb_w
+            } else {
+                (x + 1).saturating_sub(behind)
+            };
             for cx in *done..end {
                 sao.ctb(&mut s.sao_src, cx, row);
             }
@@ -244,7 +251,10 @@ pub fn decode_row(pic: &PictureCtx, s: &mut Scratch, row: usize) -> Result<()> {
     // The row's samples start as the base's, before the wait on the row above.
     if let Some(base) = pic.base {
         let n = ctb.min(m.height - y0);
-        let kept = pic.kept.map(|k| &k[row * m.ctb_w..(row + 1) * m.ctb_w]).filter(|k| k.contains(&1));
+        let kept = pic
+            .kept
+            .map(|k| &k[row * m.ctb_w..(row + 1) * m.ctb_w])
+            .filter(|k| k.contains(&1));
         if let Some(kept) = kept {
             // Only the runs of blocks the buffer does not hold already.
             let mut a = 0;
@@ -253,13 +263,23 @@ pub fn decode_row(pic: &PictureCtx, s: &mut Scratch, row: usize) -> Result<()> {
                     a += 1;
                     continue;
                 }
-                let b = kept[a..].iter().position(|&k| k != 0).map_or(m.ctb_w, |i| a + i);
+                let b = kept[a..]
+                    .iter()
+                    .position(|&k| k != 0)
+                    .map_or(m.ctb_w, |i| a + i);
                 let (x0, w) = (a * ctb, (b * ctb).min(m.width) - a * ctb);
                 for c in 0..3 {
                     let src = &base.planes[c];
                     // SAFETY: the blocks are this row's, and nothing has written them.
                     let dst = unsafe { pic.planes[c].block_mut(x0, y0, w, n) };
-                    kernels::copy_rows(dst, src.stride, &src.data[y0 * src.stride + x0..], src.stride, w, n);
+                    kernels::copy_rows(
+                        dst,
+                        src.stride,
+                        &src.data[y0 * src.stride + x0..],
+                        src.stride,
+                        w,
+                        n,
+                    );
                 }
                 a = b;
             }
@@ -276,8 +296,12 @@ pub fn decode_row(pic: &PictureCtx, s: &mut Scratch, row: usize) -> Result<()> {
         if !pic.progress[row - 1].wait_for(2) {
             return Err(Error::invalid("the row above failed"));
         }
-        let saved = pic.wpp_ctx[row - 1].lock().map_err(|_| Error::invalid("a poisoned row"))?;
-        saved.clone().ok_or_else(|| Error::invalid("no models from the row above"))?
+        let saved = pic.wpp_ctx[row - 1]
+            .lock()
+            .map_err(|_| Error::invalid("a poisoned row"))?;
+        saved
+            .clone()
+            .ok_or_else(|| Error::invalid("no models from the row above"))?
     } else {
         Contexts::init(if pic.sh.intra { 0 } else { 1 }, pic.sh.slice_qp)
     };
@@ -306,11 +330,15 @@ pub fn decode_row(pic: &PictureCtx, s: &mut Scratch, row: usize) -> Result<()> {
         }
         r.decode_ctu(x * ctb, y0, row * m.ctb_w + x)?;
         if x == 1 {
-            *pic.wpp_ctx[row].lock().map_err(|_| Error::invalid("a poisoned row"))? = Some(r.cab.ctx.clone());
+            *pic.wpp_ctx[row]
+                .lock()
+                .map_err(|_| Error::invalid("a poisoned row"))? = Some(r.cab.ctx.clone());
         }
         let end_of_slice = r.cab.terminate();
         if end_of_slice != (row == m.ctb_h - 1 && x == m.ctb_w - 1) {
-            return Err(Error::invalid("end_of_slice_segment_flag where the picture does not end"));
+            return Err(Error::invalid(
+                "end_of_slice_segment_flag where the picture does not end",
+            ));
         }
         pic.filter_after(r.s, x, row, &mut sao_done);
         pic.progress[row].advance(x as u32 + 1);
@@ -337,7 +365,9 @@ impl<'a> Row<'a> {
     /// (`xc`, `yc`) to use: inside the picture and decoded before it.
     #[inline]
     fn available(&self, xc: usize, yc: usize, xn: i32, yn: i32) -> bool {
-        self.in_picture(xn, yn) && self.pic.zs[self.pic.maps.idx4(xn as usize, yn as usize)] <= self.pic.zs[self.pic.maps.idx4(xc, yc)]
+        self.in_picture(xn, yn)
+            && self.pic.zs[self.pic.maps.idx4(xn as usize, yn as usize)]
+                <= self.pic.zs[self.pic.maps.idx4(xc, yc)]
     }
 
     /// §6.4.1 for a neighbour to the left of or above the block, in a row
@@ -365,7 +395,10 @@ impl<'a> Row<'a> {
     fn wrote(&self, x: usize, y: usize) {
         let m = &self.pic.maps;
         // SAFETY: this coding tree block's own entry.
-        unsafe { m.written.set((y >> m.log2_ctb) * m.ctb_w + (x >> m.log2_ctb), 1) };
+        unsafe {
+            m.written
+                .set((y >> m.log2_ctb) * m.ctb_w + (x >> m.log2_ctb), 1)
+        };
     }
 
     // ---- SAO syntax (§7.3.8.3) ----
@@ -383,7 +416,11 @@ impl<'a> Row<'a> {
         }
         let mut params = [SaoParams::default(); 3];
         for c in 0..3usize {
-            if !(if c == 0 { self.pic.sh.sao_luma } else { self.pic.sh.sao_chroma }) {
+            if !(if c == 0 {
+                self.pic.sh.sao_luma
+            } else {
+                self.pic.sh.sao_chroma
+            }) {
                 continue;
             }
             let type_idx = if c < 2 {
@@ -418,7 +455,11 @@ impl<'a> Row<'a> {
                 }
             } else {
                 // The edge class of Cr is Cb's.
-                params[c].aux = if c < 2 { self.cab.bypass_bits(2) as u8 } else { params[1].aux };
+                params[c].aux = if c < 2 {
+                    self.cab.bypass_bits(2) as u8
+                } else {
+                    params[1].aux
+                };
                 params[c].offset = [abs[0] as i8, abs[1] as i8, -abs[2] as i8, -abs[3] as i8];
             }
         }
@@ -434,7 +475,10 @@ impl<'a> Row<'a> {
         let size = 1usize << log2cb;
         let min_cb = self.pic.sps.log2_min_cb_size as usize;
         let split = if x0 + size <= m.width && y0 + size <= m.height && log2cb > min_cb {
-            let deeper = |s: &Self, xn: i32, yn: i32| s.in_picture(xn, yn) && s.map_get(m.ct_depth, m.idx4(xn as usize, yn as usize)) > depth;
+            let deeper = |s: &Self, xn: i32, yn: i32| {
+                s.in_picture(xn, yn)
+                    && s.map_get(m.ct_depth, m.idx4(xn as usize, yn as usize)) > depth
+            };
             let cond_l = deeper(self, x0 as i32 - 1, y0 as i32) as usize;
             let cond_a = deeper(self, x0 as i32, y0 as i32 - 1) as usize;
             self.cab.decode(CTX_SPLIT_CU + cond_l + cond_a) == 1
@@ -443,18 +487,32 @@ impl<'a> Row<'a> {
         };
         // §8.6.1: a quantization group starts at a quadtree node of exactly
         // `Log2MinCuQpDeltaSize`, or at a larger node that is a coding unit.
-        let log2_min_qg = self.pic.sps.log2_ctb_size as usize - self.pic.pps.diff_cu_qp_delta_depth as usize;
+        let log2_min_qg =
+            self.pic.sps.log2_ctb_size as usize - self.pic.pps.diff_cu_qp_delta_depth as usize;
         if log2cb == log2_min_qg || (log2cb > log2_min_qg && !split) {
             if self.pic.pps.cu_qp_delta_enabled {
                 self.is_cu_qp_delta_coded = false;
                 self.cu_qp_delta_val = 0;
             }
-            let qp_prev = if self.qp_prev_reset { self.pic.sh.slice_qp } else { self.last_cu_qp };
+            let qp_prev = if self.qp_prev_reset {
+                self.pic.sh.slice_qp
+            } else {
+                self.last_cu_qp
+            };
             self.qp_prev_reset = false;
             let cur_ctb = (y0 >> m.log2_ctb) * m.ctb_w + (x0 >> m.log2_ctb);
-            let in_ctb = |x: usize, y: usize| (y >> m.log2_ctb) * m.ctb_w + (x >> m.log2_ctb) == cur_ctb;
-            let qp_a = if x0 > 0 && in_ctb(x0 - 1, y0) { self.map_get(m.qp_y, m.idx4(x0 - 1, y0)) as i32 } else { qp_prev };
-            let qp_b = if y0 > 0 && in_ctb(x0, y0 - 1) { self.map_get(m.qp_y, m.idx4(x0, y0 - 1)) as i32 } else { qp_prev };
+            let in_ctb =
+                |x: usize, y: usize| (y >> m.log2_ctb) * m.ctb_w + (x >> m.log2_ctb) == cur_ctb;
+            let qp_a = if x0 > 0 && in_ctb(x0 - 1, y0) {
+                self.map_get(m.qp_y, m.idx4(x0 - 1, y0)) as i32
+            } else {
+                qp_prev
+            };
+            let qp_b = if y0 > 0 && in_ctb(x0, y0 - 1) {
+                self.map_get(m.qp_y, m.idx4(x0, y0 - 1)) as i32
+            } else {
+                qp_prev
+            };
             self.qp_y_pred = (qp_a + qp_b + 1) >> 1;
         }
         if split {
@@ -471,7 +529,14 @@ impl<'a> Row<'a> {
     }
 
     fn set_cu_qp(&mut self) {
-        self.fill4(self.pic.maps.qp_y, self.cu_x, self.cu_y, self.cu_size, self.cu_size, self.qp_y as i8);
+        self.fill4(
+            self.pic.maps.qp_y,
+            self.cu_x,
+            self.cu_y,
+            self.cu_size,
+            self.cu_size,
+            self.qp_y as i8,
+        );
     }
 
     /// Records the strengths (§8.7.2.4) of the edges along the left and top
@@ -501,10 +566,13 @@ impl<'a> Row<'a> {
                 return 1;
             }
             let (mp, mq) = (self.map_get(m.motion, p), self.map_get(m.motion, q));
-            if mp.ref_idx != mq.ref_idx && self.pic.refs[mp.ref_idx as usize].poc != self.pic.refs[mq.ref_idx as usize].poc {
+            if mp.ref_idx != mq.ref_idx
+                && self.pic.refs[mp.ref_idx as usize].poc != self.pic.refs[mq.ref_idx as usize].poc
+            {
                 return 1;
             }
-            ((mp.mv[0] as i32 - mq.mv[0] as i32).abs() >= 4 || (mp.mv[1] as i32 - mq.mv[1] as i32).abs() >= 4) as u8
+            ((mp.mv[0] as i32 - mq.mv[0] as i32).abs() >= 4
+                || (mp.mv[1] as i32 - mq.mv[1] as i32).abs() >= 4) as u8
         };
         // How many blocks from `p`, at `pos4` along the edge with `left` to
         // go, share its strength.
@@ -540,7 +608,11 @@ impl<'a> Row<'a> {
                 r += n;
             }
             if any != 0 {
-                edged |= if x & in_ctb == 0 { EDGED_LEFT } else { EDGED_INSIDE };
+                edged |= if x & in_ctb == 0 {
+                    EDGED_LEFT
+                } else {
+                    EDGED_INSIDE
+                };
             }
         }
         if y & 7 == 0 && y > 0 {
@@ -557,7 +629,11 @@ impl<'a> Row<'a> {
                 c += n;
             }
             if any != 0 {
-                edged |= if y & in_ctb == 0 { EDGED_TOP } else { EDGED_INSIDE };
+                edged |= if y & in_ctb == 0 {
+                    EDGED_TOP
+                } else {
+                    EDGED_INSIDE
+                };
             }
         }
         if edged != 0 {
@@ -577,7 +653,10 @@ impl<'a> Row<'a> {
         self.cu_size = n;
         let mut skip = false;
         if !self.pic.sh.intra {
-            let skipped = |s: &Self, xn: i32, yn: i32| s.in_picture(xn, yn) && s.map_get(m.pred_mode, m.idx4(xn as usize, yn as usize)) == PRED_SKIP;
+            let skipped = |s: &Self, xn: i32, yn: i32| {
+                s.in_picture(xn, yn)
+                    && s.map_get(m.pred_mode, m.idx4(xn as usize, yn as usize)) == PRED_SKIP
+            };
             let cond_l = skipped(self, x0 as i32 - 1, y0 as i32) as usize;
             let cond_a = skipped(self, x0 as i32, y0 as i32 - 1) as usize;
             skip = self.cab.decode(CTX_CU_SKIP + cond_l + cond_a) == 1;
@@ -605,7 +684,18 @@ impl<'a> Row<'a> {
         if !self.cu_intra || log2cb == min_cb {
             self.part_mode = self.parse_part_mode(log2cb);
         }
-        self.fill4(m.pred_mode, x0, y0, n, n, if self.cu_intra { PRED_INTRA } else { PRED_INTER });
+        self.fill4(
+            m.pred_mode,
+            x0,
+            y0,
+            n,
+            n,
+            if self.cu_intra {
+                PRED_INTRA
+            } else {
+                PRED_INTER
+            },
+        );
         self.wrote(x0, y0);
         self.intra_split = self.cu_intra && self.part_mode == PartMode::PartNxN;
         let mut merge_2nx2n = false;
@@ -614,9 +704,15 @@ impl<'a> Row<'a> {
         } else {
             merge_2nx2n = self.inter_prediction_units(x0, y0, n)?;
         }
-        let rqt_root_cbf = self.cu_intra || (self.part_mode == PartMode::Part2Nx2N && merge_2nx2n) || self.cab.decode(CTX_RQT_ROOT_CBF) == 1;
+        let rqt_root_cbf = self.cu_intra
+            || (self.part_mode == PartMode::Part2Nx2N && merge_2nx2n)
+            || self.cab.decode(CTX_RQT_ROOT_CBF) == 1;
         if rqt_root_cbf {
-            self.max_trafo_depth = if self.cu_intra { self.pic.sps.max_transform_hierarchy_depth_intra + self.intra_split as u8 } else { self.pic.sps.max_transform_hierarchy_depth_inter };
+            self.max_trafo_depth = if self.cu_intra {
+                self.pic.sps.max_transform_hierarchy_depth_intra + self.intra_split as u8
+            } else {
+                self.pic.sps.max_transform_hierarchy_depth_inter
+            };
             self.transform_tree(x0, y0, log2cb, 0, true, true)?;
         } else {
             // The coding block is the one transform block, without coefficients.
@@ -638,7 +734,10 @@ impl<'a> Row<'a> {
         }
         // At the minimum coding block size an inter block may split four
         // ways, unless it is 8×8.
-        if log2cb == self.pic.sps.log2_min_cb_size as usize && log2cb > 3 && self.cab.decode(CTX_PART_MODE + 2) == 0 {
+        if log2cb == self.pic.sps.log2_min_cb_size as usize
+            && log2cb > 3
+            && self.cab.decode(CTX_PART_MODE + 2) == 0
+        {
             return PartMode::PartNxN;
         }
         PartMode::PartNx2N
@@ -648,7 +747,11 @@ impl<'a> Row<'a> {
 
     fn parse_intra_modes(&mut self, x0: usize, y0: usize, n: usize) -> Result<()> {
         let m = self.pic.maps;
-        let parts = if self.part_mode == PartMode::PartNxN { 4 } else { 1 };
+        let parts = if self.part_mode == PartMode::PartNxN {
+            4
+        } else {
+            1
+        };
         let pb = if parts == 4 { n / 2 } else { n };
         let mut prev = [false; 4];
         for p in prev.iter_mut().take(parts) {
@@ -680,17 +783,17 @@ impl<'a> Row<'a> {
         // derived from its own luma mode.
         for j in 0..parts {
             let (xp, yp) = (x0 + (j & 1) * pb, y0 + (j >> 1) * pb);
-            let icpm = if self.cab.decode(CTX_INTRA_CHROMA_PRED_MODE) == 0 { 4 } else { self.cab.bypass_bits(2) as u8 };
+            let icpm = if self.cab.decode(CTX_INTRA_CHROMA_PRED_MODE) == 0 {
+                4
+            } else {
+                self.cab.bypass_bits(2) as u8
+            };
             let luma = self.map_get(m.intra_mode, m.idx4(xp, yp));
             self.intra_chroma_mode[j] = match icpm {
                 4 => luma,
                 _ => {
                     let mode = [0u8, 26, 10, 1][icpm as usize];
-                    if mode == luma {
-                        34
-                    } else {
-                        mode
-                    }
+                    if mode == luma { 34 } else { mode }
                 }
             };
         }

@@ -34,16 +34,35 @@ impl Display {
     /// rows, starting `display` over where it is laid out for another. A
     /// keyframe starts it over too: what the other strips hold is from before
     /// whatever the keyframe mends, and is not shown beside it.
-    pub fn place(display: &mut Option<Self>, strip: usize, rows: usize, part: &Decoded) -> Result<()> {
+    pub fn place(
+        display: &mut Option<Self>,
+        strip: usize,
+        rows: usize,
+        part: &Decoded,
+    ) -> Result<()> {
         let [x, y, width, pitch] = part.window.map(|v| v as usize);
         // A quarter of the display's rows, rounded up to a multiple of 16.
-        if strip >= STRIPS || pitch != rows.div_ceil(STRIPS).next_multiple_of(16) || pitch * (STRIPS - 1) > rows || (width * rows) as u64 > MAX_LUMA_PS {
-            return Err(Error::invalid(format!("a {width}\u{d7}{pitch} picture is not strip {strip} of a display of {rows} rows")));
+        if strip >= STRIPS
+            || pitch != rows.div_ceil(STRIPS).next_multiple_of(16)
+            || pitch * (STRIPS - 1) > rows
+            || (width * rows) as u64 > MAX_LUMA_PS
+        {
+            return Err(Error::invalid(format!(
+                "a {width}\u{d7}{pitch} picture is not strip {strip} of a display of {rows} rows"
+            )));
         }
         let display = match display {
-            Some(d) if d.planes[0].width == width && d.planes[0].height == rows && d.pitch == pitch => d,
+            Some(d)
+                if d.planes[0].width == width && d.planes[0].height == rows && d.pitch == pitch =>
+            {
+                d
+            }
             _ => display.insert(Display {
-                planes: [Plane::new(width, rows), Plane::new(width, rows), Plane::new(width, rows)],
+                planes: [
+                    Plane::new(width, rows),
+                    Plane::new(width, rows),
+                    Plane::new(width, rows),
+                ],
                 colour: part.colour,
                 pitch,
                 placed: 0,

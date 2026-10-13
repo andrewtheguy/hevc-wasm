@@ -8,8 +8,8 @@ use crate::ctu::{self, Maps, PictureCtx, RefPic, Scratch};
 use crate::deblock::DeblockCtx;
 use crate::error::{Error, Result};
 use crate::nal::{self, NalHeader, Rbsp};
-use crate::pic::{PicState, Picture, EDGED_LEFT, EDGED_TOP};
-use crate::ps::{parse_pps, parse_sps, Colour, Pps, Sps};
+use crate::pic::{EDGED_LEFT, EDGED_TOP, PicState, Picture};
+use crate::ps::{Colour, Pps, Sps, parse_pps, parse_sps};
 use crate::sao::SaoCtx;
 use crate::shared::PlanePtr;
 use crate::slice::parse_slice_header;
@@ -83,7 +83,9 @@ impl Decoder {
             kept: Vec::new(),
             progress: Vec::new(),
             wpp_ctx: Vec::new(),
-            scratch: (0..threads).map(|_| Mutex::new(Scratch::default())).collect(),
+            scratch: (0..threads)
+                .map(|_| Mutex::new(Scratch::default()))
+                .collect(),
             rbsp: Rbsp::default(),
         }
     }
@@ -135,7 +137,11 @@ impl Decoder {
                     self.rbsp = rbsp;
                     out = r?;
                 }
-                t if t < 32 => return Err(Error::unsupported(format!("a picture of NAL unit type {t}"))),
+                t if t < 32 => {
+                    return Err(Error::unsupported(format!(
+                        "a picture of NAL unit type {t}"
+                    )));
+                }
                 _ => {}
             }
         }
@@ -155,13 +161,20 @@ impl Decoder {
             Some((sps, pps))
         };
         let sh = parse_slice_header(&mut r, hdr, &lookup)?;
-        let (sps, pps) = lookup(sh.pps_id).ok_or_else(|| Error::invalid("the slice's parameter sets"))?;
+        let (sps, pps) =
+            lookup(sh.pps_id).ok_or_else(|| Error::invalid("the slice's parameter sets"))?;
         let (sps, pps) = (sps.clone(), pps.clone());
-        if !idr && self.dpb.iter().any(|e| e.pic.width() != sps.width as usize || e.pic.height() != sps.height as usize) {
+        if !idr
+            && self.dpb.iter().any(|e| {
+                e.pic.width() != sps.width as usize || e.pic.height() != sps.height as usize
+            })
+        {
             return Err(Error::invalid("a picture size change without an IDR"));
         }
         if sh.entry_point_offsets.len() + 1 != sps.pic_height_in_ctbs as usize {
-            return Err(Error::unsupported("a slice whose entry points are not one per coding tree block row"));
+            return Err(Error::unsupported(
+                "a slice whose entry points are not one per coding tree block row",
+            ));
         }
 
         // POC (§8.3.1).
@@ -189,7 +202,13 @@ impl Decoder {
         if idr {
             self.release_all();
         }
-        let wanted: Vec<(i32, bool)> = sh.st_rps.neg.iter().chain(sh.st_rps.pos.iter()).map(|&(d, used)| (poc + d, used)).collect();
+        let wanted: Vec<(i32, bool)> = sh
+            .st_rps
+            .neg
+            .iter()
+            .chain(sh.st_rps.pos.iter())
+            .map(|&(d, used)| (poc + d, used))
+            .collect();
         let mut i = 0;
         while i < self.dpb.len() {
             if wanted.iter().any(|&(p, _)| p == self.dpb[i].poc) {
@@ -201,9 +220,15 @@ impl Decoder {
         }
         // A missing reference is a grey picture (§8.3.3.2), as FFmpeg makes
         // one; counted before any is made, since each is a picture's memory.
-        let missing: Vec<i32> = wanted.iter().filter(|&&(p, used)| used && !self.dpb.iter().any(|e| e.poc == p)).map(|&(p, _)| p).collect();
+        let missing: Vec<i32> = wanted
+            .iter()
+            .filter(|&&(p, used)| used && !self.dpb.iter().any(|e| e.poc == p))
+            .map(|&(p, _)| p)
+            .collect();
         if self.dpb.len() + missing.len() > sps.max_dec_pic_buffering as usize {
-            return Err(Error::invalid("more reference pictures than the stream allows"));
+            return Err(Error::invalid(
+                "more reference pictures than the stream allows",
+            ));
         }
         for p in missing {
             let mut pic = self.take_buffer(&sps);
@@ -214,16 +239,39 @@ impl Decoder {
             self.serial += 1;
             (pic.serial, pic.base_serial) = (self.serial, 0);
             pic.same.clear();
-            self.dpb.push(Reference { pic: Arc::new(pic), poc: p });
+            self.dpb.push(Reference {
+                pic: Arc::new(pic),
+                poc: p,
+            });
         }
         // RefPicList0 (§8.3.4): the earlier pictures, then the later, repeated.
         let mut refs: Vec<RefPic> = Vec::new();
         if !sh.intra {
-            let order = sh.st_rps.neg.iter().chain(sh.st_rps.pos.iter()).filter(|&&(_, used)| used).map(|&(d, _)| poc + d);
-            let pool: Vec<RefPic> = order.map(|p| self.dpb.iter().find(|e| e.poc == p).map(|e| RefPic { pic: e.pic.clone(), poc: e.poc }).expect("every used reference is in the DPB")).collect();
+            let order = sh
+                .st_rps
+                .neg
+                .iter()
+                .chain(sh.st_rps.pos.iter())
+                .filter(|&&(_, used)| used)
+                .map(|&(d, _)| poc + d);
+            let pool: Vec<RefPic> = order
+                .map(|p| {
+                    self.dpb
+                        .iter()
+                        .find(|e| e.poc == p)
+                        .map(|e| RefPic {
+                            pic: e.pic.clone(),
+                            poc: e.poc,
+                        })
+                        .expect("every used reference is in the DPB")
+                })
+                .collect();
             for i in 0..sh.num_ref_idx_l0_active as usize {
                 let e = &pool[i % pool.len()];
-                refs.push(RefPic { pic: e.pic.clone(), poc: e.poc });
+                refs.push(RefPic {
+                    pic: e.pic.clone(),
+                    poc: e.poc,
+                });
             }
         }
 
@@ -261,7 +309,11 @@ impl Decoder {
         }
 
         let maps = Maps::of(&mut state);
-        let planes = [PlanePtr::of(&mut pic.planes[0]), PlanePtr::of(&mut pic.planes[1]), PlanePtr::of(&mut pic.planes[2])];
+        let planes = [
+            PlanePtr::of(&mut pic.planes[0]),
+            PlanePtr::of(&mut pic.planes[1]),
+            PlanePtr::of(&mut pic.planes[2]),
+        ];
         // The in-loop filters run behind the wavefront, in place.
         let decoded = {
             let ctx = PictureCtx {
@@ -279,13 +331,21 @@ impl Decoder {
                 substreams: &substreams,
                 progress: &self.progress,
                 wpp_ctx: &self.wpp_ctx,
-                deblock: (!sh.deblocking_filter_disabled).then_some(DeblockCtx { planes, maps, sh: &sh, pps: &pps }),
+                deblock: (!sh.deblocking_filter_disabled).then_some(DeblockCtx {
+                    planes,
+                    maps,
+                    sh: &sh,
+                    pps: &pps,
+                }),
                 sao: (sh.sao_luma || sh.sao_chroma).then_some(SaoCtx { planes, maps }),
             };
             let scratch = &self.scratch;
             wavefront::run_rows(self.threads, rows, &self.progress, |row| {
                 // Each thread keeps one scratch; any free one will do.
-                let mut s = scratch.iter().find_map(|m| m.try_lock().ok()).unwrap_or_else(|| scratch[0].lock().unwrap_or_else(|e| e.into_inner()));
+                let mut s = scratch
+                    .iter()
+                    .find_map(|m| m.try_lock().ok())
+                    .unwrap_or_else(|| scratch[0].lock().unwrap_or_else(|e| e.into_inner()));
                 ctu::decode_row(&ctx, &mut s, row)
             })
         };
@@ -306,9 +366,12 @@ impl Decoder {
             let (wrote, edged) = (&state.written, &state.edged);
             for i in 0..w * h {
                 let (x, y) = (i % w, i / w);
-                let deblocked = edged[i] != 0 || (x + 1 < w && edged[i + 1] & EDGED_LEFT != 0) || (y + 1 < h && edged[i + w] & EDGED_TOP != 0);
+                let deblocked = edged[i] != 0
+                    || (x + 1 < w && edged[i + 1] & EDGED_LEFT != 0)
+                    || (y + 1 < h && edged[i + w] & EDGED_TOP != 0);
                 let filtered = sao && state.sao[i].iter().any(|p| p.type_idx != 0);
-                pic.same.push(!(wrote[i] != 0 || deblocked || filtered) as u8);
+                pic.same
+                    .push(!(wrote[i] != 0 || deblocked || filtered) as u8);
             }
         }
         self.state = Some(state);
@@ -318,9 +381,18 @@ impl Decoder {
         self.started = true;
 
         let pic = Arc::new(pic);
-        self.dpb.push(Reference { pic: pic.clone(), poc });
+        self.dpb.push(Reference {
+            pic: pic.clone(),
+            poc,
+        });
         let (w, h) = sps.output_size();
-        Ok(Some(Decoded { picture: pic, window: [sps.conf_win[0], sps.conf_win[2], w, h], colour: sps.colour, keyframe: idr, intra: sh.intra }))
+        Ok(Some(Decoded {
+            picture: pic,
+            window: [sps.conf_win[0], sps.conf_win[2], w, h],
+            colour: sps.colour,
+            keyframe: idr,
+            intra: sh.intra,
+        }))
     }
 
     /// A picture buffer of the sequence's size: a pooled one that no
@@ -342,7 +414,11 @@ impl Decoder {
     /// that reference can take the buffer as it is but for the blocks
     /// changed since.
     fn awaited(&self, buffer: &Picture) -> bool {
-        buffer.serial != 0 && self.dpb.iter().any(|e| e.pic.base_serial == buffer.serial && e.pic.same.contains(&1))
+        buffer.serial != 0
+            && self
+                .dpb
+                .iter()
+                .any(|e| e.pic.base_serial == buffer.serial && e.pic.same.contains(&1))
     }
 
     /// The pooled buffer that holds a picture `base` descends from, each
@@ -355,16 +431,28 @@ impl Decoder {
         let mut pic = base;
         // Each step is a picture decoded earlier, so the walk ends.
         loop {
-            if pic.base_serial == 0 || pic.same.len() != ctbs || pic.width() != base.width() || pic.height() != base.height() {
+            if pic.base_serial == 0
+                || pic.same.len() != ctbs
+                || pic.width() != base.width()
+                || pic.height() != base.height()
+            {
                 return None;
             }
             for (k, &s) in kept.iter_mut().zip(&pic.same) {
                 *k &= s;
             }
-            if let Some(i) = self.pool.iter().position(|p| p.serial == pic.base_serial && p.width() == base.width() && p.height() == base.height()) {
+            if let Some(i) = self.pool.iter().position(|p| {
+                p.serial == pic.base_serial
+                    && p.width() == base.width()
+                    && p.height() == base.height()
+            }) {
                 return kept.contains(&1).then_some(i);
             }
-            pic = &self.dpb.iter().find(|e| e.pic.serial == pic.base_serial)?.pic;
+            pic = &self
+                .dpb
+                .iter()
+                .find(|e| e.pic.serial == pic.base_serial)?
+                .pic;
         }
     }
 

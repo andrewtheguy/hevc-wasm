@@ -8,21 +8,38 @@ use crate::error::{Error, Result};
 use crate::intra;
 use crate::itx::{self, Dequant};
 use crate::kernels;
-use crate::tables::{scan_set, ScanSet, SigCtx};
+use crate::tables::{ScanSet, SigCtx, scan_set};
 
 impl<'a> Row<'a> {
-    pub(super) fn transform_tree(&mut self, x0: usize, y0: usize, log2: usize, depth: u8, parent_cbf_cb: bool, parent_cbf_cr: bool) -> Result<()> {
+    pub(super) fn transform_tree(
+        &mut self,
+        x0: usize,
+        y0: usize,
+        log2: usize,
+        depth: u8,
+        parent_cbf_cb: bool,
+        parent_cbf_cr: bool,
+    ) -> Result<()> {
         let sps = self.pic.sps;
         let (max_tb, min_tb) = (sps.log2_max_tb_size as usize, sps.log2_min_tb_size as usize);
-        let split = if log2 <= max_tb && log2 > min_tb && depth < self.max_trafo_depth && !(self.intra_split && depth == 0) {
+        let split = if log2 <= max_tb
+            && log2 > min_tb
+            && depth < self.max_trafo_depth
+            && !(self.intra_split && depth == 0)
+        {
             self.cab.decode(CTX_SPLIT_TRANSFORM + 5 - log2) == 1
         } else {
-            let inter_split = sps.max_transform_hierarchy_depth_inter == 0 && !self.cu_intra && self.part_mode != PartMode::Part2Nx2N && depth == 0;
+            let inter_split = sps.max_transform_hierarchy_depth_inter == 0
+                && !self.cu_intra
+                && self.part_mode != PartMode::Part2Nx2N
+                && depth == 0;
             log2 > max_tb || (self.intra_split && depth == 0) || inter_split
         };
         // Under 4:4:4 every transform block, 4×4 included, codes its chroma flags.
-        let cbf_cb = (depth == 0 || parent_cbf_cb) && self.cab.decode(CTX_CBF_CHROMA + depth as usize) == 1;
-        let cbf_cr = (depth == 0 || parent_cbf_cr) && self.cab.decode(CTX_CBF_CHROMA + depth as usize) == 1;
+        let cbf_cb =
+            (depth == 0 || parent_cbf_cb) && self.cab.decode(CTX_CBF_CHROMA + depth as usize) == 1;
+        let cbf_cr =
+            (depth == 0 || parent_cbf_cr) && self.cab.decode(CTX_CBF_CHROMA + depth as usize) == 1;
         if split {
             let half = 1usize << (log2 - 1);
             self.transform_tree(x0, y0, log2 - 1, depth + 1, cbf_cb, cbf_cr)?;
@@ -31,13 +48,25 @@ impl<'a> Row<'a> {
             self.transform_tree(x0 + half, y0 + half, log2 - 1, depth + 1, cbf_cb, cbf_cr)?;
             return Ok(());
         }
-        let cbf_luma = !(self.cu_intra || depth != 0 || cbf_cb || cbf_cr) || self.cab.decode(CTX_CBF_LUMA + (depth == 0) as usize) == 1;
+        let cbf_luma = !(self.cu_intra || depth != 0 || cbf_cb || cbf_cr)
+            || self.cab.decode(CTX_CBF_LUMA + (depth == 0) as usize) == 1;
         self.transform_unit(x0, y0, log2, cbf_luma, cbf_cb, cbf_cr)
     }
 
-    fn transform_unit(&mut self, x0: usize, y0: usize, log2: usize, cbf_luma: bool, cbf_cb: bool, cbf_cr: bool) -> Result<()> {
+    fn transform_unit(
+        &mut self,
+        x0: usize,
+        y0: usize,
+        log2: usize,
+        cbf_luma: bool,
+        cbf_cb: bool,
+        cbf_cr: bool,
+    ) -> Result<()> {
         let n = 1usize << log2;
-        if (cbf_luma || cbf_cb || cbf_cr) && self.pic.pps.cu_qp_delta_enabled && !self.is_cu_qp_delta_coded {
+        if (cbf_luma || cbf_cb || cbf_cr)
+            && self.pic.pps.cu_qp_delta_enabled
+            && !self.is_cu_qp_delta_coded
+        {
             // cu_qp_delta_abs: a prefix of up to five context bins, then EG0.
             let mut v = 0u32;
             while v < 5 && self.cab.decode(CTX_CU_QP_DELTA + (v != 0) as usize) == 1 {
@@ -73,7 +102,11 @@ impl<'a> Row<'a> {
         self.edge_strengths(x0, y0, n, n, true);
         // Chroma: the same block, the quadrant's mode under an NxN split.
         let half = self.cu_size / 2;
-        let quadrant = if self.intra_split { ((y0 - self.cu_y >= half) as usize) * 2 + (x0 - self.cu_x >= half) as usize } else { 0 };
+        let quadrant = if self.intra_split {
+            ((y0 - self.cu_y >= half) as usize) * 2 + (x0 - self.cu_x >= half) as usize
+        } else {
+            0
+        };
         let cmode = self.intra_chroma_mode[quadrant];
         for c in 1..3usize {
             if self.cu_intra {
@@ -98,9 +131,29 @@ impl<'a> Row<'a> {
         // the `n` past it, which lie in one block of the block's size and so
         // are before it in decoding order together or not at all, as far as
         // the picture reaches, in fours.
-        let past = |there: bool, room: usize| if there { (room.div_ceil(4) * 4).min(n) } else { 0 };
-        let left = if xb == 0 { 0 } else { n + past(yb + n < m.height && self.available(xb, yb, xb as i32 - 1, (yb + n) as i32), m.height.saturating_sub(yb + n)) };
-        let top = if yb == 0 { 0 } else { n + past(xb + n < m.width && self.available(xb, yb, (xb + n) as i32, yb as i32 - 1), m.width.saturating_sub(xb + n)) };
+        let past = |there: bool, room: usize| {
+            if there {
+                (room.div_ceil(4) * 4).min(n)
+            } else {
+                0
+            }
+        };
+        let left = if xb == 0 {
+            0
+        } else {
+            n + past(
+                yb + n < m.height && self.available(xb, yb, xb as i32 - 1, (yb + n) as i32),
+                m.height.saturating_sub(yb + n),
+            )
+        };
+        let top = if yb == 0 {
+            0
+        } else {
+            n + past(
+                xb + n < m.width && self.available(xb, yb, (xb + n) as i32, yb as i32 - 1),
+                m.width.saturating_sub(xb + n),
+            )
+        };
         let refs = &mut self.s.iref;
         for j in 0..left {
             // SAFETY: the left neighbours are decoded, in this row.
@@ -122,14 +175,25 @@ impl<'a> Row<'a> {
 
     // ---- residual coding (§7.3.8.11) and reconstruction (§8.6) ----
 
-    fn residual_block(&mut self, x0: usize, y0: usize, log2: usize, c_idx: usize, pred_mode_intra: u8) -> Result<()> {
+    fn residual_block(
+        &mut self,
+        x0: usize,
+        y0: usize,
+        log2: usize,
+        c_idx: usize,
+        pred_mode_intra: u8,
+    ) -> Result<()> {
         let n = 1usize << log2;
         let qp = if c_idx == 0 {
             self.qp_y
         } else {
             // §8.6.1: under 4:4:4 the chroma QP is the luma's with its offset,
             // capped, not mapped through the 4:2:0 table.
-            let off = if c_idx == 1 { self.pic.pps.cb_qp_offset + self.pic.sh.cb_qp_offset } else { self.pic.pps.cr_qp_offset + self.pic.sh.cr_qp_offset };
+            let off = if c_idx == 1 {
+                self.pic.pps.cb_qp_offset + self.pic.sh.cb_qp_offset
+            } else {
+                self.pic.pps.cr_qp_offset + self.pic.sh.cr_qp_offset
+            };
             (self.qp_y + off).clamp(0, 57).min(51)
         };
         // Each coefficient is scaled as it lands.
@@ -138,7 +202,11 @@ impl<'a> Row<'a> {
         let mut view = self.cab.view();
         let cab = &mut view;
         // last_sig_coeff_{x,y}_prefix and suffix
-        let (ctx_off, ctx_shift) = if c_idx == 0 { (3 * (log2 - 2) + ((log2 - 1) >> 2), (log2 + 1) >> 2) } else { (15, log2 - 2) };
+        let (ctx_off, ctx_shift) = if c_idx == 0 {
+            (3 * (log2 - 2) + ((log2 - 1) >> 2), (log2 + 1) >> 2)
+        } else {
+            (15, log2 - 2)
+        };
         let cmax = (log2 << 1) - 1;
         let (bx, by) = (CTX_LAST_X_PREFIX + ctx_off, CTX_LAST_Y_PREFIX + ctx_off);
         let mut px = 0usize;
@@ -160,7 +228,9 @@ impl<'a> Row<'a> {
             last_y = ((2 + (py & 1)) << nb) + cab.bypass_bits(nb as u32) as usize;
         }
         if last_x >= n || last_y >= n {
-            return Err(Error::invalid("a last significant coefficient outside the block"));
+            return Err(Error::invalid(
+                "a last significant coefficient outside the block",
+            ));
         }
         // scanIdx (§7.4.9.11): 4×4 and 8×8 intra blocks scan with their mode.
         let scan_idx = if self.cu_intra && log2 <= 3 {
@@ -185,8 +255,14 @@ impl<'a> Row<'a> {
             sc,
             sig: &sc.sig[(!luma) as usize],
             csbf_ctx: CTX_CSBF + if luma { 0 } else { 2 },
-            gt1: [CTX_GT1 + if luma { 0 } else { 16 }, CTX_GT1 + if luma { 8 } else { 16 }],
-            gt2: [CTX_GT2 + if luma { 0 } else { 4 }, CTX_GT2 + if luma { 2 } else { 4 }],
+            gt1: [
+                CTX_GT1 + if luma { 0 } else { 16 },
+                CTX_GT1 + if luma { 8 } else { 16 },
+            ],
+            gt2: [
+                CTX_GT2 + if luma { 0 } else { 4 },
+                CTX_GT2 + if luma { 2 } else { 4 },
+            ],
             last_sb: sc.sb_inv[(last_y >> 2) * nsb + (last_x >> 2)] as usize,
             last_pos: sc.pos_inv[(last_y & 3) * 4 + (last_x & 3)] as usize,
         };
@@ -201,11 +277,26 @@ impl<'a> Row<'a> {
     }
 
     /// §8.6.4 over the scaled coefficients, added to the picture.
-    fn reconstruct_residual(&mut self, x0: usize, y0: usize, log2: usize, c_idx: usize, coded: itx::Coded) {
+    fn reconstruct_residual(
+        &mut self,
+        x0: usize,
+        y0: usize,
+        log2: usize,
+        c_idx: usize,
+        coded: itx::Coded,
+    ) {
         let n = 1usize << log2;
         let dst = self.cu_intra && c_idx == 0 && n == 4;
         let s = &mut *self.s;
-        itx::inverse_transform(&s.list[..(coded.count as usize).min(n * n)], &mut s.coeffs[..n * n], &mut s.itx_tmp, &mut s.res, n, coded, dst);
+        itx::inverse_transform(
+            &s.list[..(coded.count as usize).min(n * n)],
+            &mut s.coeffs[..n * n],
+            &mut s.itx_tmp,
+            &mut s.res,
+            n,
+            coded,
+            dst,
+        );
         let plane = self.pic.planes[c_idx];
         // SAFETY: the block is this row's.
         let out = unsafe { plane.block_mut(x0, y0, n, n) };
@@ -254,7 +345,14 @@ struct SubBlock<'s> {
 /// coded ones through `sub_block`. Out of line, so that the engine's
 /// registers stay in registers across the sub-blocks that are not coded.
 #[inline(never)]
-fn sub_blocks(engine: Engine, cab: &mut Cabac, blk: &Block, list: &mut [u32], dq: &Dequant, coded: &mut itx::Coded) -> Result<Engine> {
+fn sub_blocks(
+    engine: Engine,
+    cab: &mut Cabac,
+    blk: &Block,
+    list: &mut [u32],
+    dq: &Dequant,
+    coded: &mut itx::Coded,
+) -> Result<Engine> {
     let mut v = View::new(engine, cab);
     let cab = &mut v;
     // The coded flags on a 9×9 grid with a zero border, so that a sub-block's
@@ -296,7 +394,15 @@ fn sub_blocks(engine: Engine, cab: &mut Cabac, blk: &Block, list: &mut [u32], dq
 /// of the walk's function: out of line it took 1% to 3% more cycles on a
 /// stream whose pictures are new.
 #[inline(always)]
-fn sub_block(engine: Engine, cab: &mut Cabac, sb: &SubBlock, list: &mut [u32], dq: &Dequant, c1_in: usize, coded: &mut itx::Coded) -> Result<(Engine, usize)> {
+fn sub_block(
+    engine: Engine,
+    cab: &mut Cabac,
+    sb: &SubBlock,
+    list: &mut [u32],
+    dq: &Dequant,
+    c1_in: usize,
+    coded: &mut itx::Coded,
+) -> Result<(Engine, usize)> {
     let mut v = View::new(engine, cab);
     let cab = &mut v;
     // significant_coeff_flag, highest position first, as a bit per position.
@@ -355,11 +461,7 @@ fn sub_block(engine: Engine, cab: &mut Cabac, sb: &SubBlock, list: &mut [u32], d
         let is_g2_pos = first_g2 == np;
         let base = 1 + ((g1 >> np) & 1) as i32 + (is_g2_pos && g2) as i32;
         let threshold = if k < 8 {
-            if is_g2_pos {
-                3
-            } else {
-                2
-            }
+            if is_g2_pos { 3 } else { 2 }
         } else {
             1
         };
@@ -377,12 +479,19 @@ fn sub_block(engine: Engine, cab: &mut Cabac, sb: &SubBlock, list: &mut [u32], d
         let neg = (sbits as i32) < 0;
         sbits <<= 1;
         let v = if neg { -abs } else { abs };
-        let (xc, yc) = (sb.x + sb.pos[np & 15].0 as usize, sb.y + sb.pos[np & 15].1 as usize);
+        let (xc, yc) = (
+            sb.x + sb.pos[np & 15].0 as usize,
+            sb.y + sb.pos[np & 15].1 as usize,
+        );
         cols |= 1 << xc;
         rows |= 1 << yc;
         list[listed + k] = itx::entry(xc, yc, dq.apply(v.clamp(-32768, 32767)));
     }
-    *coded = itx::Coded { cols, rows, count: coded.count + nsig as u32 };
+    *coded = itx::Coded {
+        cols,
+        rows,
+        count: coded.count + nsig as u32,
+    };
     Ok((cab.engine(), c1))
 }
 
@@ -408,4 +517,3 @@ fn coeff_remaining(engine: Engine, cab: &mut Cabac, rice: u32) -> Result<(Engine
     };
     Ok((cab.engine(), rest))
 }
-

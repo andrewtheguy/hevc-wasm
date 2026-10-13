@@ -8,7 +8,7 @@
 
 use core::arch::wasm32::*;
 
-use crate::itx::{place, Coded};
+use crate::itx::{Coded, place};
 use crate::tables::DCT32;
 
 #[inline(always)]
@@ -72,7 +72,11 @@ fn store_u8x4(d: &mut [u8], v: v128) {
 /// `w`, widened to 16 bits.
 #[inline(always)]
 fn load_samples(row: &[u8], w: usize) -> v128 {
-    u16x8_extend_low_u8x16(if w >= 8 { load_u8x8(row) } else { load_u8x4(row) })
+    u16x8_extend_low_u8x16(if w >= 8 {
+        load_u8x8(row)
+    } else {
+        load_u8x4(row)
+    })
 }
 
 #[inline(always)]
@@ -99,7 +103,14 @@ fn holds<T>(s: &[T], stride: usize, w: usize, h: usize) {
 /// vector was most of the work of a copy. The copy runs down each sixteen-wide
 /// column, so the loads step by the stride and the prefetcher follows them,
 /// and so a row of a wide block has no tail to test.
-pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
+pub fn copy_block(
+    dst: &mut [u8],
+    dst_stride: usize,
+    src: &[u8],
+    src_stride: usize,
+    w: usize,
+    h: usize,
+) {
     holds(dst, dst_stride, w, h);
     holds(src, src_stride, w, h);
     // SAFETY: both blocks checked.
@@ -108,7 +119,14 @@ pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usi
 
 /// `dst = src`, `w`×`h`, a row at a time: for a block many vectors wide, whose
 /// rows are each a run of memory.
-pub fn copy_rows(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
+pub fn copy_rows(
+    dst: &mut [u8],
+    dst_stride: usize,
+    src: &[u8],
+    src_stride: usize,
+    w: usize,
+    h: usize,
+) {
     holds(dst, dst_stride, w, h);
     holds(src, src_stride, w, h);
     let whole = w & !15;
@@ -119,8 +137,14 @@ pub fn copy_rows(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usiz
             let (dr, sr) = (d.add(y * dst_stride), s.add(y * src_stride));
             let mut x = 0;
             while x + 64 <= whole {
-                let (a, b) = (v128_load(sr.add(x) as *const v128), v128_load(sr.add(x + 16) as *const v128));
-                let (c, e) = (v128_load(sr.add(x + 32) as *const v128), v128_load(sr.add(x + 48) as *const v128));
+                let (a, b) = (
+                    v128_load(sr.add(x) as *const v128),
+                    v128_load(sr.add(x + 16) as *const v128),
+                );
+                let (c, e) = (
+                    v128_load(sr.add(x + 32) as *const v128),
+                    v128_load(sr.add(x + 48) as *const v128),
+                );
                 v128_store(dr.add(x) as *mut v128, a);
                 v128_store(dr.add(x + 16) as *mut v128, b);
                 v128_store(dr.add(x + 32) as *mut v128, c);
@@ -135,13 +159,29 @@ pub fn copy_rows(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usiz
     }
     if whole < w {
         // SAFETY: the rest of the same blocks.
-        unsafe { copy(d.add(whole), dst_stride, s.add(whole), src_stride, w - whole, h) }
+        unsafe {
+            copy(
+                d.add(whole),
+                dst_stride,
+                s.add(whole),
+                src_stride,
+                w - whole,
+                h,
+            )
+        }
     }
 }
 
 /// # Safety
 /// See `kernels::copy_block_from`.
-pub unsafe fn copy_block_from(dst: &mut [u8], dst_stride: usize, src: *const u8, src_stride: usize, w: usize, h: usize) {
+pub unsafe fn copy_block_from(
+    dst: &mut [u8],
+    dst_stride: usize,
+    src: *const u8,
+    src_stride: usize,
+    w: usize,
+    h: usize,
+) {
     holds(dst, dst_stride, w, h);
     // SAFETY: `dst` checked, `src` the caller's.
     unsafe { copy(dst.as_mut_ptr(), dst_stride, src, src_stride, w, h) }
@@ -155,7 +195,12 @@ unsafe fn copy(d: *mut u8, dst_stride: usize, s: *const u8, src_stride: usize, w
     while x + 16 <= w {
         for y in 0..h {
             // SAFETY: inside the blocks the caller checked.
-            unsafe { v128_store(d.add(y * dst_stride + x) as *mut v128, v128_load(s.add(y * src_stride + x) as *const v128)) };
+            unsafe {
+                v128_store(
+                    d.add(y * dst_stride + x) as *mut v128,
+                    v128_load(s.add(y * src_stride + x) as *const v128),
+                )
+            };
         }
         x += 16;
     }
@@ -166,11 +211,13 @@ unsafe fn copy(d: *mut u8, dst_stride: usize, s: *const u8, src_stride: usize, w
                 let (dr, sr) = (d.add(y * dst_stride), s.add(y * src_stride));
                 let mut x = x;
                 if x + 8 <= w {
-                    (dr.add(x) as *mut u64).write_unaligned((sr.add(x) as *const u64).read_unaligned());
+                    (dr.add(x) as *mut u64)
+                        .write_unaligned((sr.add(x) as *const u64).read_unaligned());
                     x += 8;
                 }
                 if x + 4 <= w {
-                    (dr.add(x) as *mut u32).write_unaligned((sr.add(x) as *const u32).read_unaligned());
+                    (dr.add(x) as *mut u32)
+                        .write_unaligned((sr.add(x) as *const u32).read_unaligned());
                     x += 4;
                 }
                 while x < w {
@@ -229,7 +276,13 @@ pub fn fill_i16(dst: &mut [i16], v: i16) {
 #[inline(always)]
 unsafe fn samples_at(p: *const u8, w: usize) -> v128 {
     // SAFETY: the caller's.
-    unsafe { u16x8_extend_low_u8x16(if w >= 8 { v128_load64_zero(p as *const u64) } else { v128_load32_zero(p as *const u32) }) }
+    unsafe {
+        u16x8_extend_low_u8x16(if w >= 8 {
+            v128_load64_zero(p as *const u64)
+        } else {
+            v128_load32_zero(p as *const u32)
+        })
+    }
 }
 
 /// Eight (or four) 16-bit values at `p`.
@@ -269,7 +322,15 @@ unsafe fn store_uni(p: *mut u8, w: usize, v: v128) {
 /// 8-bit samples (the positive taps sum to 88 at most), so the passes over
 /// samples accumulate in 16-bit lanes. Like the block copies, the filters
 /// check their bounds once and run on pointers.
-pub fn fir_h<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [i16], dst_stride: usize) {
+pub fn fir_h<const N: usize>(
+    src: &[u8],
+    stride: usize,
+    t: &[i16; N],
+    w: usize,
+    h: usize,
+    dst: &mut [i16],
+    dst_stride: usize,
+) {
     holds(src, stride, w + N - 1, h);
     holds(dst, dst_stride, w, h);
     let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
@@ -296,7 +357,15 @@ pub fn fir_h<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, 
     }
 }
 
-pub fn fir_h_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
+pub fn fir_h_uni<const N: usize>(
+    src: &[u8],
+    stride: usize,
+    t: &[i16; N],
+    w: usize,
+    h: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
     holds(src, stride, w + N - 1, h);
     holds(dst, dst_stride, w, h);
     let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
@@ -318,7 +387,15 @@ pub fn fir_h_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usi
     }
 }
 
-pub fn fir_v_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
+pub fn fir_v_uni<const N: usize>(
+    src: &[u8],
+    stride: usize,
+    t: &[i16; N],
+    w: usize,
+    h: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
     holds(src, stride, w, h + N - 1);
     holds(dst, dst_stride, w, h);
     let taps: [v128; N] = core::array::from_fn(|i| i16x8_splat(t[i]));
@@ -331,7 +408,10 @@ pub fn fir_v_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usi
             while x < w {
                 let mut acc = i16x8_splat(0);
                 for i in 0..N {
-                    acc = i16x8_add(acc, i16x8_mul(samples_at(sr.add(i * stride + x), w), taps[i]));
+                    acc = i16x8_add(
+                        acc,
+                        i16x8_mul(samples_at(sr.add(i * stride + x), w), taps[i]),
+                    );
                 }
                 store_uni(dr.add(x), w, acc);
                 x += 8;
@@ -343,7 +423,15 @@ pub fn fir_v_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usi
 /// The pass over the intermediate needs 32-bit sums: two rows interleaved,
 /// each pair of values against its pair of taps and summed by one
 /// multiply-add. A tap is never -32768, so the multiply-add cannot saturate.
-pub fn fir_hv_uni<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
+pub fn fir_hv_uni<const N: usize>(
+    src: &[i16],
+    stride: usize,
+    t: &[i16; N],
+    w: usize,
+    h: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
     holds(src, stride, w, h + N - 1);
     holds(dst, dst_stride, w, h);
     let mut taps = [i32x4_splat(0); 4];
@@ -362,10 +450,20 @@ pub fn fir_hv_uni<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: u
                 for k in 0..N / 2 {
                     let a = i16s_at(sr.add(2 * k * stride + x), w);
                     let b = i16s_at(sr.add((2 * k + 1) * stride + x), w);
-                    lo = i32x4_add(lo, i32x4_dot_i16x8(i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(a, b), taps[k]));
-                    hi = i32x4_add(hi, i32x4_dot_i16x8(i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(a, b), taps[k]));
+                    lo = i32x4_add(
+                        lo,
+                        i32x4_dot_i16x8(i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(a, b), taps[k]),
+                    );
+                    hi = i32x4_add(
+                        hi,
+                        i32x4_dot_i16x8(i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(a, b), taps[k]),
+                    );
                 }
-                store_uni(dr.add(x), w, i16x8_narrow_i32x4(i32x4_shr(lo, 6), i32x4_shr(hi, 6)));
+                store_uni(
+                    dr.add(x),
+                    w,
+                    i16x8_narrow_i32x4(i32x4_shr(lo, 6), i32x4_shr(hi, 6)),
+                );
                 x += 8;
             }
         }
@@ -386,9 +484,15 @@ pub fn add_residual(dst: &mut [u8], dst_stride: usize, res: &[i16], w: usize, h:
             let mut x = 0;
             while x < w {
                 let (p, v) = if w >= 8 {
-                    (v128_load64_zero(dr.add(x) as *const u64), v128_load(sr.add(x) as *const v128))
+                    (
+                        v128_load64_zero(dr.add(x) as *const u64),
+                        v128_load(sr.add(x) as *const v128),
+                    )
                 } else {
-                    (v128_load32_zero(dr.add(x) as *const u32), v128_load64_zero(sr.add(x) as *const u64))
+                    (
+                        v128_load32_zero(dr.add(x) as *const u32),
+                        v128_load64_zero(sr.add(x) as *const u64),
+                    )
                 };
                 let sum = i16x8_add(u16x8_extend_low_u8x16(p), v);
                 let b = u8x16_narrow_i16x8(sum, sum);
@@ -423,7 +527,11 @@ pub fn planar(dst: &mut [u8], stride: usize, n: usize, left: &[u8], top: &[u8]) 
         let mut x = 0;
         while x < n {
             let t = load_samples(&top[x..], n);
-            let (a, b) = if n >= 8 { (load_i16x8(&xs[x..]), load_i16x8(&bs[x..])) } else { (load_i16x4(&xs[x..]), load_i16x4(&bs[x..])) };
+            let (a, b) = if n >= 8 {
+                (load_i16x8(&xs[x..]), load_i16x8(&bs[x..]))
+            } else {
+                (load_i16x4(&xs[x..]), load_i16x4(&bs[x..]))
+            };
             let v = i16x8_add(i16x8_add(i16x8_mul(a, l), b), i16x8_add(i16x8_mul(k, t), c));
             store_samples(&mut row[x..], n, i16x8_shr(v, shift));
             x += 8;
@@ -442,8 +550,25 @@ unsafe fn angular_row(out: *mut u8, n: usize, refb: &[i16], base: usize, ifact: 
     let round = i16x8_splat(16);
     let mut x = 0;
     while x < n {
-        let (a, b) = if n >= 8 { (load_i16x8(&refb[base + x..]), load_i16x8(&refb[base + x + 1..])) } else { (load_i16x4(&refb[base + x..]), load_i16x4(&refb[base + x + 1..])) };
-        let v = if ifact == 0 { a } else { i16x8_shr(i16x8_add(i16x8_add(i16x8_mul(a, fa), i16x8_mul(b, fb)), round), 5) };
+        let (a, b) = if n >= 8 {
+            (
+                load_i16x8(&refb[base + x..]),
+                load_i16x8(&refb[base + x + 1..]),
+            )
+        } else {
+            (
+                load_i16x4(&refb[base + x..]),
+                load_i16x4(&refb[base + x + 1..]),
+            )
+        };
+        let v = if ifact == 0 {
+            a
+        } else {
+            i16x8_shr(
+                i16x8_add(i16x8_add(i16x8_mul(a, fa), i16x8_mul(b, fb)), round),
+                5,
+            )
+        };
         let s = u8x16_narrow_i16x8(v, v);
         // SAFETY: the caller's; a width of four writes only its four.
         unsafe {
@@ -488,9 +613,16 @@ fn zip_hi(a: v128, b: v128) -> v128 {
 unsafe fn turn16(s: *const u8, s_stride: usize, d: *mut u8, d_stride: usize) {
     // SAFETY: the caller's.
     unsafe {
-        let mut v: [v128; 16] = core::array::from_fn(|i| v128_load(s.add(i * s_stride) as *const v128));
+        let mut v: [v128; 16] =
+            core::array::from_fn(|i| v128_load(s.add(i * s_stride) as *const v128));
         for _ in 0..4 {
-            v = core::array::from_fn(|i| if i % 2 == 0 { zip_lo(v[i / 2], v[i / 2 + 8]) } else { zip_hi(v[i / 2], v[i / 2 + 8]) });
+            v = core::array::from_fn(|i| {
+                if i % 2 == 0 {
+                    zip_lo(v[i / 2], v[i / 2 + 8])
+                } else {
+                    zip_hi(v[i / 2], v[i / 2 + 8])
+                }
+            });
         }
         for (i, r) in v.iter().enumerate() {
             v128_store(d.add(i * d_stride) as *mut v128, *r);
@@ -508,7 +640,8 @@ unsafe fn turn(s: *const u8, d: *mut u8, stride: usize, n: usize) {
     unsafe {
         match n {
             4 => {
-                let v: [v128; 4] = core::array::from_fn(|i| v128_load32_zero(s.add(4 * i) as *const u32));
+                let v: [v128; 4] =
+                    core::array::from_fn(|i| v128_load32_zero(s.add(4 * i) as *const u32));
                 let rows = zip_lo(zip_lo(v[0], v[2]), zip_lo(v[1], v[3]));
                 v128_store32_lane::<0>(rows, d as *mut u32);
                 v128_store32_lane::<1>(rows, d.add(stride) as *mut u32);
@@ -516,10 +649,21 @@ unsafe fn turn(s: *const u8, d: *mut u8, stride: usize, n: usize) {
                 v128_store32_lane::<3>(rows, d.add(3 * stride) as *mut u32);
             }
             8 => {
-                let v: [v128; 8] = core::array::from_fn(|i| v128_load64_zero(s.add(8 * i) as *const u64));
+                let v: [v128; 8] =
+                    core::array::from_fn(|i| v128_load64_zero(s.add(8 * i) as *const u64));
                 let w: [v128; 4] = core::array::from_fn(|i| zip_lo(v[i], v[i + 4]));
-                let x = [zip_lo(w[0], w[2]), zip_hi(w[0], w[2]), zip_lo(w[1], w[3]), zip_hi(w[1], w[3])];
-                let rows = [zip_lo(x[0], x[2]), zip_hi(x[0], x[2]), zip_lo(x[1], x[3]), zip_hi(x[1], x[3])];
+                let x = [
+                    zip_lo(w[0], w[2]),
+                    zip_hi(w[0], w[2]),
+                    zip_lo(w[1], w[3]),
+                    zip_hi(w[1], w[3]),
+                ];
+                let rows = [
+                    zip_lo(x[0], x[2]),
+                    zip_hi(x[0], x[2]),
+                    zip_lo(x[1], x[3]),
+                    zip_hi(x[1], x[3]),
+                ];
                 for (k, r) in rows.iter().enumerate() {
                     v128_store64_lane::<0>(*r, d.add(2 * k * stride) as *mut u64);
                     v128_store64_lane::<1>(*r, d.add((2 * k + 1) * stride) as *mut u64);
@@ -560,7 +704,16 @@ pub fn angular_t(dst: &mut [u8], stride: usize, n: usize, refb: &[i16], off: usi
 /// transform rows.
 macro_rules! splat_pair {
     ($v:expr, $a:literal, $b:literal) => {
-        i16x8_shuffle::<{ $a % 8 }, { 8 + $b % 8 }, { $a % 8 }, { 8 + $b % 8 }, { $a % 8 }, { 8 + $b % 8 }, { $a % 8 }, { 8 + $b % 8 }>($v[$a / 8], $v[$b / 8])
+        i16x8_shuffle::<
+            { $a % 8 },
+            { 8 + $b % 8 },
+            { $a % 8 },
+            { 8 + $b % 8 },
+            { $a % 8 },
+            { 8 + $b % 8 },
+            { $a % 8 },
+            { 8 + $b % 8 },
+        >($v[$a / 8], $v[$b / 8])
     };
 }
 
@@ -585,7 +738,13 @@ fn row_vecs<const N: usize>(row: &[i16], nz: usize) -> [v128; 4] {
 /// The sums of one stage along a row: `out[j] += a * Ta[j] + b * Tb[j]` over
 /// the first `live` of the stage's `pairs`, four outputs per `dot`.
 #[inline(always)]
-fn stage_row<const P: usize>(acc: &mut [v128; 4], chunks: usize, table: &[[[i16; 8]; 4]], pairs: &[v128; P], live: usize) {
+fn stage_row<const P: usize>(
+    acc: &mut [v128; 4],
+    chunks: usize,
+    table: &[[[i16; 8]; 4]],
+    pairs: &[v128; P],
+    live: usize,
+) {
     for p in 0..P {
         if p == live {
             break;
@@ -600,7 +759,11 @@ fn stage_row<const P: usize>(acc: &mut [v128; 4], chunks: usize, table: &[[[i16;
 /// row: the pairs are in order of their first coefficient.
 #[inline(always)]
 fn live_pairs<const N: usize>(stage: usize, nz: usize) -> usize {
-    crate::itx::stages::K32[stage].iter().step_by(2).take_while(|&&k| k * N / 32 < nz).count()
+    crate::itx::stages::K32[stage]
+        .iter()
+        .step_by(2)
+        .take_while(|&&k| k * N / 32 < nz)
+        .count()
 }
 
 /// Even and odd halves into the `n` outputs of one row: `out[j] = e + o`,
@@ -628,25 +791,98 @@ fn idct_row<const N: usize>(row: &[i16], nz: usize, out: &mut [v128; 8]) {
     let mut odd16 = [zero; 4];
     let mut odd32 = [zero; 4];
     match N {
-        4 => stage_row(&mut base, 1, &INTERLEAVED[0], &[splat_pair!(v, 0, 1), splat_pair!(v, 2, 3)], live_pairs::<N>(0, nz)),
+        4 => stage_row(
+            &mut base,
+            1,
+            &INTERLEAVED[0],
+            &[splat_pair!(v, 0, 1), splat_pair!(v, 2, 3)],
+            live_pairs::<N>(0, nz),
+        ),
         8 => {
-            stage_row(&mut base, 1, &INTERLEAVED[0], &[splat_pair!(v, 0, 2), splat_pair!(v, 4, 6)], live_pairs::<N>(0, nz));
-            stage_row(&mut odd8, 1, &INTERLEAVED[1], &[splat_pair!(v, 1, 3), splat_pair!(v, 5, 7)], live_pairs::<N>(1, nz));
+            stage_row(
+                &mut base,
+                1,
+                &INTERLEAVED[0],
+                &[splat_pair!(v, 0, 2), splat_pair!(v, 4, 6)],
+                live_pairs::<N>(0, nz),
+            );
+            stage_row(
+                &mut odd8,
+                1,
+                &INTERLEAVED[1],
+                &[splat_pair!(v, 1, 3), splat_pair!(v, 5, 7)],
+                live_pairs::<N>(1, nz),
+            );
         }
         16 => {
-            stage_row(&mut base, 1, &INTERLEAVED[0], &[splat_pair!(v, 0, 4), splat_pair!(v, 8, 12)], live_pairs::<N>(0, nz));
-            stage_row(&mut odd8, 1, &INTERLEAVED[1], &[splat_pair!(v, 2, 6), splat_pair!(v, 10, 14)], live_pairs::<N>(1, nz));
-            stage_row(&mut odd16, 2, &INTERLEAVED[2], &[splat_pair!(v, 1, 3), splat_pair!(v, 5, 7), splat_pair!(v, 9, 11), splat_pair!(v, 13, 15)], live_pairs::<N>(2, nz));
+            stage_row(
+                &mut base,
+                1,
+                &INTERLEAVED[0],
+                &[splat_pair!(v, 0, 4), splat_pair!(v, 8, 12)],
+                live_pairs::<N>(0, nz),
+            );
+            stage_row(
+                &mut odd8,
+                1,
+                &INTERLEAVED[1],
+                &[splat_pair!(v, 2, 6), splat_pair!(v, 10, 14)],
+                live_pairs::<N>(1, nz),
+            );
+            stage_row(
+                &mut odd16,
+                2,
+                &INTERLEAVED[2],
+                &[
+                    splat_pair!(v, 1, 3),
+                    splat_pair!(v, 5, 7),
+                    splat_pair!(v, 9, 11),
+                    splat_pair!(v, 13, 15),
+                ],
+                live_pairs::<N>(2, nz),
+            );
         }
         _ => {
-            stage_row(&mut base, 1, &INTERLEAVED[0], &[splat_pair!(v, 0, 8), splat_pair!(v, 16, 24)], live_pairs::<N>(0, nz));
-            stage_row(&mut odd8, 1, &INTERLEAVED[1], &[splat_pair!(v, 4, 12), splat_pair!(v, 20, 28)], live_pairs::<N>(1, nz));
-            stage_row(&mut odd16, 2, &INTERLEAVED[2], &[splat_pair!(v, 2, 6), splat_pair!(v, 10, 14), splat_pair!(v, 18, 22), splat_pair!(v, 26, 30)], live_pairs::<N>(2, nz));
+            stage_row(
+                &mut base,
+                1,
+                &INTERLEAVED[0],
+                &[splat_pair!(v, 0, 8), splat_pair!(v, 16, 24)],
+                live_pairs::<N>(0, nz),
+            );
+            stage_row(
+                &mut odd8,
+                1,
+                &INTERLEAVED[1],
+                &[splat_pair!(v, 4, 12), splat_pair!(v, 20, 28)],
+                live_pairs::<N>(1, nz),
+            );
+            stage_row(
+                &mut odd16,
+                2,
+                &INTERLEAVED[2],
+                &[
+                    splat_pair!(v, 2, 6),
+                    splat_pair!(v, 10, 14),
+                    splat_pair!(v, 18, 22),
+                    splat_pair!(v, 26, 30),
+                ],
+                live_pairs::<N>(2, nz),
+            );
             stage_row(
                 &mut odd32,
                 4,
                 &INTERLEAVED[3],
-                &[splat_pair!(v, 1, 3), splat_pair!(v, 5, 7), splat_pair!(v, 9, 11), splat_pair!(v, 13, 15), splat_pair!(v, 17, 19), splat_pair!(v, 21, 23), splat_pair!(v, 25, 27), splat_pair!(v, 29, 31)],
+                &[
+                    splat_pair!(v, 1, 3),
+                    splat_pair!(v, 5, 7),
+                    splat_pair!(v, 9, 11),
+                    splat_pair!(v, 13, 15),
+                    splat_pair!(v, 17, 19),
+                    splat_pair!(v, 21, 23),
+                    splat_pair!(v, 25, 27),
+                    splat_pair!(v, 29, 31),
+                ],
                 live_pairs::<N>(3, nz),
             );
         }
@@ -679,7 +915,13 @@ fn idst_row(row: &[i16], nz: usize, out: &mut [v128; 8]) {
     use crate::itx::stages::DST_INTERLEAVED;
     let v = row_vecs::<4>(row, nz);
     let mut acc = [i32x4_splat(0); 4];
-    stage_row(&mut acc, 1, &DST_INTERLEAVED, &[splat_pair!(v, 0, 1), splat_pair!(v, 2, 3)], if nz > 2 { 2 } else { 1 });
+    stage_row(
+        &mut acc,
+        1,
+        &DST_INTERLEAVED,
+        &[splat_pair!(v, 0, 1), splat_pair!(v, 2, 3)],
+        if nz > 2 { 2 } else { 1 },
+    );
     out[0] = acc[0];
 }
 
@@ -687,7 +929,11 @@ fn idst_row(row: &[i16], nz: usize, out: &mut [v128; 8]) {
 /// pairs `dot` takes, four columns per vector.
 #[inline(always)]
 fn zip_rows(d: &[i16], n: usize, ka: usize, kb: Option<usize>, x: usize) -> (v128, v128) {
-    let a = if n >= 8 { load_i16x8(&d[ka * n + x..]) } else { load_i16x4(&d[ka * n + x..]) };
+    let a = if n >= 8 {
+        load_i16x8(&d[ka * n + x..])
+    } else {
+        load_i16x4(&d[ka * n + x..])
+    };
     let b = match kb {
         Some(kb) => {
             if n >= 8 {
@@ -698,7 +944,10 @@ fn zip_rows(d: &[i16], n: usize, ka: usize, kb: Option<usize>, x: usize) -> (v12
         }
         None => i16x8_splat(0),
     };
-    (i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(a, b), i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(a, b))
+    (
+        i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(a, b),
+        i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(a, b),
+    )
 }
 
 /// One stage down the columns `x..x + 8`: `acc[j] += Ta[j] * d[ka][x..] +
@@ -706,7 +955,16 @@ fn zip_rows(d: &[i16], n: usize, ka: usize, kb: Option<usize>, x: usize) -> (v12
 /// rows are zipped once, and the outputs go four at a time so their eight
 /// sums stay in registers across the pairs.
 #[inline(always)]
-fn stage_cols(acc: &mut [[v128; 2]; 16], len: usize, table: &[[i32; 16]], d: &[i16], n: usize, x: usize, nz_h: usize, k: impl Fn(usize) -> usize) {
+fn stage_cols(
+    acc: &mut [[v128; 2]; 16],
+    len: usize,
+    table: &[[i32; 16]],
+    d: &[i16],
+    n: usize,
+    x: usize,
+    nz_h: usize,
+    k: impl Fn(usize) -> usize,
+) {
     let mut zips = [[i16x8_splat(0); 2]; 8];
     let mut live = 0;
     for p in 0..table.len() {
@@ -739,10 +997,21 @@ fn stage_cols(acc: &mut [[v128; 2]; 16], len: usize, table: &[[i32; 16]], d: &[i
 }
 
 #[inline(always)]
-fn butterfly_cols(out: &mut [[v128; 2]; 32], even: &[[v128; 2]; 16], odd: &[[v128; 2]; 16], n: usize) {
+fn butterfly_cols(
+    out: &mut [[v128; 2]; 32],
+    even: &[[v128; 2]; 16],
+    odd: &[[v128; 2]; 16],
+    n: usize,
+) {
     for j in 0..n / 2 {
-        out[j] = [i32x4_add(even[j][0], odd[j][0]), i32x4_add(even[j][1], odd[j][1])];
-        out[n - 1 - j] = [i32x4_sub(even[j][0], odd[j][0]), i32x4_sub(even[j][1], odd[j][1])];
+        out[j] = [
+            i32x4_add(even[j][0], odd[j][0]),
+            i32x4_add(even[j][1], odd[j][1]),
+        ];
+        out[n - 1 - j] = [
+            i32x4_sub(even[j][0], odd[j][0]),
+            i32x4_sub(even[j][1], odd[j][1]),
+        ];
     }
 }
 
@@ -799,7 +1068,15 @@ fn idst_cols(d: &[i16], x: usize, nz_h: usize, out: &mut [[v128; 2]; 32]) {
 /// Both passes of an `N`×`N` block: columns, eight at a time, into `tmp`,
 /// clipped to 16 bits; then each row into `res`.
 #[inline(always)]
-fn block<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], nz_w: usize, nz_h: usize, cols: impl Fn(&[i16], usize, usize, &mut [[v128; 2]; 32]), rows: impl Fn(&[i16], usize, &mut [v128; 8])) {
+fn block<const N: usize>(
+    d: &[i16],
+    tmp: &mut [i16],
+    res: &mut [i16],
+    nz_w: usize,
+    nz_h: usize,
+    cols: impl Fn(&[i16], usize, usize, &mut [[v128; 2]; 32]),
+    rows: impl Fn(&[i16], usize, &mut [v128; 8]),
+) {
     let round1 = i32x4_splat(64);
     let mut sums = [[i32x4_splat(0); 2]; 32];
     let mut x = 0;
@@ -863,7 +1140,10 @@ fn column<const N: usize>(list: &[u32], next: &[u8; 64], mut i: usize) -> [v128;
     let round1 = i32x4_splat(64);
     let mut out = [i16x8_splat(0); 4];
     for m in 0..N / 8 {
-        out[m] = i16x8_narrow_i32x4(i32x4_shr(i32x4_add(acc[2 * m], round1), 7), i32x4_shr(i32x4_add(acc[2 * m + 1], round1), 7));
+        out[m] = i16x8_narrow_i32x4(
+            i32x4_shr(i32x4_add(acc[2 * m], round1), 7),
+            i32x4_shr(i32x4_add(acc[2 * m + 1], round1), 7),
+        );
     }
     out
 }
@@ -893,16 +1173,30 @@ fn sparse<const N: usize>(list: &[u32], tmp: &mut [i16], res: &mut [i16], coded:
     while cs != 0 {
         let xa = cs.trailing_zeros() as usize;
         cs &= cs - 1;
-        let xb = if cs != 0 { cs.trailing_zeros() as usize } else { N };
+        let xb = if cs != 0 {
+            cs.trailing_zeros() as usize
+        } else {
+            N
+        };
         cs &= cs.wrapping_sub(1);
         let a = column::<N>(list, &next, head[xa] as usize);
-        let b = if xb < N { column::<N>(list, &next, head[xb] as usize) } else { [i16x8_splat(0); 4] };
+        let b = if xb < N {
+            column::<N>(list, &next, head[xb] as usize)
+        } else {
+            [i16x8_splat(0); 4]
+        };
         let ra = &DCT32[xa * (32 / N)];
         let rb = if xb < N { &DCT32[xb * (32 / N)] } else { &NONE };
         let tab = &mut tabs[pairs];
         for m in 0..N / 8 {
-            store_i16x8(&mut tmp[pairs * 2 * N + 16 * m..], i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(a[m], b[m]));
-            store_i16x8(&mut tmp[pairs * 2 * N + 16 * m + 8..], i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(a[m], b[m]));
+            store_i16x8(
+                &mut tmp[pairs * 2 * N + 16 * m..],
+                i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(a[m], b[m]),
+            );
+            store_i16x8(
+                &mut tmp[pairs * 2 * N + 16 * m + 8..],
+                i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(a[m], b[m]),
+            );
             let (ta, tb) = (load_i16x8(&ra[8 * m..]), load_i16x8(&rb[8 * m..]));
             tab[2 * m] = i16x8_shuffle::<0, 8, 1, 9, 2, 10, 3, 11>(ta, tb);
             tab[2 * m + 1] = i16x8_shuffle::<4, 12, 5, 13, 6, 14, 7, 15>(ta, tb);
@@ -923,7 +1217,14 @@ fn sparse<const N: usize>(list: &[u32], tmp: &mut [i16], res: &mut [i16], coded:
 
 /// The transform of a block with few coefficients, from their list; false
 /// for a block with more, which `dense_transform` takes.
-pub fn sparse_transform(list: &[u32], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) -> bool {
+pub fn sparse_transform(
+    list: &[u32],
+    tmp: &mut [i16],
+    res: &mut [i16],
+    n: usize,
+    coded: Coded,
+    dst: bool,
+) -> bool {
     if dst || n < 8 || list.len() > 2 * n || coded.cols.count_ones() > 16 {
         return false;
     }
@@ -935,7 +1236,14 @@ pub fn sparse_transform(list: &[u32], tmp: &mut [i16], res: &mut [i16], n: usize
     true
 }
 
-pub fn dense_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) {
+pub fn dense_transform(
+    d: &[i16],
+    tmp: &mut [i16],
+    res: &mut [i16],
+    n: usize,
+    coded: Coded,
+    dst: bool,
+) {
     let (nz_w, nz_h) = coded.extent();
     let (nz_w, nz_h) = (nz_w.clamp(1, n), nz_h.clamp(1, n));
     match (n, dst) {
@@ -990,19 +1298,54 @@ fn segments(a: bool, b: bool) -> v128 {
 #[inline(always)]
 unsafe fn luma_taps(p: *const u8, stride: usize, dir: usize) -> [v128; 8] {
     if dir == 1 {
-        let row = |i: isize| unsafe { u16x8_extend_low_u8x16(v128_load64_zero(p.offset((i - 4) * stride as isize) as *const u64)) };
-        [row(0), row(1), row(2), row(3), row(4), row(5), row(6), row(7)]
+        let row = |i: isize| unsafe {
+            u16x8_extend_low_u8x16(v128_load64_zero(
+                p.offset((i - 4) * stride as isize) as *const u64
+            ))
+        };
+        [
+            row(0),
+            row(1),
+            row(2),
+            row(3),
+            row(4),
+            row(5),
+            row(6),
+            row(7),
+        ]
     } else {
         let line = |k: usize| unsafe { p.add(k * stride).sub(4) as *const u64 };
-        let pair = |k: usize| unsafe { v128_load64_lane::<1>(v128_load64_zero(line(k)), line(k + 1)) };
+        let pair =
+            |k: usize| unsafe { v128_load64_lane::<1>(v128_load64_zero(line(k)), line(k + 1)) };
         let (r01, r23, r45, r67) = (pair(0), pair(2), pair(4), pair(6));
         // Four lines of the taps `p3..p0`, a tap's four bytes together, and
         // of `q0..q3`; then a tap's eight lines.
-        let (pa, pb) = (i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(r01, r23), i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(r45, r67));
-        let (qa, qb) = (i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(r01, r23), i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(r45, r67));
-        let (t01, t23) = (i32x4_shuffle::<0, 4, 1, 5>(pa, pb), i32x4_shuffle::<2, 6, 3, 7>(pa, pb));
-        let (t45, t67) = (i32x4_shuffle::<0, 4, 1, 5>(qa, qb), i32x4_shuffle::<2, 6, 3, 7>(qa, qb));
-        [u16x8_extend_low_u8x16(t01), u16x8_extend_high_u8x16(t01), u16x8_extend_low_u8x16(t23), u16x8_extend_high_u8x16(t23), u16x8_extend_low_u8x16(t45), u16x8_extend_high_u8x16(t45), u16x8_extend_low_u8x16(t67), u16x8_extend_high_u8x16(t67)]
+        let (pa, pb) = (
+            i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(r01, r23),
+            i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(r45, r67),
+        );
+        let (qa, qb) = (
+            i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(r01, r23),
+            i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(r45, r67),
+        );
+        let (t01, t23) = (
+            i32x4_shuffle::<0, 4, 1, 5>(pa, pb),
+            i32x4_shuffle::<2, 6, 3, 7>(pa, pb),
+        );
+        let (t45, t67) = (
+            i32x4_shuffle::<0, 4, 1, 5>(qa, qb),
+            i32x4_shuffle::<2, 6, 3, 7>(qa, qb),
+        );
+        [
+            u16x8_extend_low_u8x16(t01),
+            u16x8_extend_high_u8x16(t01),
+            u16x8_extend_low_u8x16(t23),
+            u16x8_extend_high_u8x16(t23),
+            u16x8_extend_low_u8x16(t45),
+            u16x8_extend_high_u8x16(t45),
+            u16x8_extend_low_u8x16(t67),
+            u16x8_extend_high_u8x16(t67),
+        ]
     }
 }
 
@@ -1018,17 +1361,38 @@ unsafe fn store_luma_taps(p: *mut u8, stride: usize, dir: usize, t: &[v128; 8], 
         let from = if wide { 1 } else { 2 };
         for i in from..8 - from {
             // SAFETY: the caller's.
-            unsafe { v128_store64_lane::<0>(u8x16_narrow_i16x8(t[i], t[i]), p.offset((i as isize - 4) * stride as isize) as *mut u64) };
+            unsafe {
+                v128_store64_lane::<0>(
+                    u8x16_narrow_i16x8(t[i], t[i]),
+                    p.offset((i as isize - 4) * stride as isize) as *mut u64,
+                )
+            };
         }
     } else {
         let line = |k: usize| unsafe { p.add(k * stride).sub(4) as *mut u64 };
         // Each narrowing holds two taps' eight lines; the shuffles gather
         // four lines of four taps, a line's four bytes together, and then
         // each line's eight.
-        let (n01, n23, n45, n67) = (u8x16_narrow_i16x8(t[0], t[1]), u8x16_narrow_i16x8(t[2], t[3]), u8x16_narrow_i16x8(t[4], t[5]), u8x16_narrow_i16x8(t[6], t[7]));
-        let (pa, pb) = (i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(n01, n23), i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(n01, n23));
-        let (qa, qb) = (i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(n45, n67), i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(n45, n67));
-        let lines = [i32x4_shuffle::<0, 4, 1, 5>(pa, qa), i32x4_shuffle::<2, 6, 3, 7>(pa, qa), i32x4_shuffle::<0, 4, 1, 5>(pb, qb), i32x4_shuffle::<2, 6, 3, 7>(pb, qb)];
+        let (n01, n23, n45, n67) = (
+            u8x16_narrow_i16x8(t[0], t[1]),
+            u8x16_narrow_i16x8(t[2], t[3]),
+            u8x16_narrow_i16x8(t[4], t[5]),
+            u8x16_narrow_i16x8(t[6], t[7]),
+        );
+        let (pa, pb) = (
+            i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(n01, n23),
+            i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(n01, n23),
+        );
+        let (qa, qb) = (
+            i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(n45, n67),
+            i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(n45, n67),
+        );
+        let lines = [
+            i32x4_shuffle::<0, 4, 1, 5>(pa, qa),
+            i32x4_shuffle::<2, 6, 3, 7>(pa, qa),
+            i32x4_shuffle::<0, 4, 1, 5>(pb, qb),
+            i32x4_shuffle::<2, 6, 3, 7>(pb, qb),
+        ];
         for (k, &l) in lines.iter().enumerate() {
             // SAFETY: the caller's.
             unsafe {
@@ -1054,14 +1418,30 @@ pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: [i32; 2], t
     macro_rules! decide {
         ($s:literal, $a:literal, $b:literal) => {{
             let (beta, tc) = (beta[$s], tc[$s]);
-            let (dp0, dp3) = (i16x8_extract_lane::<$a>(dp) as i32, i16x8_extract_lane::<$b>(dp) as i32);
-            let (dq0, dq3) = (i16x8_extract_lane::<$a>(dq) as i32, i16x8_extract_lane::<$b>(dq) as i32);
+            let (dp0, dp3) = (
+                i16x8_extract_lane::<$a>(dp) as i32,
+                i16x8_extract_lane::<$b>(dp) as i32,
+            );
+            let (dq0, dq3) = (
+                i16x8_extract_lane::<$a>(dq) as i32,
+                i16x8_extract_lane::<$b>(dq) as i32,
+            );
             let (dpq0, dpq3) = (dp0 + dq0, dp3 + dq3);
             if dpq0 + dpq3 < beta {
-                let dsam = |dpq: i32, span: i32, gap: i32| 2 * dpq < beta >> 2 && span < beta >> 3 && gap < (5 * tc + 1) >> 1;
+                let dsam = |dpq: i32, span: i32, gap: i32| {
+                    2 * dpq < beta >> 2 && span < beta >> 3 && gap < (5 * tc + 1) >> 1
+                };
                 let side = (beta + (beta >> 1)) >> 3;
                 on[$s] = true;
-                strong[$s] = dsam(dpq0, i16x8_extract_lane::<$a>(span) as i32, i16x8_extract_lane::<$a>(gap) as i32) && dsam(dpq3, i16x8_extract_lane::<$b>(span) as i32, i16x8_extract_lane::<$b>(gap) as i32);
+                strong[$s] = dsam(
+                    dpq0,
+                    i16x8_extract_lane::<$a>(span) as i32,
+                    i16x8_extract_lane::<$a>(gap) as i32,
+                ) && dsam(
+                    dpq3,
+                    i16x8_extract_lane::<$b>(span) as i32,
+                    i16x8_extract_lane::<$b>(gap) as i32,
+                );
                 dep[$s] = !strong[$s] && dp0 + dp3 < side;
                 deq[$s] = !strong[$s] && dq0 + dq3 < side;
             }
@@ -1076,19 +1456,63 @@ pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: [i32; 2], t
     let (two, four) = (i16x8_splat(2), i16x8_splat(4));
     let mut out = t;
     if (on[0] && !strong[0]) || (on[1] && !strong[1]) {
-        let delta = i16x8_shr(i16x8_add(i16x8_sub(i16x8_mul(i16x8_sub(q0, p0), i16x8_splat(9)), i16x8_mul(i16x8_sub(q1, p1), i16x8_splat(3))), i16x8_splat(8)), 4);
-        let apply = v128_and(i16x8_lt(i16x8_abs(delta), i16x8_mul(tcv, i16x8_splat(10))), segments(on[0] && !strong[0], on[1] && !strong[1]));
+        let delta = i16x8_shr(
+            i16x8_add(
+                i16x8_sub(
+                    i16x8_mul(i16x8_sub(q0, p0), i16x8_splat(9)),
+                    i16x8_mul(i16x8_sub(q1, p1), i16x8_splat(3)),
+                ),
+                i16x8_splat(8),
+            ),
+            4,
+        );
+        let apply = v128_and(
+            i16x8_lt(i16x8_abs(delta), i16x8_mul(tcv, i16x8_splat(10))),
+            segments(on[0] && !strong[0], on[1] && !strong[1]),
+        );
         let delta = clip_abs(delta, tcv);
         let half = i16x8_shr(tcv, 1);
         out[3] = v128_bitselect(i16x8_add(p0, delta), p0, apply);
         out[4] = v128_bitselect(i16x8_sub(q0, delta), q0, apply);
         if dep[0] || dep[1] {
-            let d = clip_abs(i16x8_shr(i16x8_add(i16x8_sub(i16x8_shr(i16x8_add(i16x8_add(p2, p0), i16x8_splat(1)), 1), p1), delta), 1), half);
-            out[2] = v128_bitselect(i16x8_add(p1, d), p1, v128_and(apply, segments(dep[0], dep[1])));
+            let d = clip_abs(
+                i16x8_shr(
+                    i16x8_add(
+                        i16x8_sub(
+                            i16x8_shr(i16x8_add(i16x8_add(p2, p0), i16x8_splat(1)), 1),
+                            p1,
+                        ),
+                        delta,
+                    ),
+                    1,
+                ),
+                half,
+            );
+            out[2] = v128_bitselect(
+                i16x8_add(p1, d),
+                p1,
+                v128_and(apply, segments(dep[0], dep[1])),
+            );
         }
         if deq[0] || deq[1] {
-            let d = clip_abs(i16x8_shr(i16x8_sub(i16x8_sub(i16x8_shr(i16x8_add(i16x8_add(q2, q0), i16x8_splat(1)), 1), q1), delta), 1), half);
-            out[5] = v128_bitselect(i16x8_add(q1, d), q1, v128_and(apply, segments(deq[0], deq[1])));
+            let d = clip_abs(
+                i16x8_shr(
+                    i16x8_sub(
+                        i16x8_sub(
+                            i16x8_shr(i16x8_add(i16x8_add(q2, q0), i16x8_splat(1)), 1),
+                            q1,
+                        ),
+                        delta,
+                    ),
+                    1,
+                ),
+                half,
+            );
+            out[5] = v128_bitselect(
+                i16x8_add(q1, d),
+                q1,
+                v128_and(apply, segments(deq[0], deq[1])),
+            );
         }
     }
     let wide = strong[0] || strong[1];
@@ -1096,12 +1520,66 @@ pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: [i32; 2], t
         let m = segments(strong[0], strong[1]);
         let t2 = i16x8_shl(tcv, 1);
         let (p1p0, q0q1) = (i16x8_add(p1, p0), i16x8_add(q0, q1));
-        let np0 = clip_near(i16x8_shr(i16x8_add(i16x8_add(i16x8_add(p2, i16x8_shl(i16x8_add(p1p0, q0), 1)), q1), four), 3), p0, t2);
-        let np1 = clip_near(i16x8_shr(i16x8_add(i16x8_add(p2, i16x8_add(p1p0, q0)), two), 2), p1, t2);
-        let np2 = clip_near(i16x8_shr(i16x8_add(i16x8_add(i16x8_add(i16x8_shl(p3, 1), i16x8_mul(p2, i16x8_splat(3))), i16x8_add(p1p0, q0)), four), 3), p2, t2);
-        let nq0 = clip_near(i16x8_shr(i16x8_add(i16x8_add(i16x8_add(p1, i16x8_shl(i16x8_add(p0, q0q1), 1)), q2), four), 3), q0, t2);
-        let nq1 = clip_near(i16x8_shr(i16x8_add(i16x8_add(p0, i16x8_add(q0q1, q2)), two), 2), q1, t2);
-        let nq2 = clip_near(i16x8_shr(i16x8_add(i16x8_add(i16x8_add(p0, q0q1), i16x8_add(i16x8_mul(q2, i16x8_splat(3)), i16x8_shl(q3, 1))), four), 3), q2, t2);
+        let np0 = clip_near(
+            i16x8_shr(
+                i16x8_add(
+                    i16x8_add(i16x8_add(p2, i16x8_shl(i16x8_add(p1p0, q0), 1)), q1),
+                    four,
+                ),
+                3,
+            ),
+            p0,
+            t2,
+        );
+        let np1 = clip_near(
+            i16x8_shr(i16x8_add(i16x8_add(p2, i16x8_add(p1p0, q0)), two), 2),
+            p1,
+            t2,
+        );
+        let np2 = clip_near(
+            i16x8_shr(
+                i16x8_add(
+                    i16x8_add(
+                        i16x8_add(i16x8_shl(p3, 1), i16x8_mul(p2, i16x8_splat(3))),
+                        i16x8_add(p1p0, q0),
+                    ),
+                    four,
+                ),
+                3,
+            ),
+            p2,
+            t2,
+        );
+        let nq0 = clip_near(
+            i16x8_shr(
+                i16x8_add(
+                    i16x8_add(i16x8_add(p1, i16x8_shl(i16x8_add(p0, q0q1), 1)), q2),
+                    four,
+                ),
+                3,
+            ),
+            q0,
+            t2,
+        );
+        let nq1 = clip_near(
+            i16x8_shr(i16x8_add(i16x8_add(p0, i16x8_add(q0q1, q2)), two), 2),
+            q1,
+            t2,
+        );
+        let nq2 = clip_near(
+            i16x8_shr(
+                i16x8_add(
+                    i16x8_add(
+                        i16x8_add(p0, q0q1),
+                        i16x8_add(i16x8_mul(q2, i16x8_splat(3)), i16x8_shl(q3, 1)),
+                    ),
+                    four,
+                ),
+                3,
+            ),
+            q2,
+            t2,
+        );
         for (o, n) in out[1..7].iter_mut().zip([np2, np1, np0, nq0, nq1, nq2]) {
             *o = v128_bitselect(n, *o, m);
         }
@@ -1118,19 +1596,46 @@ pub unsafe fn chroma_edge(p: *mut u8, stride: usize, dir: usize, tc: [i32; 2]) {
     // SAFETY: the caller's.
     let [p1, p0, q0, q1] = unsafe {
         if dir == 1 {
-            let row = |i: isize| u16x8_extend_low_u8x16(v128_load64_zero(p.offset((i - 2) * stride as isize) as *const u64));
+            let row = |i: isize| {
+                u16x8_extend_low_u8x16(v128_load64_zero(
+                    p.offset((i - 2) * stride as isize) as *const u64
+                ))
+            };
             [row(0), row(1), row(2), row(3)]
         } else {
             let line = |k: usize| p.add(k * stride).sub(2) as *const u32;
-            let four = |k: usize| v128_load32_lane::<3>(v128_load32_lane::<2>(v128_load32_lane::<1>(v128_load32_zero(line(k)), line(k + 1)), line(k + 2)), line(k + 3));
+            let four = |k: usize| {
+                v128_load32_lane::<3>(
+                    v128_load32_lane::<2>(
+                        v128_load32_lane::<1>(v128_load32_zero(line(k)), line(k + 1)),
+                        line(k + 2),
+                    ),
+                    line(k + 3),
+                )
+            };
             let (a, b) = (four(0), four(4));
             let p = i8x16_shuffle::<0, 4, 8, 12, 16, 20, 24, 28, 1, 5, 9, 13, 17, 21, 25, 29>(a, b);
-            let q = i8x16_shuffle::<2, 6, 10, 14, 18, 22, 26, 30, 3, 7, 11, 15, 19, 23, 27, 31>(a, b);
-            [u16x8_extend_low_u8x16(p), u16x8_extend_high_u8x16(p), u16x8_extend_low_u8x16(q), u16x8_extend_high_u8x16(q)]
+            let q =
+                i8x16_shuffle::<2, 6, 10, 14, 18, 22, 26, 30, 3, 7, 11, 15, 19, 23, 27, 31>(a, b);
+            [
+                u16x8_extend_low_u8x16(p),
+                u16x8_extend_high_u8x16(p),
+                u16x8_extend_low_u8x16(q),
+                u16x8_extend_high_u8x16(q),
+            ]
         }
     };
     let tcv = per_segment(tc[0], tc[1]);
-    let d = clip_abs(i16x8_shr(i16x8_add(i16x8_sub(i16x8_add(i16x8_shl(i16x8_sub(q0, p0), 2), p1), q1), i16x8_splat(4)), 3), tcv);
+    let d = clip_abs(
+        i16x8_shr(
+            i16x8_add(
+                i16x8_sub(i16x8_add(i16x8_shl(i16x8_sub(q0, p0), 2), p1), q1),
+                i16x8_splat(4),
+            ),
+            3,
+        ),
+        tcv,
+    );
     let n = u8x16_narrow_i16x8(i16x8_add(p0, d), i16x8_sub(q0, d));
     // SAFETY: the caller's.
     unsafe {
@@ -1166,8 +1671,14 @@ fn add_offset(v: v128, off: v128) -> v128 {
 /// # Safety
 /// See `kernels::sao_band`.
 pub unsafe fn sao_band(d: *mut u8, stride: usize, w: usize, h: usize, band: &[i8; 32]) {
-    let lo = i8x16(band[0], band[1], band[2], band[3], band[4], band[5], band[6], band[7], band[8], band[9], band[10], band[11], band[12], band[13], band[14], band[15]);
-    let hi = i8x16(band[16], band[17], band[18], band[19], band[20], band[21], band[22], band[23], band[24], band[25], band[26], band[27], band[28], band[29], band[30], band[31]);
+    let lo = i8x16(
+        band[0], band[1], band[2], band[3], band[4], band[5], band[6], band[7], band[8], band[9],
+        band[10], band[11], band[12], band[13], band[14], band[15],
+    );
+    let hi = i8x16(
+        band[16], band[17], band[18], band[19], band[20], band[21], band[22], band[23], band[24],
+        band[25], band[26], band[27], band[28], band[29], band[30], band[31],
+    );
     let sixteen = u8x16_splat(16);
     for y in 0..h {
         // SAFETY: the caller's.
@@ -1178,7 +1689,10 @@ pub unsafe fn sao_band(d: *mut u8, stride: usize, w: usize, h: usize, band: &[i8
                 let v = v128_load(dr.add(x) as *const v128);
                 let idx = u8x16_shr(v, 3);
                 // A swizzle index past 15 reads as 0, so the two halves sum.
-                let off = v128_or(u8x16_swizzle(lo, idx), u8x16_swizzle(hi, u8x16_sub(idx, sixteen)));
+                let off = v128_or(
+                    u8x16_swizzle(lo, idx),
+                    u8x16_swizzle(hi, u8x16_sub(idx, sixteen)),
+                );
                 v128_store(dr.add(x) as *mut v128, add_offset(v, off));
                 x += 16;
             }
@@ -1192,16 +1706,44 @@ pub unsafe fn sao_band(d: *mut u8, stride: usize, w: usize, h: usize, band: &[i8
 
 /// # Safety
 /// See `kernels::sao_edge`.
-pub unsafe fn sao_edge(d: *mut u8, dst_stride: usize, src: &[u8], origin: usize, src_stride: usize, w: usize, h: usize, oa: isize, ob: isize, offs: &[i8; 4]) {
+pub unsafe fn sao_edge(
+    d: *mut u8,
+    dst_stride: usize,
+    src: &[u8],
+    origin: usize,
+    src_stride: usize,
+    w: usize,
+    h: usize,
+    oa: isize,
+    ob: isize,
+    offs: &[i8; 4],
+) {
     // The block and its neighbours in `src`, checked once.
     let (lo, hi) = (oa.min(ob).min(0), oa.max(ob).max(0));
-    assert!(w > 0 && h > 0 && origin as isize + lo >= 0 && origin + (h - 1) * src_stride + w - 1 < (src.len() as isize - hi) as usize);
+    assert!(
+        w > 0
+            && h > 0
+            && origin as isize + lo >= 0
+            && origin + (h - 1) * src_stride + w - 1 < (src.len() as isize - hi) as usize
+    );
     let table = [offs[0], offs[1], 0, offs[2], offs[3]];
-    let tab = i8x16(table[0], table[1], 0, table[3], table[4], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    let tab = i8x16(
+        table[0], table[1], 0, table[3], table[4], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    );
     let s = src.as_ptr();
     for y in 0..h {
         // SAFETY: `src` checked above, the block at `d` the caller's.
-        unsafe { sao_edge_row(d.add(y * dst_stride), s.add(origin + y * src_stride), w, oa, ob, tab, &table) };
+        unsafe {
+            sao_edge_row(
+                d.add(y * dst_stride),
+                s.add(origin + y * src_stride),
+                w,
+                oa,
+                ob,
+                tab,
+                &table,
+            )
+        };
     }
 }
 
@@ -1212,7 +1754,15 @@ pub unsafe fn sao_edge(d: *mut u8, dst_stride: usize, src: &[u8], origin: usize,
 /// # Safety
 /// `w` samples at `d`, and at `s` with those `oa` and `ob` from each.
 #[inline(never)]
-unsafe fn sao_edge_row(d: *mut u8, s: *const u8, w: usize, oa: isize, ob: isize, tab: v128, table: &[i8; 5]) {
+unsafe fn sao_edge_row(
+    d: *mut u8,
+    s: *const u8,
+    w: usize,
+    oa: isize,
+    ob: isize,
+    tab: v128,
+    table: &[i8; 5],
+) {
     let two = i8x16_splat(2);
     let mut x = 0;
     // SAFETY: the caller's.

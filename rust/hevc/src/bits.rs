@@ -100,10 +100,26 @@ mod tests {
         // ue: 1 -> 0, 010 -> 1, 011 -> 2, 00100 -> 3, 00111 -> 6
         let bytes = [0b1010_0110u8, 0b0100_0011, 0b1000_0000];
         let mut r = BitReader::new(&bytes);
-        assert_eq!([r.read_ue().unwrap(), r.read_ue().unwrap(), r.read_ue().unwrap(), r.read_ue().unwrap(), r.read_ue().unwrap()], [0, 1, 2, 3, 6]);
+        assert_eq!(
+            [
+                r.read_ue().unwrap(),
+                r.read_ue().unwrap(),
+                r.read_ue().unwrap(),
+                r.read_ue().unwrap(),
+                r.read_ue().unwrap()
+            ],
+            [0, 1, 2, 3, 6]
+        );
         let bytes = [0b0100_1100u8, 0b1000_0000];
         let mut r = BitReader::new(&bytes);
-        assert_eq!([r.read_se().unwrap(), r.read_se().unwrap(), r.read_se().unwrap()], [1, -1, 2]);
+        assert_eq!(
+            [
+                r.read_se().unwrap(),
+                r.read_se().unwrap(),
+                r.read_se().unwrap()
+            ],
+            [1, -1, 2]
+        );
         let mut r = BitReader::new(&[0xDE, 0xAD, 0xBE, 0xEF, 0x80]);
         assert_eq!(r.read_bits(32).unwrap(), 0xDEAD_BEEF);
         assert!(r.read_flag().unwrap());

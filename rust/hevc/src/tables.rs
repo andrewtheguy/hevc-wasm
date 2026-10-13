@@ -122,7 +122,12 @@ pub type SigCtx = [[[u8; 16]; 4]; 2];
 /// grid's log2 size: 4×4 blocks use their map, larger ones the neighbour
 /// term and the offsets of the block's size, its scan and the sub-block's
 /// place (a luma sub-block's after the first).
-const fn sig_ctx_table(log2sb: usize, scan_idx: usize, by_scan: [u8; 16], nb: [[u8; 16]; 4]) -> [SigCtx; 2] {
+const fn sig_ctx_table(
+    log2sb: usize,
+    scan_idx: usize,
+    by_scan: [u8; 16],
+    nb: [[u8; 16]; 4],
+) -> [SigCtx; 2] {
     let mut t = [[[[0u8; 16]; 4]; 2]; 2];
     let mut c = 0;
     while c < 2 {
@@ -140,7 +145,14 @@ const fn sig_ctx_table(log2sb: usize, scan_idx: usize, by_scan: [u8; 16], nb: [[
                     } else {
                         // Luma alone shifts a sub-block after the first.
                         let off = if c == 0 {
-                            3 * rest as u8 + if log2sb > 1 { 21 } else if scan_idx == 0 { 9 } else { 15 }
+                            3 * rest as u8
+                                + if log2sb > 1 {
+                                    21
+                                } else if scan_idx == 0 {
+                                    9
+                                } else {
+                                    15
+                                }
                         } else if log2sb > 1 {
                             12
                         } else {
@@ -191,7 +203,11 @@ scans!(s8, 8, 64);
 
 /// `SIG[log2sb][scanIdx]`.
 static SIG: [[[SigCtx; 2]; 3]; 4] = {
-    const S: [[(u8, u8); 16]; 3] = [diag_scan::<4, 16>(), horiz_scan::<4, 16>(), vert_scan::<4, 16>()];
+    const S: [[(u8, u8); 16]; 3] = [
+        diag_scan::<4, 16>(),
+        horiz_scan::<4, 16>(),
+        vert_scan::<4, 16>(),
+    ];
     let mut t = [[[[[[0u8; 16]; 4]; 2]; 2]; 3]; 4];
     let mut l = 0;
     while l < 4 {
@@ -207,13 +223,31 @@ static SIG: [[[SigCtx; 2]; 3]; 4] = {
 
 macro_rules! set {
     ($m:ident, $l:literal, DIAG) => {
-        ScanSet { sb: &$m::DIAG, sb_inv: &$m::DIAG_INV, pos: &s4::DIAG, pos_inv: &s4::DIAG_INV, sig: &SIG[$l][0] }
+        ScanSet {
+            sb: &$m::DIAG,
+            sb_inv: &$m::DIAG_INV,
+            pos: &s4::DIAG,
+            pos_inv: &s4::DIAG_INV,
+            sig: &SIG[$l][0],
+        }
     };
     ($m:ident, $l:literal, HORIZ) => {
-        ScanSet { sb: &$m::HORIZ, sb_inv: &$m::HORIZ_INV, pos: &s4::HORIZ, pos_inv: &s4::HORIZ_INV, sig: &SIG[$l][1] }
+        ScanSet {
+            sb: &$m::HORIZ,
+            sb_inv: &$m::HORIZ_INV,
+            pos: &s4::HORIZ,
+            pos_inv: &s4::HORIZ_INV,
+            sig: &SIG[$l][1],
+        }
     };
     ($m:ident, $l:literal, VERT) => {
-        ScanSet { sb: &$m::VERT, sb_inv: &$m::VERT_INV, pos: &s4::VERT, pos_inv: &s4::VERT_INV, sig: &SIG[$l][2] }
+        ScanSet {
+            sb: &$m::VERT,
+            sb_inv: &$m::VERT_INV,
+            pos: &s4::VERT,
+            pos_inv: &s4::VERT_INV,
+            sig: &SIG[$l][2],
+        }
     };
 }
 
@@ -232,7 +266,10 @@ pub fn scan_set(log2sb: usize, scan_idx: usize) -> &'static ScanSet {
 }
 
 /// Column 0 of `transMatrix`: the distinct DCT magnitudes (§8.6.4.2).
-const DCT_BASE: [i16; 33] = [64, 90, 90, 90, 89, 88, 87, 85, 83, 82, 80, 78, 75, 73, 70, 67, 64, 61, 57, 54, 50, 46, 43, 38, 36, 31, 25, 22, 18, 13, 9, 4, 0];
+const DCT_BASE: [i16; 33] = [
+    64, 90, 90, 90, 89, 88, 87, 85, 83, 82, 80, 78, 75, 73, 70, 67, 64, 61, 57, 54, 50, 46, 43, 38,
+    36, 31, 25, 22, 18, 13, 9, 4, 0,
+];
 
 const fn build_dct32() -> [[i16; 32]; 32] {
     let mut m = [[0i16; 32]; 32];
@@ -264,7 +301,12 @@ pub static DCT32: [[i16; 32]; 32] = build_dct32();
 
 /// The 4×4 DST-VII of intra luma 4×4 blocks, padded to the DCT's row pitch.
 pub static DST4: [[i16; 32]; 4] = {
-    let rows: [[i16; 4]; 4] = [[29, 55, 74, 84], [74, 74, 0, -74], [84, -29, -74, 55], [55, -84, 74, -29]];
+    let rows: [[i16; 4]; 4] = [
+        [29, 55, 74, 84],
+        [74, 74, 0, -74],
+        [84, -29, -74, 55],
+        [55, -84, 74, -29],
+    ];
     let mut t = [[0i16; 32]; 4];
     let mut k = 0;
     while k < 4 {
@@ -279,25 +321,50 @@ pub static DST4: [[i16; 32]; 4] = {
 };
 
 /// `intraPredAngle` by mode (Table 8-4); modes 0 and 1 are not angular.
-pub static INTRA_PRED_ANGLE: [i32; 35] = [0, 0, 32, 26, 21, 17, 13, 9, 5, 2, 0, -2, -5, -9, -13, -17, -21, -26, -32, -26, -21, -17, -13, -9, -5, -2, 0, 2, 5, 9, 13, 17, 21, 26, 32];
+pub static INTRA_PRED_ANGLE: [i32; 35] = [
+    0, 0, 32, 26, 21, 17, 13, 9, 5, 2, 0, -2, -5, -9, -13, -17, -21, -26, -32, -26, -21, -17, -13,
+    -9, -5, -2, 0, 2, 5, 9, 13, 17, 21, 26, 32,
+];
 
 /// `invAngle` by mode 11..=25 (Table 8-5), indexed by `mode - 11`.
-pub static INV_ANGLE: [i32; 15] = [-4096, -1638, -910, -630, -482, -390, -315, -256, -315, -390, -482, -630, -910, -1638, -4096];
+pub static INV_ANGLE: [i32; 15] = [
+    -4096, -1638, -910, -630, -482, -390, -315, -256, -315, -390, -482, -630, -910, -1638, -4096,
+];
 
 /// `levelScale[qP % 6]` (§8.6.3).
 pub static LEVEL_SCALE: [i32; 6] = [40, 45, 51, 57, 64, 72];
 
 /// Deblocking `β′` by Q (Table 8-12).
-pub static BETA_TABLE: [u8; 52] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 64];
+pub static BETA_TABLE: [u8; 52] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+    20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 64,
+];
 
 /// Deblocking `tC′` by Q (Table 8-12).
-pub static TC_TABLE: [u8; 54] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 7, 8, 9, 10, 11, 13, 14, 16, 18, 20, 22, 24];
+pub static TC_TABLE: [u8; 54] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3,
+    3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 7, 8, 9, 10, 11, 13, 14, 16, 18, 20, 22, 24,
+];
 
 /// Luma 8-tap filters `fL[xFracL]` (Table 8-11).
-pub static LUMA_FILTER: [[i16; 8]; 4] = [[0, 0, 0, 64, 0, 0, 0, 0], [-1, 4, -10, 58, 17, -5, 1, 0], [-1, 4, -11, 40, 40, -11, 4, -1], [0, 1, -5, 17, 58, -10, 4, -1]];
+pub static LUMA_FILTER: [[i16; 8]; 4] = [
+    [0, 0, 0, 64, 0, 0, 0, 0],
+    [-1, 4, -10, 58, 17, -5, 1, 0],
+    [-1, 4, -11, 40, 40, -11, 4, -1],
+    [0, 1, -5, 17, 58, -10, 4, -1],
+];
 
 /// Chroma 4-tap filters `fC[xFracC]` (Table 8-12).
-pub static CHROMA_FILTER: [[i16; 4]; 8] = [[0, 64, 0, 0], [-2, 58, 10, -2], [-4, 54, 16, -2], [-6, 46, 28, -4], [-4, 36, 36, -4], [-4, 28, 46, -6], [-2, 16, 54, -4], [-2, 10, 58, -2]];
+pub static CHROMA_FILTER: [[i16; 4]; 8] = [
+    [0, 64, 0, 0],
+    [-2, 58, 10, -2],
+    [-4, 54, 16, -2],
+    [-6, 46, 28, -4],
+    [-4, 36, 36, -4],
+    [-4, 28, 46, -6],
+    [-2, 16, 54, -4],
+    [-2, 10, 58, -2],
+];
 
 #[cfg(test)]
 mod tests {
@@ -305,7 +372,10 @@ mod tests {
 
     #[test]
     fn scans_and_matrix() {
-        assert_eq!(&s4::DIAG[..6], &[(0, 0), (0, 1), (1, 0), (0, 2), (1, 1), (2, 0)]);
+        assert_eq!(
+            &s4::DIAG[..6],
+            &[(0, 0), (0, 1), (1, 0), (0, 2), (1, 1), (2, 0)]
+        );
         assert_eq!(s8::DIAG[63], (7, 7));
         assert_eq!(s2::DIAG, [(0, 0), (0, 1), (1, 0), (1, 1)]);
         for (i, &(x, y)) in s8::VERT.iter().enumerate() {
@@ -322,7 +392,11 @@ mod tests {
     }
     #[test]
     fn sig_table_matches_formula() {
-        const S: [[(u8, u8); 16]; 3] = [diag_scan::<4, 16>(), horiz_scan::<4, 16>(), vert_scan::<4, 16>()];
+        const S: [[(u8, u8); 16]; 3] = [
+            diag_scan::<4, 16>(),
+            horiz_scan::<4, 16>(),
+            vert_scan::<4, 16>(),
+        ];
         for l in 0..4 {
             for si in 0..3 {
                 let by_scan = sig_by_scan(S[si]);
@@ -339,13 +413,20 @@ mod tests {
                                 } else {
                                     let mut o = if rest == 1 { 3 } else { 0 };
                                     if c == 0 {
-                                        o += if l == 1 { if si == 0 { 9 } else { 15 } } else { 21 };
+                                        o += if l == 1 {
+                                            if si == 0 { 9 } else { 15 }
+                                        } else {
+                                            21
+                                        };
                                     } else {
                                         o = if l == 1 { 9 } else { 12 };
                                     }
                                     base + o + nb[prev][k] as usize
                                 };
-                                assert_eq!(SIG[l][si][c][rest][prev][k] as usize, want, "l {l} si {si} c {c} rest {rest} prev {prev} k {k}");
+                                assert_eq!(
+                                    SIG[l][si][c][rest][prev][k] as usize, want,
+                                    "l {l} si {si} c {c} rest {rest} prev {prev} k {k}"
+                                );
                             }
                         }
                     }

@@ -25,7 +25,12 @@ pub struct Progress {
 
 impl Default for Progress {
     fn default() -> Self {
-        Progress { done: AtomicU32::new(0), waiters: AtomicU32::new(0), lock: Mutex::new(()), cv: Condvar::new() }
+        Progress {
+            done: AtomicU32::new(0),
+            waiters: AtomicU32::new(0),
+            lock: Mutex::new(()),
+            cv: Condvar::new(),
+        }
     }
 }
 
@@ -81,7 +86,12 @@ impl Progress {
 /// Runs `f` for rows `0..n` in order of claiming, on `threads` threads, each
 /// row marking its progress as it goes and its failure if it fails. A row
 /// that fails stops the rest, and the first error is returned.
-pub fn run_rows(threads: usize, n: usize, progress: &[Progress], f: impl Fn(usize) -> Result<()> + Sync) -> Result<()> {
+pub fn run_rows(
+    threads: usize,
+    n: usize,
+    progress: &[Progress],
+    f: impl Fn(usize) -> Result<()> + Sync,
+) -> Result<()> {
     for p in &progress[..n] {
         p.reset();
     }
@@ -101,7 +111,10 @@ pub fn run_rows(threads: usize, n: usize, progress: &[Progress], f: impl Fn(usiz
         if let Err(e) = f(row) {
             progress[row].fail();
             stop.store(true, Ordering::Relaxed);
-            first.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert(e);
+            first
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_or_insert(e);
         }
     };
     let next = AtomicUsize::new(0);

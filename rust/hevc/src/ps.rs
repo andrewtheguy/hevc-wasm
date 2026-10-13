@@ -8,7 +8,9 @@ use crate::error::{Error, Result};
 pub(crate) const MAX_LUMA_PS: u64 = 35_651_584;
 
 fn unsupported(what: &str) -> Error {
-    Error::unsupported(format!("the stream uses {what}, which is not the Mac's shape"))
+    Error::unsupported(format!(
+        "the stream uses {what}, which is not the Mac's shape"
+    ))
 }
 
 /// `profile_tier_level()`, read past: the tools are checked one by one below,
@@ -105,7 +107,12 @@ pub struct Colour {
 
 impl Default for Colour {
     fn default() -> Self {
-        Colour { full_range: false, primaries: 2, transfer: 2, matrix: 2 }
+        Colour {
+            full_range: false,
+            primaries: 2,
+            transfer: 2,
+            matrix: 2,
+        }
     }
 }
 
@@ -170,14 +177,25 @@ impl ShortTermRps {
 }
 
 /// `st_ref_pic_set(idx)` (§7.3.7), predicted from `sets` where it says so.
-pub fn parse_st_ref_pic_set(r: &mut BitReader, idx: usize, sets: &[ShortTermRps], in_slice_header: bool) -> Result<ShortTermRps> {
+pub fn parse_st_ref_pic_set(
+    r: &mut BitReader,
+    idx: usize,
+    sets: &[ShortTermRps],
+    in_slice_header: bool,
+) -> Result<ShortTermRps> {
     let inter_rps_pred = if idx != 0 { r.read_flag()? } else { false };
     let mut rps = ShortTermRps::default();
     if inter_rps_pred {
-        let delta_idx_minus1 = if in_slice_header { r.read_ue_max(idx as u32 - 1)? as usize } else { 0 };
+        let delta_idx_minus1 = if in_slice_header {
+            r.read_ue_max(idx as u32 - 1)? as usize
+        } else {
+            0
+        };
         let delta_rps_sign = r.read_flag()?;
         let abs_delta_rps_minus1 = r.read_ue_max(32767)?;
-        let rf = sets.get(idx - (delta_idx_minus1 + 1)).ok_or_else(|| Error::invalid("st_ref_pic_set reference index"))?;
+        let rf = sets
+            .get(idx - (delta_idx_minus1 + 1))
+            .ok_or_else(|| Error::invalid("st_ref_pic_set reference index"))?;
         let delta_rps = (1 - 2 * delta_rps_sign as i32) * (abs_delta_rps_minus1 as i32 + 1);
         let n = rf.num_delta_pocs();
         let mut used = vec![false; n + 1];
@@ -235,7 +253,9 @@ pub fn parse_st_ref_pic_set(r: &mut BitReader, idx: usize, sets: &[ShortTermRps]
         }
     }
     if rps.num_delta_pocs() > 16 {
-        return Err(Error::invalid("more than 16 pictures in a reference picture set"));
+        return Err(Error::invalid(
+            "more than 16 pictures in a reference picture set",
+        ));
     }
     Ok(rps)
 }
@@ -266,7 +286,10 @@ pub struct Sps {
 impl Sps {
     /// The cropped size.
     pub fn output_size(&self) -> (u32, u32) {
-        (self.width - self.conf_win[0] - self.conf_win[1], self.height - self.conf_win[2] - self.conf_win[3])
+        (
+            self.width - self.conf_win[0] - self.conf_win[1],
+            self.height - self.conf_win[2] - self.conf_win[3],
+        )
     }
 }
 
@@ -310,7 +333,12 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<Sps> {
     let log2_max_poc_lsb = r.read_ue_max(12)? as u8 + 4;
     let ordering_present = r.read_flag()?;
     let mut max_dec_pic_buffering = 0;
-    for _ in (if ordering_present { 0 } else { max_sub_layers_minus1 })..=max_sub_layers_minus1 {
+    for _ in (if ordering_present {
+        0
+    } else {
+        max_sub_layers_minus1
+    })..=max_sub_layers_minus1
+    {
         max_dec_pic_buffering = r.read_ue_max(16)? + 1;
         if r.read_ue_max(16)? != 0 {
             return Err(unsupported("picture reordering"));
@@ -330,7 +358,9 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<Sps> {
         6
     };
     if max_dec_pic_buffering > max_dpb_size {
-        return Err(Error::invalid("sps_max_dec_pic_buffering beyond the level's DPB"));
+        return Err(Error::invalid(
+            "sps_max_dec_pic_buffering beyond the level's DPB",
+        ));
     }
     let log2_min_cb_size = r.read_ue_max(3)? as u8 + 3;
     let log2_ctb_size = log2_min_cb_size + r.read_ue_max(3)? as u8;
@@ -339,7 +369,10 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<Sps> {
     }
     let log2_min_tb_size = r.read_ue_max(3)? as u8 + 2;
     let log2_max_tb_size = log2_min_tb_size + r.read_ue_max(3)? as u8;
-    if log2_max_tb_size > 5 || log2_max_tb_size > log2_ctb_size || log2_min_tb_size >= log2_min_cb_size {
+    if log2_max_tb_size > 5
+        || log2_max_tb_size > log2_ctb_size
+        || log2_min_tb_size >= log2_min_cb_size
+    {
         return Err(Error::invalid("transform block sizes"));
     }
     let max_transform_hierarchy_depth_inter = r.read_ue_max(4)? as u8;
@@ -367,13 +400,19 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<Sps> {
     if r.read_flag()? {
         return Err(unsupported("strong intra smoothing"));
     }
-    let colour = if r.read_flag()? { parse_vui(&mut r, max_sub_layers_minus1)? } else { Colour::default() };
+    let colour = if r.read_flag()? {
+        parse_vui(&mut r, max_sub_layers_minus1)?
+    } else {
+        Colour::default()
+    };
     if r.read_flag()? {
         return Err(unsupported("an SPS extension"));
     }
     let min_cb = 1 << log2_min_cb_size;
     if width % min_cb != 0 || height % min_cb != 0 {
-        return Err(Error::invalid("picture size not a multiple of the minimum coding block"));
+        return Err(Error::invalid(
+            "picture size not a multiple of the minimum coding block",
+        ));
     }
     let ctb = 1 << log2_ctb_size;
     Ok(Sps {
@@ -449,7 +488,11 @@ pub fn parse_pps(rbsp: &[u8]) -> Result<Pps> {
         return Err(unsupported("transform skip"));
     }
     let cu_qp_delta_enabled = r.read_flag()?;
-    let diff_cu_qp_delta_depth = if cu_qp_delta_enabled { r.read_ue_max(3)? as u8 } else { 0 };
+    let diff_cu_qp_delta_depth = if cu_qp_delta_enabled {
+        r.read_ue_max(3)? as u8
+    } else {
+        0
+    };
     let cb_qp_offset = r.read_se()?;
     let cr_qp_offset = r.read_se()?;
     if !(-12..=12).contains(&cb_qp_offset) || !(-12..=12).contains(&cr_qp_offset) {
@@ -467,7 +510,9 @@ pub fn parse_pps(rbsp: &[u8]) -> Result<Pps> {
         return Err(unsupported("tiles"));
     }
     if !r.read_flag()? {
-        return Err(unsupported("no wavefront (entropy_coding_sync_enabled_flag is 0)"));
+        return Err(unsupported(
+            "no wavefront (entropy_coding_sync_enabled_flag is 0)",
+        ));
     }
     let loop_filter_across_slices_enabled = r.read_flag()?;
     let mut deblocking_filter_override_enabled = false;
