@@ -1,9 +1,10 @@
 # What remains of the pure-Rust decoder
 
 What the decoder does today is in [the architecture](architecture.md), with
-where its time goes; how it is built and what it measures against the
-release before are in the [README](../README.md). This is the list of what it does
-not do yet, in the order the work would go. Numbers are from the module
+where its time goes; how it is built is in the [README](../README.md), and
+what it measures against FFmpeg and the release before in
+[the benchmarks](benchmarks.md). This is the list of what it does not do
+yet, in the order the work would go. Numbers are from the module
 under Node on one thread of the x86 workstation, profiled with `perf record`
 of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
@@ -179,7 +180,7 @@ as they were:
 
 ### Elsewhere
 
-- **The target machine.** All of the README's numbers are from an x86
+- **The target machine.** All of [the benchmarks](benchmarks.md) are from an x86
   workstation under Bun. The module has not
   been run on Apple silicon, where V8 lowers SIMD128 to NEON differently and
   the memory system differs; the capture's transform and the video's
