@@ -11,24 +11,25 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 The streams are the Mac's own, taken on 2026-10-12: seven scenes of a
 1440×900 display in four strips, at 1x and at 2x, a picture being a strip.
-Per picture on one thread, release 0.0.8 against native FFmpeg
+Per picture on one thread, the module as it is against native FFmpeg
 (`bench/run.sh`, `perf stat`):
 
 | | 1x, M cycles | FFmpeg | 2x, M cycles | FFmpeg |
 |---|---|---|---|---|
-| A still page | 1.8 | 2.4 | 4.2 | 8.9 |
-| A window dragged | 2.0 | 2.6 | 5.9 | 9.5 |
-| A quarter of the display in a loop | 2.7 | 3.2 | 7.7 | 11.0 |
-| Typing in a terminal | 2.3 | 3.0 | 5.9 | 10.6 |
-| Chrome scrolling an article | 4.9 | 4.9 | 13.5 | 15.5 |
-| The same four times as fast | 10.1 | 8.8 | 25.4 | 24.0 |
-| A video over the whole display | 21.0 | 17.1 | 41.9 | 34.2 |
+| A still page | 1.8 | 2.4 | 4.3 | 9.0 |
+| A window dragged | 2.0 | 2.6 | 6.0 | 9.7 |
+| A quarter of the display in a loop | 2.7 | 3.2 | 7.7 | 11.2 |
+| Typing in a terminal | 2.3 | 3.0 | 6.0 | 10.7 |
+| Chrome scrolling an article | 4.7 | 4.9 | 13.0 | 15.6 |
+| The same four times as fast | 9.4 | 8.8 | 23.4 | 24.1 |
+| A video over the whole display | 20.5 | 17.1 | 39.7 | 34.1 |
 
-The module is ahead wherever most of a picture is the picture before, and
-behind where a picture is new: by 23% on the video at either density, by 15%
-and 6% on the fast scroll. Those are also the streams that cost anything. The
-video at 2x is 12.8 ms a strip on one thread, 51 ms for a frame's four where
-30 frames a second leave 33 ms, and 5.0 ms a strip on four threads.
+The module is ahead wherever most of a picture is the picture before, and on
+the scroll; it is behind where a picture is new, by 20% and 16% on the video
+and by 7% on the fast scroll at 1x. Those are also the streams that cost
+anything. The video at 2x is 12 ms a strip on one thread, 48 ms for a
+frame's four where 30 frames a second leave 33 ms, and 4.7 ms a strip on
+four threads.
 
 In the order the work would go:
 
@@ -118,34 +119,43 @@ In the order the work would go:
    filters, an eighth of a 3% loop at most.
 
    The libc share is neither function's: by call graph all of it is under the
-   wavefront's row loop, the row-start copy of item 3.
+   wavefront's row loop, the row-start copy of item 2.
 
-2. **Threads on a small picture.** Four threads cost more than one wherever a
+2. **The reference copied whole for every strip.** Each row starts as its
+   reference's, and the copy is spared only where a free buffer holds a
+   picture the reference descends from. With a display in strips that never
+   happens: a strip's reference is the same strip of the frame before, and
+   the buffer that has come free by then was another strip's, which the next
+   picture takes for want of a better. Counted over the streams, no picture
+   reused a buffer, and all of a strip's 1,350 coding tree blocks at 2x are
+   copied whether 342 of them are left as the picture before (the video) or
+   1,257 (a still page). The copy is 38% of a still strip's samples at 2x,
+   25% of the typing's, 20% of the loop's, 11% of the scroll's, 6% of the
+   fast scroll's and 3% of the video's. What it wants is a buffer kept for
+   each strip's lineage, by not handing a strip the buffer another's
+   reference descends from while a spare can be had, at the cost of up to
+   four more buffers. Past that, of the video's blocks 896 have a coding
+   unit that wrote samples, 848 an edge the deblocking reached and 841 SAO,
+   so copying only the lines a filter can change is worth less there.
+
+3. **Threads on a small picture.** Four threads cost more than one wherever a
    strip is light: a still page at 1x is 1.8 M cycles and a 0.26 ms median on
    one thread, 2.4 M and 0.48 ms on four, and so with the drag, the loop and
    the typing, 20% to 40% more cycles. They pay only on the heavy streams:
-   2.6× on the video at 2x, 2.1× at 1x, 1.6× on the scroll at 2x. Whether a
+   2.6× on the video at 2x, 2.1× at 1x, 1.9× on the fast scroll at 2x, 1.5× on
+   the scroll. Whether a
    strip under some size should be decoded on the calling thread, and by what
    the decoder would know it before decoding, is not tried. The wavefront's
    waits (`wait_for` spinning 256 times before it sleeps), the row-start
    copies and rayon's scope per picture are the three places the loss can be,
    and `perf stat` on the pool threads separately would say which.
 
-3. **What the earlier profiles named**, on the x265 video, each to be looked
+4. **What the earlier profiles named**, on the x265 video, each to be looked
    at again only if the profile of item 1 ranks it:
-   - **The row-start copy.** A third of the coding tree blocks were still
-     copied: 18% because a coding unit wrote samples, 10% because the
-     deblocking of an edge reached into them, 6% for their SAO. Copying the
-     three lines or columns the filter can change, and not the block, is
-     untried.
    - **`coding_quadtree`'s fills**: the `memory.fill` calls into V8 are not
      free even at the word size, and the 4×4-granular maps (prediction mode,
      motion, QP, transform depth) could shrink to the 8×8 the smallest coding
      unit has where nothing reads them finer.
-   - **Intra prediction's reference gathering**: an availability check per
-     four samples and a byte-wise substitution, where the availability of the
-     left column and top row is a mask computable once per block and the
-     gather could run by vector.
    - **The in-loop filters** (`edge_strengths`, the deblocking, SAO,
      `filter_after`) and **`prediction_unit` with `merge_motion`**, neither
      profiled to the instruction.
@@ -195,8 +205,8 @@ as they were:
 
 ## Coverage
 
-None of the seven captures or the x265 video trip the refusals listed in the
-architecture. What is not known is whether the Mac ever does: in particular
+None of the fourteen captures of 2026-10-12, the seven before them or the
+x265 video trip the refusals listed in the architecture. What is not known is whether the Mac ever does: in particular
 whether it emits more than one slice when a picture is large, uses long-term
 references in a shape other than the `ltr-*` captures' (which decode), or
 ever sends a B picture. The refusal makes the page fall back, so a wrong

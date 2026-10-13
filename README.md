@@ -150,14 +150,16 @@ the byte planes and the threading are this repository's.
   `node --perf-prof` and `perf record`: the build keeps the function names.
   Profiles and logs go under `tmp/`.
 
-It decodes every picture of the seven High Performance Mac captures tried
-(2,833 pictures, 1600×1000 and 1600×256, including the long-term-refresh ones)
-and of a 1080p camera video x265 encoded in the Mac's shape (2,896 pictures)
-bit-identically to FFmpeg, natively on one thread and on six, and as the
-WebAssembly module on one and four. The `mac-*` fixtures in `test/data` are
-x265's nearest shape to the Mac's.
+It decodes every picture of the fourteen captures of a High Performance Mac's
+1440×900 display in strips taken on 2026-10-12 (31,683 pictures, 1440×240 at
+1x and 2880×464 at 2x), of the seven captures of whole pictures before them
+(2,833 pictures, 1600×1000 and 1600×256, including the long-term-refresh
+ones) and of a 1080p camera video x265 encoded in the Mac's shape (2,896
+pictures) bit-identically to FFmpeg, as the WebAssembly module on four
+threads. The `mac-*` fixtures in `test/data` are x265's nearest shape to the
+Mac's.
 
-The comparison is of the module under Bun, as it is and as release 0.0.7,
+The comparison is of the module under Bun, as it is and as release 0.0.8,
 against FFmpeg's native decoder: Debian 13's ffmpeg 7.1.5-0+deb13u1, built by
 gcc 14 with `--toolchain=hardened`, which picks its vector code as it runs,
 AVX2 on this i5-8500T, run as `ffmpeg -threads N -i FILE -benchmark -f null -`.
@@ -165,43 +167,53 @@ They ran on a six-core x86 workstation, alternately on the same cores, one
 for one thread and four for four, and the medians of three rounds are shown.
 The instruction and cycle counts are `perf stat`'s for the whole process and
 do not depend on the load. The module's ms is the median of its own clock's
-per picture, and FFmpeg's its process's wall time over the pictures. Per
-picture, lower better:
+per picture, and FFmpeg's its process's wall time over the pictures. The
+streams are seven scenes of the display, each at 1x and at 2x, thirty seconds
+of each; a picture is a strip, a quarter of the display, and the Mac sends
+only the strips that changed. Per picture, lower better:
 
-| 1600×1000 Mac capture, 236 pictures | this decoder | release 0.0.7 | FFmpeg, native |
-|---|---|---|---|
-| 1 thread, ms | 11.4 | 12.7 | 14.7 |
-| 1 thread, M cycles | 40.8 | 44.0 | 45.6 |
-| 1 thread, M instructions | 98.2 | 107.1 | 110.3 |
-| 4 threads, ms | 4.5 | 4.9 | 4.5 |
-| 4 threads, M cycles | 42.0 | 44.9 | 45.6 |
+| 1440×240, a strip | pictures | 1 thread, M cycles | 0.0.8 | FFmpeg | 1 thread, ms | FFmpeg | 4 threads, ms | FFmpeg |
+|---|---|---|---|---|---|---|---|---|
+| A still page | 1,450 | 1.8 | 1.8 | 2.4 | 0.27 | 0.82 | 0.48 | 0.40 |
+| A window dragged | 2,403 | 2.0 | 2.0 | 2.6 | 0.36 | 0.87 | 0.62 | 0.42 |
+| A quarter of the display in a loop | 2,273 | 2.7 | 2.7 | 3.2 | 0.74 | 1.07 | 0.85 | 0.46 |
+| Typing in a terminal | 2,248 | 2.3 | 2.3 | 3.0 | 0.25 | 1.03 | 0.55 | 0.45 |
+| Chrome scrolling an article | 2,588 | 4.7 | 5.0 | 4.9 | 1.00 | 1.62 | 1.18 | 0.69 |
+| The same four times as fast | 2,362 | 9.4 | 10.1 | 8.8 | 2.58 | 2.83 | 1.72 | 1.01 |
+| A video over the whole display | 1,978 | 20.5 | 21.1 | 17.1 | 6.30 | 5.39 | 3.04 | 2.28 |
 
-| 1080p video in the Mac's shape, 2,896 pictures | this decoder | release 0.0.7 | FFmpeg, native |
-|---|---|---|---|
-| 1 thread, ms | 1.8 | 1.8 | 6.2 |
-| 1 thread, M cycles | 11.1 | 11.1 | 18.4 |
-| 1 thread, M instructions | 21.3 | 21.1 | 37.6 |
-| 4 threads, ms | 2.2 | 2.2 | 2.3 |
-| 4 threads, M cycles | 13.2 | 13.1 | 19.0 |
+| 2880×464, a strip | pictures | 1 thread, M cycles | 0.0.8 | FFmpeg | 1 thread, ms | FFmpeg | 4 threads, ms | FFmpeg |
+|---|---|---|---|---|---|---|---|---|
+| A still page | 1,694 | 4.3 | 4.4 | 9.0 | 1.02 | 2.92 | 0.90 | 1.01 |
+| A window dragged | 2,507 | 6.0 | 6.1 | 9.7 | 1.56 | 3.12 | 1.13 | 1.11 |
+| A quarter of the display in a loop | 2,230 | 7.7 | 7.9 | 11.2 | 2.38 | 3.59 | 1.62 | 1.24 |
+| Typing in a terminal | 2,424 | 6.0 | 6.1 | 10.7 | 0.98 | 3.42 | 0.99 | 1.20 |
+| Chrome scrolling an article | 2,579 | 13.0 | 13.6 | 15.6 | 3.11 | 4.94 | 2.03 | 1.78 |
+| The same four times as fast | 2,501 | 23.4 | 25.6 | 24.1 | 6.61 | 7.56 | 3.54 | 2.72 |
+| A video over the whole display | 2,446 | 39.7 | 42.1 | 34.1 | 12.06 | 10.69 | 4.72 | 4.08 |
 
-| 1440×900 Mac capture of a busy animation, 120 pictures | this decoder | release 0.0.7 | FFmpeg, native |
-|---|---|---|---|
-| 1 thread, ms | 27.8 | 28.1 | 35.0 |
-| 1 thread, M cycles | 110.5 | 109.4 | 104.5 |
-| 1 thread, M instructions | 224.3 | 219.8 | 179.4 |
-| 4 threads, ms | 15.5 | 14.8 | 23.9 |
-| 4 threads, M cycles | 115.5 | 115.0 | 106.6 |
+On one thread the module takes fewer cycles than native FFmpeg wherever most
+of a picture is the picture before, which it neither decodes nor filters: a
+quarter fewer at 1x and up to half at 2x on the still page, the drag, the
+loop and the typing, and 17% fewer on the scroll at 2x. Where a picture is
+new it takes more: 7% on the fast scroll at 1x, and 20% and 16% on the
+video, whose strip at 2x is 12 ms on one thread, four of them more than the
+33 ms of a frame at thirty a second, and 4.7 ms on four. FFmpeg's four
+threads each decode a picture of their own, and here a picture is a strip,
+so by the clock it is quicker on four than the module on all but the still
+page and the typing at 2x; its figure is of pictures passing through, each
+held back by the others in hand, which a display that is watched cannot
+wait for. The module's four threads share one strip's rows, and on a light
+strip that costs more than it returns: a still strip at 1x is 0.27 ms on one
+thread and 0.48 ms on four.
 
-On one thread the module takes 11% fewer cycles than native FFmpeg on the
-capture and 40% fewer on the video, where most of a picture is the picture
-before and the module neither decodes nor copies it. FFmpeg's four threads
-each decode a picture of their own, where the module's decode one picture's
-rows, so its four-thread time matches the module's on both, for more cycles.
-The busy animation, where most of every picture changes, is the other way
-about: a picture costs nearly three times the first capture's, FFmpeg takes
-5% fewer cycles than the module on one thread, and the module is no faster
-than release 0.0.7, by 2% more instructions. FFmpeg's ms there is a
-process's wall time over only 120 pictures, start-up included.
+What follows is how the decoder got here, each step measured as it was made
+and on the streams there were then: "the capture" is a 1600×1000 Mac capture
+most of whose pictures turned out to decode to the picture before them, and
+"the video" the x265 camera video. None of these shares has been measured
+again on the strips, where one of the steps does not happen at all: no
+buffer is reused for a strip, and every strip is copied whole from its
+reference ([docs/remaining.md](docs/remaining.md)).
 
 On the Mac's dense screen content the decoder spends its time where the
 stream does: CABAC residual parsing and
@@ -275,6 +287,11 @@ each chain, where it had looked through every coded row of every coded
 column of a block the parser wrote and it then cleared, and a coefficient's
 remaining level, which few have, is read in a function apart from the
 sub-block's. 8% of the capture's cycles on one thread, 5% by the list alone.
+And three measured on the strips: the second pass of an interpolation by one
+multiply-add over two rows interleaved, 4% of the video's cycles at 2x; an
+angular prediction along the left column turned into place by vector, 4% of
+the fast scroll's; and an intra block's neighbours gathered as two runs from
+its corner with no flag per sample, 4.5% of the fast scroll's again.
 Natively the decoder runs its scalar fallbacks, since the kernels are written
 for wasm32. How it is put together, and where its time goes, is in
 [docs/architecture.md](docs/architecture.md); what it does not do yet, in
