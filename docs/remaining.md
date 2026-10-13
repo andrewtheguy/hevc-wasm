@@ -243,6 +243,18 @@ In the order the work would go:
      load of each line of a plane, whose lines at 2x are 2,880 bytes apart
      in three planes; whether those are misses of the cache or of the page
      table has not been measured.
+   - **`residual_block`**, 15.8% of the video at 2x after the eight-line
+     deblocking, is little of the parsing its name suggests, that being
+     `sub_blocks`, 18.4% and flat: it is the transform of a block with few
+     coefficients, whose second pass is 17% of the function, and the
+     residual added to the picture, 16% of it, eight samples at a time. A
+     row of sixteen or more is now added sixteen at a time: 37.9 M cycles
+     for 38.2 M on the video at 2x and 12.7 M for 12.8 M on the scroll, one
+     thread, five rounds, and level on the video at 1x, the fast scroll and
+     the typing. On the typing at 2x the largest shares after `sub_blocks`
+     and `residual_block` are the copy of the blocks the reference changed,
+     10% and waiting on the reference's lines, `coding_quadtree`, 9% and
+     flat, and `edge_strengths`, 7.5%.
 
 Measured on `cap5` or the x265 video and no faster, which ruled none of
 them out on the captures, so each is tried again there (item 1), written

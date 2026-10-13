@@ -482,6 +482,20 @@ pub fn add_residual(dst: &mut [u8], dst_stride: usize, res: &[i16], w: usize, h:
         unsafe {
             let (dr, sr) = (d.add(y * dst_stride), s.add(y * w));
             let mut x = 0;
+            // A row of sixteen or more goes sixteen samples at a time.
+            while x + 16 <= w {
+                let p = v128_load(dr.add(x) as *const v128);
+                let lo = i16x8_add(
+                    u16x8_extend_low_u8x16(p),
+                    v128_load(sr.add(x) as *const v128),
+                );
+                let hi = i16x8_add(
+                    u16x8_extend_high_u8x16(p),
+                    v128_load(sr.add(x + 8) as *const v128),
+                );
+                v128_store(dr.add(x) as *mut v128, u8x16_narrow_i16x8(lo, hi));
+                x += 16;
+            }
             while x < w {
                 let (p, v) = if w >= 8 {
                     (
