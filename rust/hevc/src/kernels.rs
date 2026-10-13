@@ -10,27 +10,43 @@ use crate::tables::{BETA_TABLE, TC_TABLE};
 // ---- motion compensation (§8.5.3.3.3) ----
 
 /// `dst = src`, `w`×`h`, each at its stride.
-pub fn copy_block(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
+pub fn copy_block(
+    dst: &mut [u8],
+    dst_stride: usize,
+    src: &[u8],
+    src_stride: usize,
+    w: usize,
+    h: usize,
+) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
         return simd128::copy_block(dst, dst_stride, src, src_stride, w, h);
     }
     #[allow(unreachable_code)]
     for y in 0..h {
-        dst[y * dst_stride..y * dst_stride + w].copy_from_slice(&src[y * src_stride..y * src_stride + w]);
+        dst[y * dst_stride..y * dst_stride + w]
+            .copy_from_slice(&src[y * src_stride..y * src_stride + w]);
     }
 }
 
 /// `dst = src`, `w`×`h`, each at its stride, for a block far wider than a
 /// prediction block: a run of coding tree blocks.
-pub fn copy_rows(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usize, w: usize, h: usize) {
+pub fn copy_rows(
+    dst: &mut [u8],
+    dst_stride: usize,
+    src: &[u8],
+    src_stride: usize,
+    w: usize,
+    h: usize,
+) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
         return simd128::copy_rows(dst, dst_stride, src, src_stride, w, h);
     }
     #[allow(unreachable_code)]
     for y in 0..h {
-        dst[y * dst_stride..y * dst_stride + w].copy_from_slice(&src[y * src_stride..y * src_stride + w]);
+        dst[y * dst_stride..y * dst_stride + w]
+            .copy_from_slice(&src[y * src_stride..y * src_stride + w]);
     }
 }
 
@@ -40,7 +56,14 @@ pub fn copy_rows(dst: &mut [u8], dst_stride: usize, src: &[u8], src_stride: usiz
 /// # Safety
 /// The block at `src` must be readable and nothing may be writing it: see
 /// `shared`.
-pub unsafe fn copy_block_from(dst: &mut [u8], dst_stride: usize, src: *const u8, src_stride: usize, w: usize, h: usize) {
+pub unsafe fn copy_block_from(
+    dst: &mut [u8],
+    dst_stride: usize,
+    src: *const u8,
+    src_stride: usize,
+    w: usize,
+    h: usize,
+) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
         return unsafe { simd128::copy_block_from(dst, dst_stride, src, src_stride, w, h) };
@@ -56,7 +79,15 @@ pub unsafe fn copy_block_from(dst: &mut [u8], dst_stride: usize, src: *const u8,
 /// Horizontal `N`-tap filter of samples into the 14-bit intermediate:
 /// `dst[y][x] = Σ t[i] * src[y][x + i]`, the first pass of a two-dimensional
 /// interpolation.
-pub fn fir_h<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [i16], dst_stride: usize) {
+pub fn fir_h<const N: usize>(
+    src: &[u8],
+    stride: usize,
+    t: &[i16; N],
+    w: usize,
+    h: usize,
+    dst: &mut [i16],
+    dst_stride: usize,
+) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
         return simd128::fir_h::<N>(src, stride, t, w, h, dst, dst_stride);
@@ -83,7 +114,15 @@ fn uni(v: i32) -> u8 {
 
 /// Horizontal `N`-tap filter straight to samples: the one pass of a
 /// horizontal interpolation, with its rounding.
-pub fn fir_h_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
+pub fn fir_h_uni<const N: usize>(
+    src: &[u8],
+    stride: usize,
+    t: &[i16; N],
+    w: usize,
+    h: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
         return simd128::fir_h_uni::<N>(src, stride, t, w, h, dst, dst_stride);
@@ -103,7 +142,15 @@ pub fn fir_h_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usi
 }
 
 /// Vertical `N`-tap filter of samples straight to samples.
-pub fn fir_v_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
+pub fn fir_v_uni<const N: usize>(
+    src: &[u8],
+    stride: usize,
+    t: &[i16; N],
+    w: usize,
+    h: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
         return simd128::fir_v_uni::<N>(src, stride, t, w, h, dst, dst_stride);
@@ -123,7 +170,15 @@ pub fn fir_v_uni<const N: usize>(src: &[u8], stride: usize, t: &[i16; N], w: usi
 
 /// Vertical `N`-tap filter of the intermediate, `>> 6`, straight to samples:
 /// the second pass of a two-dimensional interpolation.
-pub fn fir_hv_uni<const N: usize>(src: &[i16], stride: usize, t: &[i16; N], w: usize, h: usize, dst: &mut [u8], dst_stride: usize) {
+pub fn fir_hv_uni<const N: usize>(
+    src: &[i16],
+    stride: usize,
+    t: &[i16; N],
+    w: usize,
+    h: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
         return simd128::fir_hv_uni::<N>(src, stride, t, w, h, dst, dst_stride);
@@ -186,7 +241,8 @@ pub fn planar(dst: &mut [u8], stride: usize, n: usize, left: &[u8], top: &[u8]) 
         let c = (y as i32 + 1) * ln + n as i32;
         let row = &mut dst[y * stride..y * stride + n];
         for (x, d) in row.iter_mut().enumerate() {
-            *d = (((n - 1 - x) as i32 * l + (x as i32 + 1) * tn + k * top[x] as i32 + c) >> (log2n + 1)) as u8;
+            *d = (((n - 1 - x) as i32 * l + (x as i32 + 1) * tn + k * top[x] as i32 + c)
+                >> (log2n + 1)) as u8;
         }
     }
 }
@@ -257,7 +313,16 @@ pub fn angular_t(dst: &mut [u8], stride: usize, n: usize, refb: &[i16], off: usi
 
 /// `out[j] = Σ src[k * s_in] * tab[k * tstep][j]` over `k = k0, k0 + kstep, ..
 /// < nz`, for `LEN` outputs.
-pub fn accum<const LEN: usize>(out: &mut [i32; LEN], src: &[i16], s_in: usize, k0: usize, kstep: usize, nz: usize, tab: &[[i16; 32]], tstep: usize) {
+pub fn accum<const LEN: usize>(
+    out: &mut [i32; LEN],
+    src: &[i16],
+    s_in: usize,
+    k0: usize,
+    kstep: usize,
+    nz: usize,
+    tab: &[[i16; 32]],
+    tstep: usize,
+) {
     {
         *out = [0; LEN];
         let mut k = k0;
@@ -291,10 +356,16 @@ pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: [i32; 2], t
         return unsafe { simd128::luma_edge(p, stride, dir, beta, tc) };
     }
     #[allow(unreachable_code)]
-    let (line_step, tap_step): (isize, isize) = if dir == 0 { (stride as isize, 1) } else { (1, stride as isize) };
+    let (line_step, tap_step): (isize, isize) = if dir == 0 {
+        (stride as isize, 1)
+    } else {
+        (1, stride as isize)
+    };
     for s in 0..2 {
         let (beta, tc) = (beta[s], tc[s]);
-        let at = |k: usize, i: i32| p.wrapping_offset((4 * s + k) as isize * line_step + i as isize * tap_step);
+        let at = |k: usize, i: i32| {
+            p.wrapping_offset((4 * s + k) as isize * line_step + i as isize * tap_step)
+        };
         // SAFETY: the caller's, for every tap.
         let g = |k: usize, i: i32| unsafe { *at(k, i) } as i32;
         let dp0 = (g(0, -3) - 2 * g(0, -2) + g(0, -1)).abs();
@@ -305,7 +376,11 @@ pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: [i32; 2], t
         if dpq0 + dpq3 >= beta {
             continue;
         }
-        let dsam = |k: usize, dpq: i32| -> bool { dpq < (beta >> 2) && (g(k, -4) - g(k, -1)).abs() + (g(k, 0) - g(k, 3)).abs() < (beta >> 3) && (g(k, -1) - g(k, 0)).abs() < ((5 * tc + 1) >> 1) };
+        let dsam = |k: usize, dpq: i32| -> bool {
+            dpq < (beta >> 2)
+                && (g(k, -4) - g(k, -1)).abs() + (g(k, 0) - g(k, 3)).abs() < (beta >> 3)
+                && (g(k, -1) - g(k, 0)).abs() < ((5 * tc + 1) >> 1)
+        };
         let strong = dsam(0, 2 * dpq0) && dsam(3, 2 * dpq3);
         let dep = dp0 + dp3 < ((beta + (beta >> 1)) >> 3);
         let deq = dq0 + dq3 < ((beta + (beta >> 1)) >> 3);
@@ -316,12 +391,24 @@ pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: [i32; 2], t
             let set = |i: i32, v: i32| unsafe { *at(k, i) = v as u8 };
             if strong {
                 let t2 = 2 * tc;
-                set(-1, ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(p0 - t2, p0 + t2));
+                set(
+                    -1,
+                    ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(p0 - t2, p0 + t2),
+                );
                 set(-2, ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(p1 - t2, p1 + t2));
-                set(-3, ((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(p2 - t2, p2 + t2));
-                set(0, ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(q0 - t2, q0 + t2));
+                set(
+                    -3,
+                    ((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(p2 - t2, p2 + t2),
+                );
+                set(
+                    0,
+                    ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(q0 - t2, q0 + t2),
+                );
                 set(1, ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(q1 - t2, q1 + t2));
-                set(2, ((p0 + q0 + q1 + 3 * q2 + 2 * q3 + 4) >> 3).clamp(q2 - t2, q2 + t2));
+                set(
+                    2,
+                    ((p0 + q0 + q1 + 3 * q2 + 2 * q3 + 4) >> 3).clamp(q2 - t2, q2 + t2),
+                );
             } else {
                 let mut delta = (9 * (q0 - p0) - 3 * (q1 - p1) + 8) >> 4;
                 if delta.abs() < tc * 10 {
@@ -329,11 +416,13 @@ pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: [i32; 2], t
                     set(-1, (p0 + delta).clamp(0, 255));
                     set(0, (q0 - delta).clamp(0, 255));
                     if dep {
-                        let d = ((((p2 + p0 + 1) >> 1) - p1 + delta) >> 1).clamp(-(tc >> 1), tc >> 1);
+                        let d =
+                            ((((p2 + p0 + 1) >> 1) - p1 + delta) >> 1).clamp(-(tc >> 1), tc >> 1);
                         set(-2, (p1 + d).clamp(0, 255));
                     }
                     if deq {
-                        let d = ((((q2 + q0 + 1) >> 1) - q1 - delta) >> 1).clamp(-(tc >> 1), tc >> 1);
+                        let d =
+                            ((((q2 + q0 + 1) >> 1) - q1 - delta) >> 1).clamp(-(tc >> 1), tc >> 1);
                         set(1, (q1 + d).clamp(0, 255));
                     }
                 }
@@ -354,12 +443,17 @@ pub unsafe fn chroma_edge(p: *mut u8, stride: usize, dir: usize, tc: [i32; 2]) {
         return unsafe { simd128::chroma_edge(p, stride, dir, tc) };
     }
     #[allow(unreachable_code)]
-    let (line_step, tap_step): (isize, isize) = if dir == 0 { (stride as isize, 1) } else { (1, stride as isize) };
+    let (line_step, tap_step): (isize, isize) = if dir == 0 {
+        (stride as isize, 1)
+    } else {
+        (1, stride as isize)
+    };
     for k in 0..8isize {
         let tc = tc[k as usize / 4];
         let at = |i: isize| p.wrapping_offset(k * line_step + i * tap_step);
         // SAFETY: the caller's.
-        let (p1, p0, q0, q1) = unsafe { (*at(-2) as i32, *at(-1) as i32, *at(0) as i32, *at(1) as i32) };
+        let (p1, p0, q0, q1) =
+            unsafe { (*at(-2) as i32, *at(-1) as i32, *at(0) as i32, *at(1) as i32) };
         let d = ((((q0 - p0) << 2) + p1 - q1 + 4) >> 3).clamp(-tc, tc);
         // SAFETY: as above.
         unsafe {
@@ -408,10 +502,23 @@ pub unsafe fn sao_band(p: *mut u8, stride: usize, w: usize, h: usize, band: &[i8
 ///
 /// # Safety
 /// The block at `dst` must be this thread's: see `shared`.
-pub unsafe fn sao_edge(dst: *mut u8, dst_stride: usize, src: &[u8], origin: usize, src_stride: usize, w: usize, h: usize, oa: isize, ob: isize, offs: &[i8; 4]) {
+pub unsafe fn sao_edge(
+    dst: *mut u8,
+    dst_stride: usize,
+    src: &[u8],
+    origin: usize,
+    src_stride: usize,
+    w: usize,
+    h: usize,
+    oa: isize,
+    ob: isize,
+    offs: &[i8; 4],
+) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return unsafe { simd128::sao_edge(dst, dst_stride, src, origin, src_stride, w, h, oa, ob, offs) };
+        return unsafe {
+            simd128::sao_edge(dst, dst_stride, src, origin, src_stride, w, h, oa, ob, offs)
+        };
     }
     // `edgeIdx` 0, 1, 3, 4 take the four offsets; 2 is the plateau (Table 8-19).
     #[allow(unreachable_code)]

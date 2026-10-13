@@ -109,7 +109,10 @@ const fn build_tables() -> ([u32; 256], [u16; 256]) {
     while s < 128 {
         let p = s >> 1;
         let mps = (s & 1) as u8;
-        lps[s] = (RANGE_LPS[p][0] as u32) | (RANGE_LPS[p][1] as u32) << 8 | (RANGE_LPS[p][2] as u32) << 16 | (RANGE_LPS[p][3] as u32) << 24;
+        lps[s] = (RANGE_LPS[p][0] as u32)
+            | (RANGE_LPS[p][1] as u32) << 8
+            | (RANGE_LPS[p][2] as u32) << 16
+            | (RANGE_LPS[p][3] as u32) << 24;
         let tm = ((STATE_TRANS[p][1] << 1) | mps) as u16;
         let new_mps = if p == 0 { 1 - mps } else { mps };
         let tl = ((STATE_TRANS[p][0] << 1) | new_mps) as u16;
@@ -148,7 +151,11 @@ impl Contexts {
             let m = (init_value >> 4) * 5 - 45;
             let n = ((init_value & 15) << 3) - 16;
             let pre = (((m * q) >> 4) + n).clamp(1, 126);
-            *c = if pre <= 63 { ((63 - pre) as u8) << 1 } else { (((pre - 64) as u8) << 1) | 1 };
+            *c = if pre <= 63 {
+                ((63 - pre) as u8) << 1
+            } else {
+                (((pre - 64) as u8) << 1) | 1
+            };
         }
         Contexts(ctx)
     }
@@ -181,7 +188,16 @@ pub struct Cabac<'a> {
 impl<'a> Cabac<'a> {
     /// The engine at byte `start` of `data` (§9.3.2.5), with the models `ctx`.
     pub fn new(data: &'a [u8], start: usize, ctx: Contexts) -> Self {
-        let mut e = Cabac { data, next: data.as_ptr(), end: data.as_ptr_range().end, engine: Engine { low: EMPTY, range: 510 }, ctx };
+        let mut e = Cabac {
+            data,
+            next: data.as_ptr(),
+            end: data.as_ptr_range().end,
+            engine: Engine {
+                low: EMPTY,
+                range: 510,
+            },
+            ctx,
+        };
         e.reinit_at(start);
         e
     }
@@ -190,7 +206,10 @@ impl<'a> Cabac<'a> {
     pub fn reinit_at(&mut self, byte: usize) {
         assert!(byte <= self.data.len());
         self.next = self.data[byte..].as_ptr();
-        self.engine = Engine { low: EMPTY, range: 510 };
+        self.engine = Engine {
+            low: EMPTY,
+            range: 510,
+        };
         let mut v = self.view();
         v.refill();
         v.low <<= 9;
@@ -264,12 +283,19 @@ pub struct View<'v, 'a> {
 impl<'v, 'a> View<'v, 'a> {
     #[inline(always)]
     pub fn new(e: Engine, cab: &'v mut Cabac<'a>) -> Self {
-        View { low: e.low, range: e.range, cab }
+        View {
+            low: e.low,
+            range: e.range,
+            cab,
+        }
     }
 
     #[inline(always)]
     pub fn engine(&self) -> Engine {
-        Engine { low: self.low, range: self.range }
+        Engine {
+            low: self.low,
+            range: self.range,
+        }
     }
 
     #[inline(always)]

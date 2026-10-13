@@ -71,7 +71,12 @@ impl SaoCtx {
         // since other threads' blocks share its rows.
         // The last line and column as deblocked, for the neighbours.
         // SAFETY: this block's own entries.
-        let (last_row, last_col) = unsafe { (m.sao_rows.slice_mut((c * m.ctb_h + cy) * pw + x0, w), m.sao_cols.slice_mut((c * m.ctb_w + cx) * ph + y0, h)) };
+        let (last_row, last_col) = unsafe {
+            (
+                m.sao_rows.slice_mut((c * m.ctb_h + cy) * pw + x0, w),
+                m.sao_cols.slice_mut((c * m.ctb_w + cx) * ph + y0, h),
+            )
+        };
         if below {
             // SAFETY: see above.
             last_row.copy_from_slice(unsafe { pl.row(x0, y1 - 1, w) });
@@ -100,8 +105,16 @@ impl SaoCtx {
                 };
                 // A sample whose neighbour for this class would be
                 // outside the picture keeps its value.
-                let (ix0, ix1) = if da.0 == 0 { (x0, x1) } else { (x0.max(1), x1.min(pw - 1)) };
-                let (iy0, iy1) = if da.1 == 0 { (y0, y1) } else { (y0.max(1), y1.min(ph - 1)) };
+                let (ix0, ix1) = if da.0 == 0 {
+                    (x0, x1)
+                } else {
+                    (x0.max(1), x1.min(pw - 1))
+                };
+                let (iy0, iy1) = if da.1 == 0 {
+                    (y0, y1)
+                } else {
+                    (y0.max(1), y1.min(ph - 1))
+                };
                 if ix0 >= ix1 || iy0 >= iy1 {
                     return;
                 }
@@ -110,11 +123,16 @@ impl SaoCtx {
                 // the rest from the picture.
                 const S: usize = SRC_STRIDE;
                 // SAFETY: see above.
-                unsafe { kernels::copy_block_from(&mut src[S + 1..], S, pl.at(x0, y0), stride, w, h) };
+                unsafe {
+                    kernels::copy_block_from(&mut src[S + 1..], S, pl.at(x0, y0), stride, w, h)
+                };
                 let (l, r) = ((x0 > 0) as usize, (x1 < pw) as usize);
                 if y0 > 0 {
                     // SAFETY: the row above's entries, saved before this.
-                    let above = unsafe { m.sao_rows.slice((c * m.ctb_h + cy - 1) * pw + x0 - l, w + l + r) };
+                    let above = unsafe {
+                        m.sao_rows
+                            .slice((c * m.ctb_h + cy - 1) * pw + x0 - l, w + l + r)
+                    };
                     src[1 - l..1 + w + r].copy_from_slice(above);
                 }
                 if y1 < ph {
@@ -137,7 +155,20 @@ impl SaoCtx {
                 }
                 let origin = (iy0 - y0 + 1) * S + (ix0 - x0 + 1);
                 // SAFETY: see above.
-                unsafe { kernels::sao_edge(pl.at(ix0, iy0), stride, src, origin, S, ix1 - ix0, iy1 - iy0, da.1 * S as isize + da.0, db.1 * S as isize + db.0, &prm.offset) };
+                unsafe {
+                    kernels::sao_edge(
+                        pl.at(ix0, iy0),
+                        stride,
+                        src,
+                        origin,
+                        S,
+                        ix1 - ix0,
+                        iy1 - iy0,
+                        da.1 * S as isize + da.0,
+                        db.1 * S as isize + db.0,
+                        &prm.offset,
+                    )
+                };
             }
             _ => {}
         }

@@ -31,7 +31,12 @@ unsafe impl Sync for PlanePtr {}
 
 impl PlanePtr {
     pub fn of(plane: &mut Plane) -> Self {
-        PlanePtr { ptr: plane.data.as_mut_ptr(), stride: plane.stride, width: plane.width, height: plane.height }
+        PlanePtr {
+            ptr: plane.data.as_mut_ptr(),
+            stride: plane.stride,
+            width: plane.width,
+            height: plane.height,
+        }
     }
 
     /// The sample at (`x`, `y`).
@@ -72,7 +77,12 @@ impl PlanePtr {
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn block_mut(&self, x: usize, y: usize, w: usize, h: usize) -> &mut [u8] {
         debug_assert!(x + w <= self.width && y + h <= self.height && w > 0 && h > 0);
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.add(y * self.stride + x), (h - 1) * self.stride + w) }
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                self.ptr.add(y * self.stride + x),
+                (h - 1) * self.stride + w,
+            )
+        }
     }
 
     /// Rows `y..y + n`, whole, from the same rows of `src`, a plane of the
@@ -82,7 +92,13 @@ impl PlanePtr {
     /// Nothing else may be touching those rows' samples: see the module.
     pub unsafe fn copy_rows_from(&self, src: &Plane, y: usize, n: usize) {
         assert!(src.stride == self.stride && src.height == self.height && y + n <= self.height);
-        unsafe { std::ptr::copy_nonoverlapping(src.data.as_ptr().add(y * self.stride), self.ptr.add(y * self.stride), n * self.stride) }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                src.data.as_ptr().add(y * self.stride),
+                self.ptr.add(y * self.stride),
+                n * self.stride,
+            )
+        }
     }
 }
 
@@ -104,7 +120,11 @@ unsafe impl<T: Sync> Sync for MapPtr<T> {}
 
 impl<T: Copy> MapPtr<T> {
     pub fn of(map: &mut [T]) -> Self {
-        MapPtr { ptr: map.as_mut_ptr(), len: map.len(), _t: PhantomData }
+        MapPtr {
+            ptr: map.as_mut_ptr(),
+            len: map.len(),
+            _t: PhantomData,
+        }
     }
 
     /// # Safety

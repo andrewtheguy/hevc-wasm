@@ -31,8 +31,8 @@ mod tables;
 mod wavefront;
 
 pub use decoder::{Decoded, Decoder};
-pub use nal::access_units;
 pub use error::{Error, Result};
+pub use nal::access_units;
 pub use pic::{Picture, Plane};
 pub use ps::Colour;
 pub use strips::{Display, STRIPS};

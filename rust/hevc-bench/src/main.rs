@@ -10,7 +10,9 @@ use std::time::Instant;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = args.next().expect("usage: hevc-bench FILE [THREADS] [REPEATS]");
+    let path = args
+        .next()
+        .expect("usage: hevc-bench FILE [THREADS] [REPEATS]");
     let threads: usize = args.next().map_or(1, |s| s.parse().expect("THREADS"));
     let repeats: usize = args.next().map_or(1, |s| s.parse().expect("REPEATS"));
     let data = std::fs::read(&path).expect("read input");
@@ -20,7 +22,10 @@ fn main() {
         std::process::exit(1);
     }
     if threads > 1 {
-        rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().expect("pool");
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .expect("pool");
     }
     for r in 0..repeats {
         let mut dec = hevc::Decoder::new(threads);
@@ -40,15 +45,24 @@ fn main() {
                         let mut raw = Vec::new();
                         for plane in &d.picture.planes {
                             for row in y..y + h {
-                                let line = &plane.data[row * plane.stride + x..row * plane.stride + x + w];
+                                let line =
+                                    &plane.data[row * plane.stride + x..row * plane.stride + x + w];
                                 m.update(line);
                                 raw.extend_from_slice(line);
                             }
                         }
-                        println!("{}", m.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>());
+                        println!(
+                            "{}",
+                            m.finalize()
+                                .iter()
+                                .map(|b| format!("{b:02x}"))
+                                .collect::<String>()
+                        );
                         // HEVC_DUMP=path:index writes picture `index` as raw planar 4:4:4.
-                        if let Some((path, idx)) = std::env::var("HEVC_DUMP").ok().and_then(|v| v.split_once(':').map(|(p, i)| (p.to_string(), i.parse::<usize>().unwrap_or(0))))
-                            && idx + 1 == n
+                        if let Some((path, idx)) = std::env::var("HEVC_DUMP").ok().and_then(|v| {
+                            v.split_once(':')
+                                .map(|(p, i)| (p.to_string(), i.parse::<usize>().unwrap_or(0)))
+                        }) && idx + 1 == n
                         {
                             std::fs::write(path, &raw).expect("dump");
                         }
@@ -66,6 +80,12 @@ fn main() {
         let total: f64 = times.iter().sum();
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = |q: f64| times[((times.len() - 1) as f64 * q) as usize];
-        eprintln!("{n} pictures, {total:.1} ms decoding: {:.2} ms/picture, median {:.2}, p95 {:.2}, max {:.2}", total / n.max(1) as f64, p(0.5), p(0.95), p(1.0));
+        eprintln!(
+            "{n} pictures, {total:.1} ms decoding: {:.2} ms/picture, median {:.2}, p95 {:.2}, max {:.2}",
+            total / n.max(1) as f64,
+            p(0.5),
+            p(0.95),
+            p(1.0)
+        );
     }
 }

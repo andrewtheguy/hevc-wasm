@@ -27,7 +27,12 @@ impl Dequant {
         let log2n = n.trailing_zeros() as i32;
         let r = 8 + log2n - 5;
         let l = qp / 6;
-        Dequant { scale: LEVEL_SCALE[(qp % 6) as usize] * 16, shl: (l - r).max(0) as u32, shr: (r - l).max(0) as u32, round: if l < r { 1 << (r - l - 1) } else { 0 } }
+        Dequant {
+            scale: LEVEL_SCALE[(qp % 6) as usize] * 16,
+            shl: (l - r).max(0) as u32,
+            shr: (r - l).max(0) as u32,
+            round: if l < r { 1 << (r - l - 1) } else { 0 },
+        }
     }
 
     #[inline(always)]
@@ -61,7 +66,10 @@ pub struct Coded {
 impl Coded {
     /// The columns and rows up to the last coded one.
     pub fn extent(&self) -> (usize, usize) {
-        (32 - self.cols.leading_zeros() as usize, 32 - self.rows.leading_zeros() as usize)
+        (
+            32 - self.cols.leading_zeros() as usize,
+            32 - self.rows.leading_zeros() as usize,
+        )
     }
 }
 
@@ -113,7 +121,14 @@ fn idst4(src: &[i16], s_in: usize, nz: usize, out: &mut [i32; 4]) {
 /// Both passes over an `N`×`N` block: columns into `tmp`, clipped to 16 bits,
 /// then rows into `res`.
 #[inline(always)]
-fn block<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], nz_w: usize, nz_h: usize, idct: impl Fn(&[i16], usize, usize, &mut [i32; N])) {
+fn block<const N: usize>(
+    d: &[i16],
+    tmp: &mut [i16],
+    res: &mut [i16],
+    nz_w: usize,
+    nz_h: usize,
+    idct: impl Fn(&[i16], usize, usize, &mut [i32; N]),
+) {
     let mut sums = [0i32; N];
     for x in 0..nz_w {
         idct(&d[x..], N, nz_h, &mut sums);
@@ -134,7 +149,15 @@ fn block<const N: usize>(d: &[i16], tmp: &mut [i16], res: &mut [i16], nz_w: usiz
 /// 4×4 DST of intra luma. `tmp` is the first pass's intermediate, and `d` an
 /// `n`×`n` block of zeros, left so: a block with few coefficients is
 /// transformed from the list, and any other from `d` with them put into it.
-pub fn inverse_transform(list: &[u32], d: &mut [i16], tmp: &mut [i16], res: &mut [i16], n: usize, coded: Coded, dst: bool) {
+pub fn inverse_transform(
+    list: &[u32],
+    d: &mut [i16],
+    tmp: &mut [i16],
+    res: &mut [i16],
+    n: usize,
+    coded: Coded,
+    dst: bool,
+) {
     if coded.cols <= 1 && coded.rows <= 1 && !dst {
         // A lone DC coefficient: row 0 of the matrix is the constant 64, so
         // both passes are one value.
@@ -189,7 +212,13 @@ mod tests {
 
     fn naive(d: &[i16], n: usize, dst: bool) -> Vec<i16> {
         let step = 32 / n;
-        let t = |k: usize, j: usize| -> i32 { if dst { DST4[k][j] as i32 } else { DCT32[k * step][j] as i32 } };
+        let t = |k: usize, j: usize| -> i32 {
+            if dst {
+                DST4[k][j] as i32
+            } else {
+                DCT32[k * step][j] as i32
+            }
+        };
         let mut tmp = vec![0i32; n * n];
         for x in 0..n {
             for j in 0..n {
@@ -227,7 +256,10 @@ mod tests {
         }
         let mut zeros = vec![0i16; n * n];
         inverse_transform(&list, &mut zeros, tmp, res, n, c, dst);
-        assert!(zeros.iter().all(|&v| v == 0), "n={n}: the block is left zero");
+        assert!(
+            zeros.iter().all(|&v| v == 0),
+            "n={n}: the block is left zero"
+        );
     }
 
     #[test]
@@ -252,7 +284,11 @@ mod tests {
                         continue;
                     }
                     transform(&d, &mut tmp, &mut res, n, dst);
-                    assert_eq!(&res[..n * n], &naive(&d, n, dst)[..], "n={n} nz=({nz_w},{nz_h}) dst={dst}");
+                    assert_eq!(
+                        &res[..n * n],
+                        &naive(&d, n, dst)[..],
+                        "n={n} nz=({nz_w},{nz_h}) dst={dst}"
+                    );
                 }
             }
             // A few coefficients scattered over the block, as the capture's
@@ -265,7 +301,11 @@ mod tests {
                     d[y * n + x] = rnd();
                 }
                 transform(&d, &mut tmp, &mut res, n, false);
-                assert_eq!(&res[..n * n], &naive(&d, n, false)[..], "n={n} scattered {count}");
+                assert_eq!(
+                    &res[..n * n],
+                    &naive(&d, n, false)[..],
+                    "n={n} scattered {count}"
+                );
             }
         }
     }
@@ -274,7 +314,10 @@ mod tests {
     fn dequant_flat() {
         assert_eq!(Dequant::new(4, 4).apply(10), 320);
         // QP 51 on a 4×4: the shift goes the other way.
-        assert_eq!(Dequant::new(4, 51).apply(3), (((3i64 * 57 * 16) << 8) >> 5) as i16);
+        assert_eq!(
+            Dequant::new(4, 51).apply(3),
+            (((3i64 * 57 * 16) << 8) >> 5) as i16
+        );
     }
 }
 
@@ -284,13 +327,21 @@ mod tests {
 /// the odd halves of the 8-, 16- and 32-point transforms. A pair multiplies
 /// two rows of `DCT32`, and a stage of a smaller block reads its coefficients
 /// at the proportionally smaller indices.
-#[cfg_attr(not(all(target_arch = "wasm32", target_feature = "simd128")), allow(dead_code))]
+#[cfg_attr(
+    not(all(target_arch = "wasm32", target_feature = "simd128")),
+    allow(dead_code)
+)]
 pub mod stages {
     use super::DCT32;
 
     /// `(row of DCT32, coefficient index in a 32-point transform)` of each
     /// coefficient of each stage, pairs in order.
-    pub const K32: [&[usize]; 4] = [&[0, 8, 16, 24], &[4, 12, 20, 28], &[2, 6, 10, 14, 18, 22, 26, 30], &[1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31]];
+    pub const K32: [&[usize]; 4] = [
+        &[0, 8, 16, 24],
+        &[4, 12, 20, 28],
+        &[2, 6, 10, 14, 18, 22, 26, 30],
+        &[1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31],
+    ];
 
     /// Each pair's rows as `(row a, row b)` packed into one 32-bit lane per
     /// output, for a pass that runs across columns: `[stage][pair][output]`.
@@ -304,7 +355,8 @@ pub mod stages {
             while p < len / 2 {
                 let mut j = 0;
                 while j < len {
-                    t[s][p][j] = (DCT32[ks[2 * p]][j] as u16 as i32) | ((DCT32[ks[2 * p + 1]][j] as u16 as i32) << 16);
+                    t[s][p][j] = (DCT32[ks[2 * p]][j] as u16 as i32)
+                        | ((DCT32[ks[2 * p + 1]][j] as u16 as i32) << 16);
                     j += 1;
                 }
                 p += 1;
@@ -344,7 +396,8 @@ pub mod stages {
         while p < 2 {
             let mut j = 0;
             while j < 4 {
-                t[p][j] = (super::DST4[2 * p][j] as u16 as i32) | ((super::DST4[2 * p + 1][j] as u16 as i32) << 16);
+                t[p][j] = (super::DST4[2 * p][j] as u16 as i32)
+                    | ((super::DST4[2 * p + 1][j] as u16 as i32) << 16);
                 j += 1;
             }
             p += 1;

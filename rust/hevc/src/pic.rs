@@ -16,7 +16,12 @@ impl Plane {
     pub fn new(width: usize, height: usize) -> Self {
         // Rows start 64 bytes apart at least, for the kernels' vectors.
         let stride = width.div_ceil(64) * 64;
-        Plane { width, height, stride, data: vec![0; stride * height] }
+        Plane {
+            width,
+            height,
+            stride,
+            data: vec![0; stride * height],
+        }
     }
 
     #[inline]
@@ -42,7 +47,17 @@ pub struct Picture {
 
 impl Picture {
     pub fn new(width: usize, height: usize) -> Self {
-        Picture { planes: [Plane::new(width, height), Plane::new(width, height), Plane::new(width, height)], poc: 0, serial: 0, base_serial: 0, same: Vec::new() }
+        Picture {
+            planes: [
+                Plane::new(width, height),
+                Plane::new(width, height),
+                Plane::new(width, height),
+            ],
+            poc: 0,
+            serial: 0,
+            base_serial: 0,
+            same: Vec::new(),
+        }
     }
 
     pub fn width(&self) -> usize {
@@ -157,7 +172,10 @@ impl PicState {
         let (width, height) = (sps.width as usize, sps.height as usize);
         let (w4, h4) = (width.div_ceil(4), height.div_ceil(4));
         let log2_ctb = sps.log2_ctb_size as usize;
-        let (ctb_w, ctb_h) = (sps.pic_width_in_ctbs as usize, sps.pic_height_in_ctbs as usize);
+        let (ctb_w, ctb_h) = (
+            sps.pic_width_in_ctbs as usize,
+            sps.pic_height_in_ctbs as usize,
+        );
         let n4 = w4 * h4;
         PicState {
             width,
@@ -184,7 +202,9 @@ impl PicState {
 
     /// Whether this state was built for `sps`'s geometry.
     pub fn fits(&self, sps: &Sps) -> bool {
-        self.width == sps.width as usize && self.height == sps.height as usize && self.log2_ctb == sps.log2_ctb_size as usize
+        self.width == sps.width as usize
+            && self.height == sps.height as usize
+            && self.log2_ctb == sps.log2_ctb_size as usize
     }
 
     /// Clears what a picture does not write everywhere.

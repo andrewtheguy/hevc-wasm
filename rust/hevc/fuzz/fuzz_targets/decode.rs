@@ -14,7 +14,12 @@ const THREADS: usize = 3;
 
 fn pool() {
     static ONCE: Once = Once::new();
-    ONCE.call_once(|| rayon::ThreadPoolBuilder::new().num_threads(THREADS).build_global().expect("the pool"));
+    ONCE.call_once(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(THREADS)
+            .build_global()
+            .expect("the pool")
+    });
 }
 
 /// What a unit decoded to, as far as the two decoders must agree: an error,
@@ -44,6 +49,9 @@ fuzz_target!(|data: &[u8]| {
     let units = hevc::access_units(data);
     let units = if units.is_empty() { vec![data] } else { units };
     for unit in units {
-        assert!(outcome(&mut one, unit) == outcome(&mut many, unit), "one thread and {THREADS} decoded a unit differently");
+        assert!(
+            outcome(&mut one, unit) == outcome(&mut many, unit),
+            "one thread and {THREADS} decoded a unit differently"
+        );
     }
 });

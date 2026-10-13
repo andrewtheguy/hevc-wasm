@@ -26,7 +26,14 @@ pub struct RefSamples {
 
 impl Default for RefSamples {
     fn default() -> Self {
-        RefSamples { left: [0; 64], top: [0; 64], corner: 0, refb: [0; 128], pl: [0; 33], pt: [0; 33] }
+        RefSamples {
+            left: [0; 64],
+            top: [0; 64],
+            corner: 0,
+            refb: [0; 128],
+            pl: [0; 33],
+            pt: [0; 33],
+        }
     }
 }
 
@@ -46,14 +53,22 @@ impl RefSamples {
         }
         // Past the end of the left column the search finds its last sample,
         // or with no column the first of the top row.
-        let v = if left > 0 { self.left[left - 1] } else { self.top[0] };
+        let v = if left > 0 {
+            self.left[left - 1]
+        } else {
+            self.top[0]
+        };
         for k in left / 4..n2 / 4 {
             self.left[4 * k..4 * k + 4].fill(v);
         }
         if left == 0 || top == 0 {
             self.corner = self.left[0];
         }
-        let v = if top > 0 { self.top[top - 1] } else { self.corner };
+        let v = if top > 0 {
+            self.top[top - 1]
+        } else {
+            self.corner
+        };
         for k in top / 4..n2 / 4 {
             self.top[4 * k..4 * k + 4].fill(v);
         }
@@ -91,7 +106,14 @@ impl RefSamples {
 
 /// Predicts an N×N block of `mode` into `out` from substituted neighbours.
 /// The edge adjustments of DC, vertical and horizontal apply to luma alone.
-pub fn predict(refs: &mut RefSamples, n: usize, mode: u8, luma: bool, out: &mut [u8], stride: usize) {
+pub fn predict(
+    refs: &mut RefSamples,
+    n: usize,
+    mode: u8,
+    luma: bool,
+    out: &mut [u8],
+    stride: usize,
+) {
     refs.filter(n, mode);
     match mode {
         MODE_PLANAR => {
@@ -119,13 +141,23 @@ pub fn predict(refs: &mut RefSamples, n: usize, mode: u8, luma: bool, out: &mut 
             }
         }
         _ => {
-            let RefSamples { left, top, corner, refb, .. } = refs;
+            let RefSamples {
+                left,
+                top,
+                corner,
+                refb,
+                ..
+            } = refs;
             let corner = *corner;
             let angle = INTRA_PRED_ANGLE[mode as usize];
             let off = n;
             // Modes from 18 run along the top row; the others along the left
             // column, with the roles of the two swapped.
-            let (main, side) = if mode >= 18 { (&*top, &*left) } else { (&*left, &*top) };
+            let (main, side) = if mode >= 18 {
+                (&*top, &*left)
+            } else {
+                (&*left, &*top)
+            };
             refb[off] = corner as i16;
             for i in 0..n {
                 refb[off + 1 + i] = main[i] as i16;
@@ -137,7 +169,11 @@ pub fn predict(refs: &mut RefSamples, n: usize, mode: u8, luma: bool, out: &mut 
                     let mut x = -1;
                     while x >= last {
                         let idx = -1 + ((x * inv + 128) >> 8);
-                        refb[(off as i32 + x) as usize] = if idx < 0 { corner as i16 } else { side[idx as usize] as i16 };
+                        refb[(off as i32 + x) as usize] = if idx < 0 {
+                            corner as i16
+                        } else {
+                            side[idx as usize] as i16
+                        };
                         x -= 1;
                     }
                 }
@@ -150,14 +186,16 @@ pub fn predict(refs: &mut RefSamples, n: usize, mode: u8, luma: bool, out: &mut 
                 kernels::angular(out, stride, n, refb, off, angle);
                 if mode == MODE_VER && luma && n < 32 {
                     for y in 0..n {
-                        out[y * stride] = (top[0] as i32 + ((left[y] as i32 - corner as i32) >> 1)).clamp(0, 255) as u8;
+                        out[y * stride] = (top[0] as i32 + ((left[y] as i32 - corner as i32) >> 1))
+                            .clamp(0, 255) as u8;
                     }
                 }
             } else {
                 kernels::angular_t(out, stride, n, refb, off, angle);
                 if mode == MODE_HOR && luma && n < 32 {
                     for x in 0..n {
-                        out[x] = (left[0] as i32 + ((top[x] as i32 - corner as i32) >> 1)).clamp(0, 255) as u8;
+                        out[x] = (left[0] as i32 + ((top[x] as i32 - corner as i32) >> 1))
+                            .clamp(0, 255) as u8;
                     }
                 }
             }
@@ -171,7 +209,12 @@ mod tests {
 
     #[test]
     fn flat_neighbours_predict_flat() {
-        let mut r = RefSamples { left: [50; 64], top: [50; 64], corner: 50, ..Default::default() };
+        let mut r = RefSamples {
+            left: [50; 64],
+            top: [50; 64],
+            corner: 50,
+            ..Default::default()
+        };
         let mut out = [0u8; 64];
         for m in 0..35 {
             predict(&mut r, 8, m, true, &mut out, 8);

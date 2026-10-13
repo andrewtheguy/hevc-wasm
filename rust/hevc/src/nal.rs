@@ -23,7 +23,11 @@ impl NalHeader {
         if b0 & 0x80 != 0 || b1 & 7 == 0 {
             return None;
         }
-        Some(NalHeader { nal_type: (b0 >> 1) & 0x3f, layer_id: ((b0 & 1) << 5) | (b1 >> 3), temporal_id: (b1 & 7) - 1 })
+        Some(NalHeader {
+            nal_type: (b0 >> 1) & 0x3f,
+            layer_id: ((b0 & 1) << 5) | (b1 >> 3),
+            temporal_id: (b1 & 7) - 1,
+        })
     }
 }
 
@@ -167,7 +171,10 @@ mod tests {
         assert_eq!(r.escaped_to_rbsp(9), 7);
         assert_eq!(r.rbsp_to_escaped(7), 9);
         let s = [0, 0, 0, 1, 0x42, 1, 0xAA, 0, 0, 1, 0x44, 1, 0xBB, 0, 0];
-        assert_eq!(split_annex_b(&s), vec![&[0x42u8, 1, 0xAA][..], &[0x44u8, 1, 0xBB][..]]);
+        assert_eq!(
+            split_annex_b(&s),
+            vec![&[0x42u8, 1, 0xAA][..], &[0x44u8, 1, 0xBB][..]]
+        );
         let h = NalHeader::parse(&[0x42, 0x01]).unwrap();
         assert_eq!((h.nal_type, h.layer_id, h.temporal_id), (SPS, 0, 0));
     }
