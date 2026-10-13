@@ -244,7 +244,15 @@ them out on the captures: each is to be tried again there (item 1).
 - **The row-start copy a stripe ahead of the decode** rather than whole rows
   ahead, at every width from one coding tree block to eight, by vector or by
   `memory.copy`: the copy is bound by the reference's lines arriving, not by
-  the picture's being touched twice.
+  the picture's being touched twice. Tried again on the captures in one
+  form only, each block copied by the vector loop just before it is decoded
+  or two or six blocks before: 23% more instructions and 22% more cycles on
+  the scroll at 2x on one thread, the same at every distance, which is the
+  cost of the vector loop where a row with no block to keep goes in one
+  `memory.copy`, and says nothing of copying ahead. To be tried again later
+  as it should be, several blocks' width at a time by `memory.copy`, on one
+  thread and on four, where the copy as it is falls in a row's wait on the
+  row above; a round of it is half an hour of the machine.
 - **The coding unit moved out of `coding_quadtree`** into a function of its
   own.
 
