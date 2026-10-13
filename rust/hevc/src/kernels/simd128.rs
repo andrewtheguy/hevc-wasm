@@ -949,12 +949,6 @@ pub fn dense_transform(d: &[i16], tmp: &mut [i16], res: &mut [i16], n: usize, co
 
 // ---- deblocking ----
 
-/// The four lines of one tap of an edge, from their bytes in the low lanes.
-#[inline(always)]
-fn tap(v: v128) -> v128 {
-    u16x8_extend_low_u8x16(v)
-}
-
 /// `|a - b|`.
 #[inline(always)]
 fn abs_diff(a: v128, b: v128) -> v128 {
@@ -973,34 +967,47 @@ fn clip_abs(v: v128, t: v128) -> v128 {
     i16x8_min(i16x8_max(v, i16x8_neg(t)), t)
 }
 
+/// A value for each of an edge's two segments, in the four lines of each.
+#[inline(always)]
+fn per_segment(a: i32, b: i32) -> v128 {
+    let lanes = |v: i32| (v as u16 as i64) * 0x0001_0001_0001_0001;
+    i64x2(lanes(a), lanes(b))
+}
+
+/// The lines of each of an edge's two segments, all or none.
+#[inline(always)]
+fn segments(a: bool, b: bool) -> v128 {
+    i64x2(-(a as i64), -(b as i64))
+}
+
 /// The eight taps `p3..p0, q0..q3` across the edge whose first line's `q0`
-/// is at `p`, each as its four lines in the low lanes. A horizontal edge's
-/// lines are columns, so a tap is four bytes of a row; a vertical edge's
-/// are rows, so the taps are the columns of a 4×8 block, transposed by
-/// shuffles.
+/// is at `p`, each as its eight lines. A horizontal edge's lines are
+/// columns, so a tap is eight bytes of a row; a vertical edge's are rows,
+/// so the taps are the columns of an 8×8 block, transposed by shuffles.
 ///
 /// # Safety
-/// The segment must lie inside the plane: the caller's (see `kernels::luma_edge`).
+/// The edge must lie inside the plane: the caller's (see `kernels::luma_edge`).
 #[inline(always)]
 unsafe fn luma_taps(p: *const u8, stride: usize, dir: usize) -> [v128; 8] {
     if dir == 1 {
-        let row = |i: isize| unsafe { tap(v128_load32_zero(p.offset((i - 4) * stride as isize) as *const u32)) };
+        let row = |i: isize| unsafe { u16x8_extend_low_u8x16(v128_load64_zero(p.offset((i - 4) * stride as isize) as *const u64)) };
         [row(0), row(1), row(2), row(3), row(4), row(5), row(6), row(7)]
     } else {
         let line = |k: usize| unsafe { p.add(k * stride).sub(4) as *const u64 };
-        let a = unsafe { v128_load64_lane::<1>(v128_load64_zero(line(0)), line(1)) };
-        let b = unsafe { v128_load64_lane::<1>(v128_load64_zero(line(2)), line(3)) };
-        macro_rules! column {
-            ($i:literal) => {
-                tap(i8x16_shuffle::<$i, { 8 + $i }, { 16 + $i }, { 24 + $i }, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(a, b))
-            };
-        }
-        [column!(0), column!(1), column!(2), column!(3), column!(4), column!(5), column!(6), column!(7)]
+        let pair = |k: usize| unsafe { v128_load64_lane::<1>(v128_load64_zero(line(k)), line(k + 1)) };
+        let (r01, r23, r45, r67) = (pair(0), pair(2), pair(4), pair(6));
+        // Four lines of the taps `p3..p0`, a tap's four bytes together, and
+        // of `q0..q3`; then a tap's eight lines.
+        let (pa, pb) = (i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(r01, r23), i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(r45, r67));
+        let (qa, qb) = (i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(r01, r23), i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(r45, r67));
+        let (t01, t23) = (i32x4_shuffle::<0, 4, 1, 5>(pa, pb), i32x4_shuffle::<2, 6, 3, 7>(pa, pb));
+        let (t45, t67) = (i32x4_shuffle::<0, 4, 1, 5>(qa, qb), i32x4_shuffle::<2, 6, 3, 7>(qa, qb));
+        [u16x8_extend_low_u8x16(t01), u16x8_extend_high_u8x16(t01), u16x8_extend_low_u8x16(t23), u16x8_extend_high_u8x16(t23), u16x8_extend_low_u8x16(t45), u16x8_extend_high_u8x16(t45), u16x8_extend_low_u8x16(t67), u16x8_extend_high_u8x16(t67)]
     }
 }
 
 /// Stores the taps `luma_taps` loaded, as changed: for a horizontal edge the
-/// three (`wide`) or two rows each side, for a vertical edge the four lines
+/// three (`wide`) or two rows each side, for a vertical edge the eight lines
 /// whole, transposed back.
 ///
 /// # Safety
@@ -1011,50 +1018,82 @@ unsafe fn store_luma_taps(p: *mut u8, stride: usize, dir: usize, t: &[v128; 8], 
         let from = if wide { 1 } else { 2 };
         for i in from..8 - from {
             // SAFETY: the caller's.
-            unsafe { v128_store32_lane::<0>(u8x16_narrow_i16x8(t[i], t[i]), p.offset((i as isize - 4) * stride as isize) as *mut u32) };
+            unsafe { v128_store64_lane::<0>(u8x16_narrow_i16x8(t[i], t[i]), p.offset((i as isize - 4) * stride as isize) as *mut u64) };
         }
     } else {
         let line = |k: usize| unsafe { p.add(k * stride).sub(4) as *mut u64 };
-        // Each narrowing puts one tap's lines at 0..4 and the next's at 8..12;
-        // the shuffles gather each line's eight bytes.
-        let (n0, n1, n2, n3) = (u8x16_narrow_i16x8(t[0], t[1]), u8x16_narrow_i16x8(t[2], t[3]), u8x16_narrow_i16x8(t[4], t[5]), u8x16_narrow_i16x8(t[6], t[7]));
-        let ps = i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(n0, n1);
-        let qs = i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(n2, n3);
-        let l01 = i8x16_shuffle::<0, 1, 2, 3, 16, 17, 18, 19, 4, 5, 6, 7, 20, 21, 22, 23>(ps, qs);
-        let l23 = i8x16_shuffle::<8, 9, 10, 11, 24, 25, 26, 27, 12, 13, 14, 15, 28, 29, 30, 31>(ps, qs);
-        // SAFETY: the caller's.
-        unsafe {
-            v128_store64_lane::<0>(l01, line(0));
-            v128_store64_lane::<1>(l01, line(1));
-            v128_store64_lane::<0>(l23, line(2));
-            v128_store64_lane::<1>(l23, line(3));
+        // Each narrowing holds two taps' eight lines; the shuffles gather
+        // four lines of four taps, a line's four bytes together, and then
+        // each line's eight.
+        let (n01, n23, n45, n67) = (u8x16_narrow_i16x8(t[0], t[1]), u8x16_narrow_i16x8(t[2], t[3]), u8x16_narrow_i16x8(t[4], t[5]), u8x16_narrow_i16x8(t[6], t[7]));
+        let (pa, pb) = (i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(n01, n23), i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(n01, n23));
+        let (qa, qb) = (i8x16_shuffle::<0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27>(n45, n67), i8x16_shuffle::<4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31>(n45, n67));
+        let lines = [i32x4_shuffle::<0, 4, 1, 5>(pa, qa), i32x4_shuffle::<2, 6, 3, 7>(pa, qa), i32x4_shuffle::<0, 4, 1, 5>(pb, qb), i32x4_shuffle::<2, 6, 3, 7>(pb, qb)];
+        for (k, &l) in lines.iter().enumerate() {
+            // SAFETY: the caller's.
+            unsafe {
+                v128_store64_lane::<0>(l, line(2 * k));
+                v128_store64_lane::<1>(l, line(2 * k + 1));
+            }
         }
     }
 }
 
 /// # Safety
 /// See `kernels::luma_edge`.
-pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: i32, tc: i32) {
+pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: [i32; 2], tc: [i32; 2]) {
     // SAFETY: the caller's.
     let t = unsafe { luma_taps(p, stride, dir) };
     let [p3, p2, p1, p0, q0, q1, q2, q3] = t;
     let dp = i16x8_abs(i16x8_sub(i16x8_add(p2, p0), i16x8_shl(p1, 1)));
     let dq = i16x8_abs(i16x8_sub(i16x8_add(q2, q0), i16x8_shl(q1, 1)));
-    let (dp0, dp3) = (i16x8_extract_lane::<0>(dp) as i32, i16x8_extract_lane::<3>(dp) as i32);
-    let (dq0, dq3) = (i16x8_extract_lane::<0>(dq) as i32, i16x8_extract_lane::<3>(dq) as i32);
-    let (dpq0, dpq3) = (dp0 + dq0, dp3 + dq3);
-    if dpq0 + dpq3 >= beta {
-        return;
-    }
     let span = i16x8_add(abs_diff(p3, p0), abs_diff(q0, q3));
     let gap = abs_diff(p0, q0);
-    let dsam = |dpq: i32, span: i32, gap: i32| 2 * dpq < beta >> 2 && span < beta >> 3 && gap < (5 * tc + 1) >> 1;
-    let strong = dsam(dpq0, i16x8_extract_lane::<0>(span) as i32, i16x8_extract_lane::<0>(gap) as i32) && dsam(dpq3, i16x8_extract_lane::<3>(span) as i32, i16x8_extract_lane::<3>(gap) as i32);
-    let side = (beta + (beta >> 1)) >> 3;
-    let (dep, deq) = (dp0 + dp3 < side, dq0 + dq3 < side);
-    let tcv = i16x8_splat(tc as i16);
+    // Each segment's decisions, from its first line and its last.
+    let (mut on, mut strong, mut dep, mut deq) = ([false; 2], [false; 2], [false; 2], [false; 2]);
+    macro_rules! decide {
+        ($s:literal, $a:literal, $b:literal) => {{
+            let (beta, tc) = (beta[$s], tc[$s]);
+            let (dp0, dp3) = (i16x8_extract_lane::<$a>(dp) as i32, i16x8_extract_lane::<$b>(dp) as i32);
+            let (dq0, dq3) = (i16x8_extract_lane::<$a>(dq) as i32, i16x8_extract_lane::<$b>(dq) as i32);
+            let (dpq0, dpq3) = (dp0 + dq0, dp3 + dq3);
+            if dpq0 + dpq3 < beta {
+                let dsam = |dpq: i32, span: i32, gap: i32| 2 * dpq < beta >> 2 && span < beta >> 3 && gap < (5 * tc + 1) >> 1;
+                let side = (beta + (beta >> 1)) >> 3;
+                on[$s] = true;
+                strong[$s] = dsam(dpq0, i16x8_extract_lane::<$a>(span) as i32, i16x8_extract_lane::<$a>(gap) as i32) && dsam(dpq3, i16x8_extract_lane::<$b>(span) as i32, i16x8_extract_lane::<$b>(gap) as i32);
+                dep[$s] = !strong[$s] && dp0 + dp3 < side;
+                deq[$s] = !strong[$s] && dq0 + dq3 < side;
+            }
+        }};
+    }
+    decide!(0, 0, 3);
+    decide!(1, 4, 7);
+    if !(on[0] || on[1]) {
+        return;
+    }
+    let tcv = per_segment(tc[0], tc[1]);
     let (two, four) = (i16x8_splat(2), i16x8_splat(4));
-    let out = if strong {
+    let mut out = t;
+    if (on[0] && !strong[0]) || (on[1] && !strong[1]) {
+        let delta = i16x8_shr(i16x8_add(i16x8_sub(i16x8_mul(i16x8_sub(q0, p0), i16x8_splat(9)), i16x8_mul(i16x8_sub(q1, p1), i16x8_splat(3))), i16x8_splat(8)), 4);
+        let apply = v128_and(i16x8_lt(i16x8_abs(delta), i16x8_mul(tcv, i16x8_splat(10))), segments(on[0] && !strong[0], on[1] && !strong[1]));
+        let delta = clip_abs(delta, tcv);
+        let half = i16x8_shr(tcv, 1);
+        out[3] = v128_bitselect(i16x8_add(p0, delta), p0, apply);
+        out[4] = v128_bitselect(i16x8_sub(q0, delta), q0, apply);
+        if dep[0] || dep[1] {
+            let d = clip_abs(i16x8_shr(i16x8_add(i16x8_sub(i16x8_shr(i16x8_add(i16x8_add(p2, p0), i16x8_splat(1)), 1), p1), delta), 1), half);
+            out[2] = v128_bitselect(i16x8_add(p1, d), p1, v128_and(apply, segments(dep[0], dep[1])));
+        }
+        if deq[0] || deq[1] {
+            let d = clip_abs(i16x8_shr(i16x8_sub(i16x8_sub(i16x8_shr(i16x8_add(i16x8_add(q2, q0), i16x8_splat(1)), 1), q1), delta), 1), half);
+            out[5] = v128_bitselect(i16x8_add(q1, d), q1, v128_and(apply, segments(deq[0], deq[1])));
+        }
+    }
+    let wide = strong[0] || strong[1];
+    if wide {
+        let m = segments(strong[0], strong[1]);
         let t2 = i16x8_shl(tcv, 1);
         let (p1p0, q0q1) = (i16x8_add(p1, p0), i16x8_add(q0, q1));
         let np0 = clip_near(i16x8_shr(i16x8_add(i16x8_add(i16x8_add(p2, i16x8_shl(i16x8_add(p1p0, q0), 1)), q1), four), 3), p0, t2);
@@ -1063,69 +1102,52 @@ pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: i32, tc: i3
         let nq0 = clip_near(i16x8_shr(i16x8_add(i16x8_add(i16x8_add(p1, i16x8_shl(i16x8_add(p0, q0q1), 1)), q2), four), 3), q0, t2);
         let nq1 = clip_near(i16x8_shr(i16x8_add(i16x8_add(p0, i16x8_add(q0q1, q2)), two), 2), q1, t2);
         let nq2 = clip_near(i16x8_shr(i16x8_add(i16x8_add(i16x8_add(p0, q0q1), i16x8_add(i16x8_mul(q2, i16x8_splat(3)), i16x8_shl(q3, 1))), four), 3), q2, t2);
-        [p3, np2, np1, np0, nq0, nq1, nq2, q3]
-    } else {
-        let delta = i16x8_shr(i16x8_add(i16x8_sub(i16x8_mul(i16x8_sub(q0, p0), i16x8_splat(9)), i16x8_mul(i16x8_sub(q1, p1), i16x8_splat(3))), i16x8_splat(8)), 4);
-        let apply = i16x8_lt(i16x8_abs(delta), i16x8_mul(tcv, i16x8_splat(10)));
-        let delta = clip_abs(delta, tcv);
-        let half = i16x8_shr(tcv, 1);
-        let np0 = v128_bitselect(i16x8_add(p0, delta), p0, apply);
-        let nq0 = v128_bitselect(i16x8_sub(q0, delta), q0, apply);
-        let np1 = if dep {
-            let d = clip_abs(i16x8_shr(i16x8_add(i16x8_sub(i16x8_shr(i16x8_add(i16x8_add(p2, p0), i16x8_splat(1)), 1), p1), delta), 1), half);
-            v128_bitselect(i16x8_add(p1, d), p1, apply)
-        } else {
-            p1
-        };
-        let nq1 = if deq {
-            let d = clip_abs(i16x8_shr(i16x8_sub(i16x8_sub(i16x8_shr(i16x8_add(i16x8_add(q2, q0), i16x8_splat(1)), 1), q1), delta), 1), half);
-            v128_bitselect(i16x8_add(q1, d), q1, apply)
-        } else {
-            q1
-        };
-        [p3, p2, np1, np0, nq0, nq1, q2, q3]
-    };
+        for (o, n) in out[1..7].iter_mut().zip([np2, np1, np0, nq0, nq1, nq2]) {
+            *o = v128_bitselect(n, *o, m);
+        }
+    }
     // SAFETY: the caller's.
-    unsafe { store_luma_taps(p, stride, dir, &out, strong) }
+    unsafe { store_luma_taps(p, stride, dir, &out, wide) }
 }
 
 /// # Safety
 /// See `kernels::chroma_edge`.
-pub unsafe fn chroma_edge(p: *mut u8, stride: usize, dir: usize, tc: i32) {
+pub unsafe fn chroma_edge(p: *mut u8, stride: usize, dir: usize, tc: [i32; 2]) {
     // The taps `p1, p0, q0, q1`, as `luma_taps` makes them; a vertical
-    // edge's four lines of four bytes fill one vector.
+    // edge's eight lines of four bytes fill two vectors.
     // SAFETY: the caller's.
     let [p1, p0, q0, q1] = unsafe {
         if dir == 1 {
-            let row = |i: isize| tap(v128_load32_zero(p.offset((i - 2) * stride as isize) as *const u32));
+            let row = |i: isize| u16x8_extend_low_u8x16(v128_load64_zero(p.offset((i - 2) * stride as isize) as *const u64));
             [row(0), row(1), row(2), row(3)]
         } else {
             let line = |k: usize| p.add(k * stride).sub(2) as *const u32;
-            let a = v128_load32_lane::<3>(v128_load32_lane::<2>(v128_load32_lane::<1>(v128_load32_zero(line(0)), line(1)), line(2)), line(3));
-            macro_rules! column {
-                ($i:literal) => {
-                    tap(i8x16_shuffle::<$i, { 4 + $i }, { 8 + $i }, { 12 + $i }, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>(a, a))
-                };
-            }
-            [column!(0), column!(1), column!(2), column!(3)]
+            let four = |k: usize| v128_load32_lane::<3>(v128_load32_lane::<2>(v128_load32_lane::<1>(v128_load32_zero(line(k)), line(k + 1)), line(k + 2)), line(k + 3));
+            let (a, b) = (four(0), four(4));
+            let p = i8x16_shuffle::<0, 4, 8, 12, 16, 20, 24, 28, 1, 5, 9, 13, 17, 21, 25, 29>(a, b);
+            let q = i8x16_shuffle::<2, 6, 10, 14, 18, 22, 26, 30, 3, 7, 11, 15, 19, 23, 27, 31>(a, b);
+            [u16x8_extend_low_u8x16(p), u16x8_extend_high_u8x16(p), u16x8_extend_low_u8x16(q), u16x8_extend_high_u8x16(q)]
         }
     };
-    let tcv = i16x8_splat(tc as i16);
+    let tcv = per_segment(tc[0], tc[1]);
     let d = clip_abs(i16x8_shr(i16x8_add(i16x8_sub(i16x8_add(i16x8_shl(i16x8_sub(q0, p0), 2), p1), q1), i16x8_splat(4)), 3), tcv);
-    let (np0, nq0) = (i16x8_add(p0, d), i16x8_sub(q0, d));
+    let n = u8x16_narrow_i16x8(i16x8_add(p0, d), i16x8_sub(q0, d));
     // SAFETY: the caller's.
     unsafe {
         if dir == 1 {
-            v128_store32_lane::<0>(u8x16_narrow_i16x8(np0, np0), p.sub(stride) as *mut u32);
-            v128_store32_lane::<0>(u8x16_narrow_i16x8(nq0, nq0), p as *mut u32);
+            v128_store64_lane::<0>(n, p.sub(stride) as *mut u64);
+            v128_store64_lane::<1>(n, p as *mut u64);
         } else {
-            let n = u8x16_narrow_i16x8(np0, nq0);
-            let pairs = i8x16_shuffle::<0, 8, 1, 9, 2, 10, 3, 11, 0, 0, 0, 0, 0, 0, 0, 0>(n, n);
+            let pairs = i8x16_shuffle::<0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15>(n, n);
             let line = |k: usize| p.add(k * stride).sub(1) as *mut u16;
             v128_store16_lane::<0>(pairs, line(0));
             v128_store16_lane::<1>(pairs, line(1));
             v128_store16_lane::<2>(pairs, line(2));
             v128_store16_lane::<3>(pairs, line(3));
+            v128_store16_lane::<4>(pairs, line(4));
+            v128_store16_lane::<5>(pairs, line(5));
+            v128_store16_lane::<6>(pairs, line(6));
+            v128_store16_lane::<7>(pairs, line(7));
         }
     }
 }

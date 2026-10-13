@@ -205,7 +205,9 @@ picture, and a block is filtered while it is still in cache.
   unfiltered samples. The boundary strength of every edge is settled as the
   blocks decode, into a per-4×4 map of two bits per edge, zero off the 8×8
   grid, so the filter is a scan of eight strengths at a time, nearly all
-  zero, and the edge filter with its four lines in the vector's lanes. A
+  zero, and the edge filter with eight lines in the vector's lanes: an edge
+  is on the 8×8 grid and no block is smaller, so its four-line segments come
+  in pairs, each with its own thresholds and its own decision. A
   coding tree block also records whether any edge along its left side, its
   top or within it has a strength: one without is not scanned, and the same
   flags say whether the deblocking reached into the block beside it. A

@@ -276,81 +276,87 @@ pub fn accum<const LEN: usize>(out: &mut [i32; LEN], src: &[i16], s_in: usize, k
 
 // ---- deblocking (§8.7.2.5) ----
 
-/// One four-line luma edge segment: `p` is the first line's first sample
-/// past the edge, which is vertical (`dir` 0) between it and the sample to
-/// its left, or horizontal between it and the sample above. The edge's
-/// samples are reached by pointer, since the lines belong to blocks whose
-/// rows other threads' blocks share.
+/// Eight lines of a luma edge, two segments of four with a `beta` and a
+/// `tc` each, a segment that is not to be filtered having a `beta` of zero:
+/// `p` is the first line's first sample past the edge, which is vertical
+/// (`dir` 0) between it and the sample to its left, or horizontal between
+/// it and the sample above. The edge's samples are reached by pointer,
+/// since the lines belong to blocks whose rows other threads' blocks share.
 ///
 /// # Safety
-/// The four lines' eight taps must be this thread's: see `shared`.
-pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: i32, tc: i32) {
+/// The eight lines' eight taps must be this thread's: see `shared`.
+pub unsafe fn luma_edge(p: *mut u8, stride: usize, dir: usize, beta: [i32; 2], tc: [i32; 2]) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
         return unsafe { simd128::luma_edge(p, stride, dir, beta, tc) };
     }
     #[allow(unreachable_code)]
     let (line_step, tap_step): (isize, isize) = if dir == 0 { (stride as isize, 1) } else { (1, stride as isize) };
-    let at = |k: usize, i: i32| p.wrapping_offset(k as isize * line_step + i as isize * tap_step);
-    // SAFETY: the caller's, for every tap.
-    let g = |k: usize, i: i32| unsafe { *at(k, i) } as i32;
-    let dp0 = (g(0, -3) - 2 * g(0, -2) + g(0, -1)).abs();
-    let dp3 = (g(3, -3) - 2 * g(3, -2) + g(3, -1)).abs();
-    let dq0 = (g(0, 2) - 2 * g(0, 1) + g(0, 0)).abs();
-    let dq3 = (g(3, 2) - 2 * g(3, 1) + g(3, 0)).abs();
-    let (dpq0, dpq3) = (dp0 + dq0, dp3 + dq3);
-    if dpq0 + dpq3 >= beta {
-        return;
-    }
-    let dsam = |k: usize, dpq: i32| -> bool { dpq < (beta >> 2) && (g(k, -4) - g(k, -1)).abs() + (g(k, 0) - g(k, 3)).abs() < (beta >> 3) && (g(k, -1) - g(k, 0)).abs() < ((5 * tc + 1) >> 1) };
-    let strong = dsam(0, 2 * dpq0) && dsam(3, 2 * dpq3);
-    let dep = dp0 + dp3 < ((beta + (beta >> 1)) >> 3);
-    let deq = dq0 + dq3 < ((beta + (beta >> 1)) >> 3);
-    for k in 0..4 {
-        let (p3, p2, p1, p0) = (g(k, -4), g(k, -3), g(k, -2), g(k, -1));
-        let (q0, q1, q2, q3) = (g(k, 0), g(k, 1), g(k, 2), g(k, 3));
-        // SAFETY: as above.
-        let set = |i: i32, v: i32| unsafe { *at(k, i) = v as u8 };
-        if strong {
-            let t2 = 2 * tc;
-            set(-1, ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(p0 - t2, p0 + t2));
-            set(-2, ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(p1 - t2, p1 + t2));
-            set(-3, ((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(p2 - t2, p2 + t2));
-            set(0, ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(q0 - t2, q0 + t2));
-            set(1, ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(q1 - t2, q1 + t2));
-            set(2, ((p0 + q0 + q1 + 3 * q2 + 2 * q3 + 4) >> 3).clamp(q2 - t2, q2 + t2));
-        } else {
-            let mut delta = (9 * (q0 - p0) - 3 * (q1 - p1) + 8) >> 4;
-            if delta.abs() < tc * 10 {
-                delta = delta.clamp(-tc, tc);
-                set(-1, (p0 + delta).clamp(0, 255));
-                set(0, (q0 - delta).clamp(0, 255));
-                if dep {
-                    let d = ((((p2 + p0 + 1) >> 1) - p1 + delta) >> 1).clamp(-(tc >> 1), tc >> 1);
-                    set(-2, (p1 + d).clamp(0, 255));
-                }
-                if deq {
-                    let d = ((((q2 + q0 + 1) >> 1) - q1 - delta) >> 1).clamp(-(tc >> 1), tc >> 1);
-                    set(1, (q1 + d).clamp(0, 255));
+    for s in 0..2 {
+        let (beta, tc) = (beta[s], tc[s]);
+        let at = |k: usize, i: i32| p.wrapping_offset((4 * s + k) as isize * line_step + i as isize * tap_step);
+        // SAFETY: the caller's, for every tap.
+        let g = |k: usize, i: i32| unsafe { *at(k, i) } as i32;
+        let dp0 = (g(0, -3) - 2 * g(0, -2) + g(0, -1)).abs();
+        let dp3 = (g(3, -3) - 2 * g(3, -2) + g(3, -1)).abs();
+        let dq0 = (g(0, 2) - 2 * g(0, 1) + g(0, 0)).abs();
+        let dq3 = (g(3, 2) - 2 * g(3, 1) + g(3, 0)).abs();
+        let (dpq0, dpq3) = (dp0 + dq0, dp3 + dq3);
+        if dpq0 + dpq3 >= beta {
+            continue;
+        }
+        let dsam = |k: usize, dpq: i32| -> bool { dpq < (beta >> 2) && (g(k, -4) - g(k, -1)).abs() + (g(k, 0) - g(k, 3)).abs() < (beta >> 3) && (g(k, -1) - g(k, 0)).abs() < ((5 * tc + 1) >> 1) };
+        let strong = dsam(0, 2 * dpq0) && dsam(3, 2 * dpq3);
+        let dep = dp0 + dp3 < ((beta + (beta >> 1)) >> 3);
+        let deq = dq0 + dq3 < ((beta + (beta >> 1)) >> 3);
+        for k in 0..4 {
+            let (p3, p2, p1, p0) = (g(k, -4), g(k, -3), g(k, -2), g(k, -1));
+            let (q0, q1, q2, q3) = (g(k, 0), g(k, 1), g(k, 2), g(k, 3));
+            // SAFETY: as above.
+            let set = |i: i32, v: i32| unsafe { *at(k, i) = v as u8 };
+            if strong {
+                let t2 = 2 * tc;
+                set(-1, ((p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3).clamp(p0 - t2, p0 + t2));
+                set(-2, ((p2 + p1 + p0 + q0 + 2) >> 2).clamp(p1 - t2, p1 + t2));
+                set(-3, ((2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3).clamp(p2 - t2, p2 + t2));
+                set(0, ((p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3).clamp(q0 - t2, q0 + t2));
+                set(1, ((p0 + q0 + q1 + q2 + 2) >> 2).clamp(q1 - t2, q1 + t2));
+                set(2, ((p0 + q0 + q1 + 3 * q2 + 2 * q3 + 4) >> 3).clamp(q2 - t2, q2 + t2));
+            } else {
+                let mut delta = (9 * (q0 - p0) - 3 * (q1 - p1) + 8) >> 4;
+                if delta.abs() < tc * 10 {
+                    delta = delta.clamp(-tc, tc);
+                    set(-1, (p0 + delta).clamp(0, 255));
+                    set(0, (q0 - delta).clamp(0, 255));
+                    if dep {
+                        let d = ((((p2 + p0 + 1) >> 1) - p1 + delta) >> 1).clamp(-(tc >> 1), tc >> 1);
+                        set(-2, (p1 + d).clamp(0, 255));
+                    }
+                    if deq {
+                        let d = ((((q2 + q0 + 1) >> 1) - q1 - delta) >> 1).clamp(-(tc >> 1), tc >> 1);
+                        set(1, (q1 + d).clamp(0, 255));
+                    }
                 }
             }
         }
     }
 }
 
-/// One four-line chroma edge segment (§8.7.2.5.5): one sample each side,
-/// `p` as for [`luma_edge`].
+/// Eight lines of a chroma edge (§8.7.2.5.5), two segments of four with a
+/// `tc` each, zero for a segment that is not to be filtered: one sample
+/// each side, `p` as for [`luma_edge`].
 ///
 /// # Safety
-/// The four lines' four taps must be this thread's: see `shared`.
-pub unsafe fn chroma_edge(p: *mut u8, stride: usize, dir: usize, tc: i32) {
+/// The eight lines' four taps must be this thread's: see `shared`.
+pub unsafe fn chroma_edge(p: *mut u8, stride: usize, dir: usize, tc: [i32; 2]) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
         return unsafe { simd128::chroma_edge(p, stride, dir, tc) };
     }
     #[allow(unreachable_code)]
     let (line_step, tap_step): (isize, isize) = if dir == 0 { (stride as isize, 1) } else { (1, stride as isize) };
-    for k in 0..4isize {
+    for k in 0..8isize {
+        let tc = tc[k as usize / 4];
         let at = |i: isize| p.wrapping_offset(k * line_step + i * tap_step);
         // SAFETY: the caller's.
         let (p1, p0, q0, q1) = unsafe { (*at(-2) as i32, *at(-1) as i32, *at(0) as i32, *at(1) as i32) };
