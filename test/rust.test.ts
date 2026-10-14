@@ -139,6 +139,23 @@ describe("a picture held", () => {
       });
     });
   }
+
+  test("once the last is released, picture() describes none, though an earlier one is still held", () => {
+    const fixture = fixtures["mac-352x256"];
+    withDecoder(1, (d) => {
+      const held: RustPicture[] = [];
+      for (const unit of accessUnits(fixture.stream)) {
+        const picture = decodeHeld(loaded, d, unit.data);
+        if (picture) held.push(picture);
+        if (held.length === 2) break;
+      }
+      const [earlier, latest] = held;
+      d.release(latest!.serial);
+      expect([...new Int32Array(loaded.memory.buffer, d.picture(), 16)]).toEqual(new Array(16).fill(0));
+      expect(rustPictureMd5(loaded, earlier!)).toBe(fixture.md5s[0]!);
+      d.release(earlier!.serial);
+    });
+  });
 });
 
 describe("what it refuses", () => {
