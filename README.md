@@ -1,4 +1,4 @@
-# hevc-wasm (experimental)
+# hevc-wasm
 
 A software decoder for a High Performance Mac's HEVC, for
 [remotex](https://github.com/andrewtheguy/remotex)'s browser client where the
@@ -46,7 +46,7 @@ until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.15.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.16.tar.gz"
 ```
 
 ## Testing
