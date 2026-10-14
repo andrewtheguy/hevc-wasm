@@ -186,6 +186,23 @@ In the order the work would go:
    that wrote samples, 848 an edge the deblocking reached and 841 SAO, so
    copying only the lines a filter can change is worth little there.
 
+   The copy is the largest share of a light stream at 2x in release 0.0.12,
+   the row's copy and the copy kernel together: 31% of the window dragged,
+   20% of the loop, 15% of the still page, before whatever of V8's own
+   time is the `memmove`. Tried on that and not kept: no copy at the
+   start of a row, and a block that is the first reference's where it was
+   copied only where the buffer does not hold it, so that a block the
+   picture predicts otherwise is never copied. Three rounds, one thread:
+   level on the drag, the loop and the still page, 5.8 M cycles for 5.7 M,
+   6.9 M and 2.7 M either way; 3% more on the scrolls, 13.2 M for 12.8 M
+   and 23.6 M for 23.0 M, and 4% on the typing at 2x; 1% fewer on the video
+   at 2x, 37.9 M for 38.4 M. On four threads the still page and the typing
+   at 2x were a median 0.55 ms and 0.53 ms for 0.58 ms and 0.60 ms and the
+   rest level. What that suggests, unmeasured, is that the copy's time is the
+   reference's lines arriving, which the prediction of the same block then
+   finds in the cache, so that sparing the copy moves the wait to the
+   prediction.
+
 4. **Threads on a small picture.** Four threads cost more than one wherever a
    strip is light, and less than they did: the thread that asks for the
    picture is now one of the four, with the first row under way while the
@@ -226,6 +243,18 @@ In the order the work would go:
    `component` is the copy of a block and its borders that the edge offset
    reads its neighbours from; copying the column to the right with the
    block, in place of a loop down it, was 1.5 M instructions a picture more.
+
+   The band offset was the other half of it on the loop, where
+   `component` was 13.8% of the stream at 2x in release 0.0.12 and some
+   40% of that the band offset's loop, inlined there: its four constants
+   made again for every sixteen samples, and the offset looked up in two
+   tables of sixteen bands. A row of it is now a function of its own, as
+   the edge offset's is, and the band is counted from the first of the
+   four that have an offset, so that one table holds them: 6.5 M cycles for
+   6.7 M on the loop at 2x and 2.3 M for 2.4 M at 1x, one thread, five
+   rounds, 1% fewer on the video and the scrolls at 2x, 37.8 M for 38.1 M,
+   12.4 M for 12.5 M and 22.4 M for 22.6 M, and level on the drag and the
+   typing.
 
 6. **What the earlier profiles named**, on the x265 video, each to be looked
    at again only if the profile of item 2 ranks it:

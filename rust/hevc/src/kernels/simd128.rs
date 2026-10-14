@@ -1684,35 +1684,48 @@ fn add_offset(v: v128, off: v128) -> v128 {
 
 /// # Safety
 /// See `kernels::sao_band`.
-pub unsafe fn sao_band(d: *mut u8, stride: usize, w: usize, h: usize, band: &[i8; 32]) {
-    let lo = i8x16(
-        band[0], band[1], band[2], band[3], band[4], band[5], band[6], band[7], band[8], band[9],
-        band[10], band[11], band[12], band[13], band[14], band[15],
-    );
-    let hi = i8x16(
-        band[16], band[17], band[18], band[19], band[20], band[21], band[22], band[23], band[24],
-        band[25], band[26], band[27], band[28], band[29], band[30], band[31],
-    );
-    let sixteen = u8x16_splat(16);
+pub unsafe fn sao_band(
+    d: *mut u8,
+    stride: usize,
+    w: usize,
+    h: usize,
+    first: u8,
+    offsets: &[i8; 4],
+) {
+    let o = offsets;
+    // The four bands' offsets, and nothing for the twelve after them.
+    let tab = i8x16(o[0], o[1], o[2], o[3], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     for y in 0..h {
         // SAFETY: the caller's.
-        unsafe {
-            let dr = d.add(y * stride);
-            let mut x = 0;
-            while x + 16 <= w {
-                let v = v128_load(dr.add(x) as *const v128);
-                let idx = u8x16_shr(v, 3);
-                // A swizzle index past 15 reads as 0, so the two halves sum.
-                let off = v128_or(
-                    u8x16_swizzle(lo, idx),
-                    u8x16_swizzle(hi, u8x16_sub(idx, sixteen)),
-                );
-                v128_store(dr.add(x) as *mut v128, add_offset(v, off));
-                x += 16;
-            }
-            for x in x..w {
-                let v = *dr.add(x);
-                *dr.add(x) = (v as i32 + band[(v >> 3) as usize] as i32).clamp(0, 255) as u8;
+        unsafe { sao_band_row(d.add(y * stride), w, first, o, tab, u8x16_splat(first)) };
+    }
+}
+
+/// A row of `sao_band`. Out of line, as `sao_edge_row` is and for the same
+/// reason.
+///
+/// # Safety
+/// `w` samples at `d`.
+#[inline(never)]
+unsafe fn sao_band_row(d: *mut u8, w: usize, first: u8, offsets: &[i8; 4], tab: v128, from: v128) {
+    let bands = u8x16_splat(31);
+    let mut x = 0;
+    // SAFETY: the caller's.
+    unsafe {
+        while x + 16 <= w {
+            let v = v128_load(d.add(x) as *const v128);
+            // The band counted from the first with an offset, around the
+            // 32: the bits a shift of 16-bit lanes brings in from the byte
+            // above go with the mask. A swizzle index past 15 reads as 0.
+            let k = v128_and(i8x16_sub(u16x8_shr(v, 3), from), bands);
+            v128_store(d.add(x) as *mut v128, add_offset(v, u8x16_swizzle(tab, k)));
+            x += 16;
+        }
+        for x in x..w {
+            let v = *d.add(x);
+            let k = ((v >> 3).wrapping_sub(first) & 31) as usize;
+            if k < 4 {
+                *d.add(x) = (v as i32 + offsets[k] as i32).clamp(0, 255) as u8;
             }
         }
     }
