@@ -89,12 +89,10 @@ impl SaoCtx {
         }
         match prm.type_idx {
             1 => {
-                let mut band = [0i8; 32];
-                for k in 0..4usize {
-                    band[(k + prm.aux as usize) & 31] = prm.offset[k];
-                }
                 // SAFETY: see above.
-                unsafe { kernels::sao_band(pl.at(x0, y0), stride, w, h, &band) };
+                unsafe {
+                    kernels::sao_band(pl.at(x0, y0), stride, w, h, prm.aux & 31, &prm.offset)
+                };
             }
             2 => {
                 let (da, db) = match prm.aux {

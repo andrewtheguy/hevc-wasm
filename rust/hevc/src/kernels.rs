@@ -475,14 +475,23 @@ pub fn luma_beta(qp: i32, beta_offset_div2: i32) -> i32 {
 // ---- sample adaptive offset (§8.7.3) ----
 
 /// Band offset in place over the `w`×`h` block at `p`, a block of the
-/// picture reached by pointer as [`luma_edge`]'s: `v += band[v >> 3]`.
+/// picture reached by pointer as [`luma_edge`]'s: a sample in one of the four
+/// bands of eight values from band `first`, around the 32, takes that band's
+/// offset.
 ///
 /// # Safety
 /// The block must be this thread's: see `shared`.
-pub unsafe fn sao_band(p: *mut u8, stride: usize, w: usize, h: usize, band: &[i8; 32]) {
+pub unsafe fn sao_band(
+    p: *mut u8,
+    stride: usize,
+    w: usize,
+    h: usize,
+    first: u8,
+    offsets: &[i8; 4],
+) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     {
-        return unsafe { simd128::sao_band(p, stride, w, h, band) };
+        return unsafe { simd128::sao_band(p, stride, w, h, first, offsets) };
     }
     #[allow(unreachable_code)]
     for y in 0..h {
@@ -490,7 +499,10 @@ pub unsafe fn sao_band(p: *mut u8, stride: usize, w: usize, h: usize, band: &[i8
             // SAFETY: the caller's.
             unsafe {
                 let v = p.add(y * stride + x);
-                *v = (*v as i32 + band[(*v >> 3) as usize] as i32).clamp(0, 255) as u8;
+                let k = ((*v >> 3).wrapping_sub(first) & 31) as usize;
+                if k < 4 {
+                    *v = (*v as i32 + offsets[k] as i32).clamp(0, 255) as u8;
+                }
             }
         }
     }

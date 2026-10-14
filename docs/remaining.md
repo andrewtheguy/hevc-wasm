@@ -244,6 +244,18 @@ In the order the work would go:
    reads its neighbours from; copying the column to the right with the
    block, in place of a loop down it, was 1.5 M instructions a picture more.
 
+   The band offset was the other half of it on the loop, where
+   `component` was 13.8% of the stream at 2x in release 0.0.12 and some
+   40% of that the band offset's loop, inlined there: its four constants
+   made again for every sixteen samples, and the offset looked up in two
+   tables of sixteen bands. A row of it is now a function of its own, as
+   the edge offset's is, and the band is counted from the first of the
+   four that have an offset, so that one table holds them: 6.5 M cycles for
+   6.7 M on the loop at 2x and 2.3 M for 2.4 M at 1x, one thread, five
+   rounds, 1% fewer on the video and the scrolls at 2x, 37.8 M for 38.1 M,
+   12.4 M for 12.5 M and 22.4 M for 22.6 M, and level on the drag and the
+   typing.
+
 6. **What the earlier profiles named**, on the x265 video, each to be looked
    at again only if the profile of item 2 ranks it:
    - **`coding_quadtree`'s fills**: the `memory.fill` calls into V8 are not
