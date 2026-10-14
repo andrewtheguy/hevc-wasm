@@ -15,7 +15,7 @@ of what it does not do yet.
 ```text
 remotex's decode worker (frontend/src/softwareDecoder.worker.ts)
    │  input(size)   the access unit's bytes go into the module's memory
-   │  decode()      true when the unit completed a picture, held from then on; throws when it does not decode
+   │  decode()      true when the unit completed a picture, held from then on; false when it completed none; throws when it does not decode
    │  picture()     sixteen numbers: size, layout, colour, each plane's address and stride, keyframe, serial
    │  release(n)    the page is done with picture n
    ▼
@@ -318,7 +318,7 @@ two loaders differ only in where the glue comes from:
 | `startPool(threads)` | makes rayon's pool of `threads` workers each already in `runPoolThread` |
 | `new Decoder(threads)` | one stream's decoder, its rows on `threads` of the pool, or on the caller for one |
 | `decoder.input(size)` | the address of `size` bytes for the next access unit |
-| `decoder.decode()` | decodes the unit written there: true when it completed a picture, which is held until released; throws for a unit that does not decode |
+| `decoder.decode()` | decodes the unit written there: true when it completed a picture, which is held until released; false when it decoded without completing one; throws for a unit that does not decode |
 | `decoder.picture()` | the address of sixteen `i32`s describing the picture the last unit completed |
 | `decoder.release(serial)` | the page is done with that picture, whose buffer the decoder may have back; a serial not held is nothing |
 | `decoder.free()` | wasm-bindgen's |

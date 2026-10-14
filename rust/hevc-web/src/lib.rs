@@ -97,8 +97,9 @@ impl Decoder {
 
     /// Decode the unit written into [`Self::input`]: true when it completed a
     /// picture, which [`Self::picture`] describes and which is held until
-    /// [`Self::release`]. Throws for a unit that does not decode, after which
-    /// the stream waits for a keyframe. A display the Mac sends in strips is
+    /// [`Self::release`], and false when it decoded without completing one.
+    /// Throws for a unit that does not decode, after which the stream waits
+    /// for a keyframe. A display the Mac sends in strips is
     /// one picture a strip, which the page places.
     pub fn decode(&mut self) -> Result<bool, JsError> {
         let unit = std::mem::take(&mut self.input);
