@@ -9,7 +9,7 @@
 //! made with threads, on the calling thread and on rayon's pool.
 //!
 //! A display the Mac sends in strips is the same stream, each picture a strip
-//! of it, which [`Display`] puts together.
+//! of it, which the page places.
 
 mod bits;
 mod cabac;
@@ -26,7 +26,6 @@ mod ps;
 mod sao;
 mod shared;
 mod slice;
-mod strips;
 mod tables;
 mod wavefront;
 
@@ -35,4 +34,3 @@ pub use error::{Error, Result};
 pub use nal::access_units;
 pub use pic::{Picture, Plane};
 pub use ps::Colour;
-pub use strips::{Display, STRIPS};
