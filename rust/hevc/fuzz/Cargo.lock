@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "hevc"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "rayon",
 ]
