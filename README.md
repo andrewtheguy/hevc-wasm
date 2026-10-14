@@ -18,8 +18,8 @@ downloads that archive from there and names it in the gateway's `[hevc_wasm]`
 table, and the gateway reads it at start-up and serves its two files at
 `/hevc/`; the page runs it in a worker of its own, shaped as a `VideoDecoder`,
 with the threads as workers of the page's bundle (remotex's
-`frontend/src/hevcWasmDecoder.ts`, `hevcWasm.worker.ts` and
-`hevcPool.worker.ts`).
+`frontend/src/softwareDecoder.ts`, `softwareDecoder.worker.ts` and
+`softwareDecoderPool.worker.ts`).
 
 ## Building
 
@@ -46,7 +46,7 @@ until its pin names it:
 ```toml
 [hevc_wasm]
 enabled = true
-archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.13.tar.gz"
+archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.14.tar.gz"
 ```
 
 ## Testing
@@ -64,8 +64,8 @@ threads as workers that each run an instance of it. The `mac-*` streams in
 `-f framemd5`, recorded in `test/data/reference.json`, on one thread and on
 four; the other streams there, of other shapes, must be refused by name. The
 tests also cover where the planes are in the memory, joining a stream before
-its keyframe, two decoders side by side, garbage units, and a display put
-together from its strips.
+its keyframe, two decoders side by side, garbage units, and pictures held
+while the units after them decode.
 
 A run needs no ffmpeg. `bun run fixtures` regenerates the streams and their
 reference with the host's ffmpeg and libx265 from the specs in
@@ -113,7 +113,7 @@ references. Any other stream is refused by name (HEVC's tiles, B pictures,
 weighted prediction, PCM, scaling lists, transform skip, long-term references,
 other chroma formats or bit depths). A display the Mac sends as four strips
 (`tilesPerFrame` 4 in remotex's offer) is that same shape, each picture a strip
-of the display, and the decoder puts the display together from them. Its decoding arithmetic was transcribed from
+of the display, which the page places. Its decoding arithmetic was transcribed from
 [rusty_h265](https://github.com/Remade-With-Rust/rusty_h265) 0.6.0
 (Apache-2.0, `rust/hevc/LICENSE`), which decodes 4:2:0 only; the 4:4:4 handling,
 the byte planes and the threading are this repository's.
@@ -142,11 +142,14 @@ the byte planes and the threading are this repository's.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode`,
-  `decodeStrip` for a display in strips, and `picture`. `picture` describes the picture in sixteen numbers: its size, the
-  chroma layout, the colour the stream states, each plane's address and
-  stride in the module's memory, and whether it is a keyframe, so the paint
-  worker uploads the planes to WebGL from the module's shared memory
-  (remotex's `hevcPicture.ts`).
+  `picture` and `release`. `picture` describes the picture in sixteen numbers:
+  its size, the chroma layout, the colour the stream states, each plane's
+  address and stride in the module's memory, whether it is a keyframe, and its
+  serial, so the paint worker uploads the planes to WebGL from the module's
+  shared memory (remotex's `planesPicture.ts`). A picture is held until the
+  page releases it by its serial, and the units after it decode into other
+  buffers meanwhile, so the next unit decodes while the page uploads one; a
+  strip's picture is uploaded into its place in the display there.
 - `rust/hevc-bench` decodes a file natively and prints each picture's MD5 as
   `ffmpeg -f framemd5` does: `cargo run --release -p hevc-bench -- FILE THREADS [REPEATS]`
   from `rust/`. To profile the module itself, run it under

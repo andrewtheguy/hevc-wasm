@@ -24,8 +24,6 @@ pub struct Decoded {
     pub colour: Colour,
     /// An IDR picture: the stream can be joined here.
     pub keyframe: bool,
-    /// A picture predicted from no other, as an IDR is.
-    pub intra: bool,
 }
 
 /// A picture the next ones may refer to.
@@ -34,9 +32,9 @@ struct Reference {
     poc: i32,
 }
 
-/// The free picture buffers kept: one for each strip of a display to
-/// descend from (`Decoder::take_buffer`).
-const POOL: usize = crate::strips::STRIPS;
+/// The free picture buffers kept: one for each of the four strips a Mac
+/// sends a display in to descend from (`Decoder::take_buffer`).
+const POOL: usize = 4;
 
 pub struct Decoder {
     threads: usize,
@@ -391,7 +389,6 @@ impl Decoder {
             window: [sps.conf_win[0], sps.conf_win[2], w, h],
             colour: sps.colour,
             keyframe: idr,
-            intra: sh.intra,
         }))
     }
 
@@ -454,6 +451,13 @@ impl Decoder {
                 .find(|e| e.pic.serial == pic.base_serial)?
                 .pic;
         }
+    }
+
+    /// Gives back a picture the caller is done with, `Decoded::picture`: its
+    /// buffer is the pool's again where no reference holds it any more, as
+    /// one the references let go of first is.
+    pub fn recycle(&mut self, pic: Arc<Picture>) {
+        self.release(pic);
     }
 
     /// Returns a picture's buffer to the pool once nothing else holds it. A
