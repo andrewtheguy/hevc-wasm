@@ -24,9 +24,19 @@ mkdir -p build/out dist
 cp build/pkg/hevc.js build/out/hevc.js
 cp build/pkg/hevc_bg.wasm build/out/hevc.wasm
 
-# The release: the two files the page loads, and nothing else. GNU tar with fixed
-# names, owners and times, so one build's archive is byte for byte the next's
-# from the same toolchain.
-tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 \
+# The release: the two files the page loads, and nothing else. Fixed order,
+# modes, times and owners, so one build's archive is byte for byte the next's
+# from the same toolchain. The files carry the mode and time themselves, since
+# GNU tar and bsdtar (macOS's, the BSDs') share no option for either and name
+# the owner's differently; COPYFILE_DISABLE keeps macOS's from adding its
+# metadata as entries of their own.
+chmod 644 build/out/hevc.js build/out/hevc.wasm
+TZ=UTC0 touch -t 197001010000.00 build/out/hevc.js build/out/hevc.wasm
+if tar --version | grep -q 'GNU tar'; then
+  owner=(--owner=0 --group=0 --numeric-owner)
+else
+  owner=(--uid 0 --gid 0 --numeric-owner)
+fi
+COPYFILE_DISABLE=1 tar --format=ustar "${owner[@]}" \
   -C build/out -cf - hevc.js hevc.wasm | gzip -9n >"dist/hevc-wasm-v$version.tar.gz"
 ls -l build/out dist
