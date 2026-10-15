@@ -17,6 +17,7 @@ remotex's decode worker (frontend/src/softwareDecoder.worker.ts)
    │  input(size)   the access unit's bytes go into the module's memory
    │  decode()      true when the unit completed a picture, held from then on; false when it completed none; throws when it does not decode
    │  picture()     sixteen numbers: size, layout, colour, each plane's address and stride, keyframe, serial
+   │  changed(n)    where the picture may differ from picture n: a rectangle, the whole picture, or nothing
    │  release(n)    the page is done with picture n
    ▼
 hevc-web, the wasm-bindgen module ── hevc::Decoder

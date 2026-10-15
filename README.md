@@ -142,14 +142,19 @@ the byte planes and the threading are this repository's.
 - `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode`,
-  `picture` and `release`. `picture` describes the picture in sixteen numbers:
-  its size, the chroma layout, the colour the stream states, each plane's
-  address and stride in the module's memory, whether it is a keyframe, and its
-  serial, so the paint worker uploads the planes to WebGL from the module's
-  shared memory (remotex's `planesPicture.ts`). A picture is held until the
-  page releases it by its serial, and the units after it decode into other
-  buffers meanwhile, so the next unit decodes while the page uploads one; a
-  strip's picture is uploaded into its place in the display there.
+  `picture`, `changed` and `release`. `picture` describes the picture in
+  sixteen numbers: its size, the chroma layout, the colour the stream states,
+  each plane's address and stride in the module's memory, whether it is a
+  keyframe, and its serial, so the paint worker uploads the planes to WebGL
+  from the module's shared memory (remotex's `planesPicture.ts`). A picture is
+  held until the page releases it by its serial, and the units after it decode
+  into other buffers meanwhile, so the next unit decodes while the page uploads
+  one; a strip's picture is uploaded into its place in the display there.
+  `changed` takes the serial of a picture before, a strip's being its strip's
+  last, and says where the picture may differ from it: the bounds of the coding
+  tree blocks the pictures since changed, as the decoder marks them for the
+  buffers it reuses, so the paint worker whose textures hold that picture
+  uploads that rectangle alone, or nothing.
 - `rust/hevc-bench` decodes a file natively and prints each picture's MD5 as
   `ffmpeg -f framemd5` does: `cargo run --release -p hevc-bench -- FILE THREADS [REPEATS]`
   from `rust/`. To profile the module itself, run it under

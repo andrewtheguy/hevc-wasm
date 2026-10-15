@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import { accessUnits } from "./annexb";
 import { type Fixture, type FixtureName, loadFixtures } from "./fixtures";
-import { decodeHeld, decodeUnit, type LoadedRust, loadRust, type RustDecoder, type RustPicture, rustPictureMd5 } from "./rust";
+import { decodeHeld, decodeUnit, type LoadedRust, loadRust, type RustDecoder, type RustPicture, rustChanged, rustPictureCopy, rustPictureMd5 } from "./rust";
 
 // The pool remotex would start, at most.
 const POOL = 4;
@@ -156,6 +156,54 @@ describe("a picture held", () => {
       d.release(earlier!.serial);
     });
   });
+});
+
+describe("where a picture changed", () => {
+  // Each picture against each of the four before it, as a strip is against its
+  // strip of the frame before: every sample outside the rectangle is that
+  // picture's.
+  for (const name of ["mac-352x256", "mac-still-352x256"] as const) {
+    for (const threads of [1, POOL]) {
+      test(`${name}: every sample that differs is in the rectangle, on ${threads} thread(s)`, () => {
+        const fixture = fixtures[name];
+        const { width: w, height: h } = fixture;
+        // How many rectangles were the whole picture, part of it, and none of it.
+        const counts = { whole: 0, part: 0, none: 0 };
+        withDecoder(threads, (d) => {
+          const before: { serial: number; planes: Uint8Array[] }[] = [];
+          for (const unit of accessUnits(fixture.stream)) {
+            const picture = decodeUnit(loaded, d, unit.data);
+            if (!picture) continue;
+            const planes = rustPictureCopy(loaded, picture);
+            // A picture's own serial, and none at all, say nothing of where.
+            expect(rustChanged(loaded, d, 0)).toEqual({ x: 0, y: 0, width: w, height: h });
+            for (const { serial, planes: was } of before) {
+              const r = rustChanged(loaded, d, serial);
+              expect(r.x >= 0 && r.y >= 0 && r.x + r.width <= w && r.y + r.height <= h).toBe(true);
+              if (picture.keyframe) expect(r).toEqual({ x: 0, y: 0, width: w, height: h });
+              if (r.width === w && r.height === h) counts.whole++;
+              else if (r.width === 0) counts.none++;
+              else counts.part++;
+              for (let p = 0; p < 3; p++) {
+                for (let y = 0; y < h; y++) {
+                  for (let x = 0; x < w; x++) {
+                    const inside = x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+                    if (!inside && planes[p]![y * w + x] !== was[p]![y * w + x]) {
+                      throw new Error(`picture ${picture.serial} differs from ${serial} at (${x}, ${y}) of plane ${p}, outside ${JSON.stringify(r)}`);
+                    }
+                  }
+                }
+              }
+            }
+            before.unshift({ serial: picture.serial, planes });
+            before.length = Math.min(before.length, 4);
+          }
+        });
+        // The still screen's patch is a part of it.
+        if (name === "mac-still-352x256") expect(counts.part).toBeGreaterThan(0);
+      });
+    }
+  }
 });
 
 describe("what it refuses", () => {

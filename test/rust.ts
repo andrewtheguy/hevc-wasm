@@ -20,6 +20,7 @@ export interface RustDecoder {
   input(size: number): number;
   decode(): boolean;
   picture(): number;
+  changed(since: number): number;
   release(serial: number): void;
   free(): void;
 }
@@ -136,4 +137,30 @@ export function rustPictureMd5(loaded: LoadedRust, picture: RustPicture): string
     }
   }
   return hasher.digest("hex");
+}
+
+/** A rectangle of a picture's planes, as `changed` gives it: a width of 0 where nothing changed. */
+export interface RustRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Where the picture `decoder` last decoded to may differ from picture `since`. */
+export function rustChanged(loaded: LoadedRust, decoder: RustDecoder, since: number): RustRect {
+  const [x, y, width, height] = new Int32Array(loaded.memory.buffer, decoder.changed(since), 4);
+  return { x: x!, y: y!, width: width!, height: height! };
+}
+
+/** The picture's three planes, rows packed, copied out of the module's memory. */
+export function rustPictureCopy(loaded: LoadedRust, picture: RustPicture): Uint8Array[] {
+  const heap = new Uint8Array(loaded.memory.buffer);
+  return picture.planes.map((plane) => {
+    const copy = new Uint8Array(picture.width * picture.height);
+    for (let y = 0; y < picture.height; y++) {
+      copy.set(heap.subarray(plane.address + y * plane.stride, plane.address + y * plane.stride + picture.width), y * picture.width);
+    }
+    return copy;
+  });
 }

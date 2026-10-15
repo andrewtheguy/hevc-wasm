@@ -358,6 +358,7 @@ impl Decoder {
         // in it or along a side of it, and with SAO off.
         pic.same.clear();
         pic.base_serial = base.map_or(0, |b| b.serial);
+        pic.ctb_size = 1 << sps.log2_ctb_size;
         if base.is_some() {
             let (w, h) = (state.ctb_w, state.ctb_h);
             let sao = sh.sao_luma || sh.sao_chroma;
@@ -390,6 +391,58 @@ impl Decoder {
             colour: sps.colour,
             keyframe: idr,
         }))
+    }
+
+    /// Where `decoded`'s picture may differ from the picture the serial
+    /// `since` names: the left, top, width and height in its window of the
+    /// coding tree blocks a picture changed on the way from that one, each
+    /// picture from the one its rows started as, and a width of 0 where none
+    /// did. The whole window where the picture does not descend from that one
+    /// through pictures the decoder still has: a display in strips descends,
+    /// strip by strip, from that strip's picture before.
+    pub fn changed_since(&self, decoded: &Decoded, since: u64) -> [u32; 4] {
+        let [wx, wy, ww, wh] = decoded.window;
+        let pic = &*decoded.picture;
+        let mut kept = vec![1u8; pic.same.len()];
+        let mut at = pic;
+        // Each step is a picture decoded earlier, so the walk ends.
+        loop {
+            if at.base_serial == 0
+                || at.same.len() != kept.len()
+                || at.ctb_size != pic.ctb_size
+                || at.width() != pic.width()
+                || at.height() != pic.height()
+            {
+                return [0, 0, ww, wh];
+            }
+            for (k, &s) in kept.iter_mut().zip(&at.same) {
+                *k &= s;
+            }
+            if at.base_serial == since {
+                break;
+            }
+            let base = at.base_serial;
+            let held = self.dpb.iter().map(|e| &*e.pic).chain(&self.pool).find(|p| p.serial == base);
+            match held {
+                Some(p) => at = p,
+                None => return [0, 0, ww, wh],
+            }
+        }
+        // The blocks' bounds in samples, then in the window.
+        let (ctb, cols) = (pic.ctb_size, pic.width().div_ceil(pic.ctb_size));
+        let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
+        for (i, _) in kept.iter().enumerate().filter(|&(_, &k)| k == 0) {
+            let (x, y) = (i % cols * ctb, i / cols * ctb);
+            (left, top) = (left.min(x), top.min(y));
+            (right, bottom) = (right.max(x + ctb), bottom.max(y + ctb));
+        }
+        let (wx, wy, ww, wh) = (wx as usize, wy as usize, ww as usize, wh as usize);
+        let (left, right) = (left.max(wx) - wx, right.min(wx + ww).saturating_sub(wx));
+        let (top, bottom) = (top.max(wy) - wy, bottom.min(wy + wh).saturating_sub(wy));
+        if right <= left || bottom <= top {
+            return [0; 4];
+        }
+        [left as u32, top as u32, (right - left) as u32, (bottom - top) as u32]
     }
 
     /// A picture buffer of the sequence's size: a pooled one that no
