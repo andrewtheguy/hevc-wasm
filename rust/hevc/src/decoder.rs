@@ -377,6 +377,8 @@ impl Decoder {
         self.serial += 1;
         pic.serial = self.serial;
         pic.poc = poc;
+        let (w, h) = sps.output_size();
+        pic.window = [sps.conf_win[0], sps.conf_win[2], w, h];
         self.started = true;
 
         let pic = Arc::new(pic);
@@ -384,10 +386,9 @@ impl Decoder {
             pic: pic.clone(),
             poc,
         });
-        let (w, h) = sps.output_size();
         Ok(Some(Decoded {
+            window: pic.window,
             picture: pic,
-            window: [sps.conf_win[0], sps.conf_win[2], w, h],
             colour: sps.colour,
             keyframe: idr,
         }))
@@ -398,8 +399,10 @@ impl Decoder {
     /// coding tree blocks a picture changed on the way from that one, each
     /// picture from the one its rows started as, and a width of 0 where none
     /// did. The whole window where the picture does not descend from that one
-    /// through pictures the decoder still has: a display in strips descends,
-    /// strip by strip, from that strip's picture before.
+    /// through pictures the decoder still has, that one included, or where
+    /// one of them was shown through another window, its samples then
+    /// elsewhere in the picture shown: a display in strips descends, strip by
+    /// strip, from that strip's picture before.
     pub fn changed_since(&self, decoded: &Decoded, since: u64) -> [u32; 4] {
         let [wx, wy, ww, wh] = decoded.window;
         let pic = &*decoded.picture;
@@ -418,14 +421,14 @@ impl Decoder {
             for (k, &s) in kept.iter_mut().zip(&at.same) {
                 *k &= s;
             }
-            if at.base_serial == since {
-                break;
-            }
             let base = at.base_serial;
             let held = self.dpb.iter().map(|e| &*e.pic).chain(&self.pool).find(|p| p.serial == base);
             match held {
-                Some(p) => at = p,
-                None => return [0, 0, ww, wh],
+                Some(p) if p.window == decoded.window => at = p,
+                _ => return [0, 0, ww, wh],
+            }
+            if base == since {
+                break;
             }
         }
         // The blocks' bounds in samples, then in the window.
@@ -529,5 +532,42 @@ impl Decoder {
         for e in std::mem::take(&mut self.dpb) {
             self.release(e.pic);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 64×64 picture of four 32×32 coding tree blocks, shown through
+    /// `window`, decoded from `base` with block `changed` written.
+    fn picture(serial: u64, base: u64, changed: usize, window: [u32; 4]) -> Picture {
+        let mut p = Picture::new(64, 64);
+        (p.serial, p.base_serial, p.ctb_size, p.window) = (serial, base, 32, window);
+        p.same = (0..4).map(|i| (i != changed) as u8).collect();
+        p
+    }
+
+    fn decoded(pic: Picture) -> Decoded {
+        Decoded { window: pic.window, picture: Arc::new(pic), colour: Colour::default(), keyframe: false }
+    }
+
+    /// What a picture says changed is within its window, where the picture
+    /// it comes from was shown through the same one, and the whole window
+    /// where that one was shown through another, though the coded size is
+    /// the same: its samples are elsewhere in the picture shown.
+    #[test]
+    fn a_picture_shown_through_another_window_changed_whole() {
+        let window = [0, 0, 60, 60];
+        let mut d = Decoder::new(1);
+        d.dpb.push(Reference { pic: Arc::new(picture(1, 0, 4, window)), poc: 0 });
+        assert_eq!(d.changed_since(&decoded(picture(2, 1, 3, window)), 1), [32, 32, 28, 28]);
+        assert_eq!(d.changed_since(&decoded(picture(2, 1, 4, window)), 1), [0; 4]);
+
+        let moved = [4, 0, 60, 60];
+        assert_eq!(d.changed_since(&decoded(picture(2, 1, 3, moved)), 1), [0, 0, 60, 60]);
+        // Through a picture between them shown through another, too.
+        d.dpb.push(Reference { pic: Arc::new(picture(2, 1, 4, moved)), poc: 1 });
+        assert_eq!(d.changed_since(&decoded(picture(3, 2, 4, window)), 1), [0, 0, 60, 60]);
     }
 }

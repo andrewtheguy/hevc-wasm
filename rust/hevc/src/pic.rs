@@ -45,6 +45,9 @@ pub struct Picture {
     pub same: Vec<u8>,
     /// The side of a coding tree block, which `same` has one entry for each of.
     pub ctb_size: usize,
+    /// `x, y, width, height` of the part to show, as the picture was decoded
+    /// (`Decoded::window`).
+    pub window: [u32; 4],
 }
 
 impl Picture {
@@ -60,6 +63,7 @@ impl Picture {
             base_serial: 0,
             same: Vec::new(),
             ctb_size: 0,
+            window: [0; 4],
         }
     }
 
