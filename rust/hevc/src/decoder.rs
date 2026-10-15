@@ -358,6 +358,7 @@ impl Decoder {
         // in it or along a side of it, and with SAO off.
         pic.same.clear();
         pic.base_serial = base.map_or(0, |b| b.serial);
+        pic.ctb_size = 1 << sps.log2_ctb_size;
         if base.is_some() {
             let (w, h) = (state.ctb_w, state.ctb_h);
             let sao = sh.sao_luma || sh.sao_chroma;
@@ -376,6 +377,8 @@ impl Decoder {
         self.serial += 1;
         pic.serial = self.serial;
         pic.poc = poc;
+        let (w, h) = sps.output_size();
+        pic.window = [sps.conf_win[0], sps.conf_win[2], w, h];
         self.started = true;
 
         let pic = Arc::new(pic);
@@ -383,13 +386,66 @@ impl Decoder {
             pic: pic.clone(),
             poc,
         });
-        let (w, h) = sps.output_size();
         Ok(Some(Decoded {
+            window: pic.window,
             picture: pic,
-            window: [sps.conf_win[0], sps.conf_win[2], w, h],
             colour: sps.colour,
             keyframe: idr,
         }))
+    }
+
+    /// Where `decoded`'s picture may differ from the picture the serial
+    /// `since` names: the left, top, width and height in its window of the
+    /// coding tree blocks a picture changed on the way from that one, each
+    /// picture from the one its rows started as, and a width of 0 where none
+    /// did. The whole window where the picture does not descend from that one
+    /// through pictures the decoder still has, that one included, or where
+    /// one of them was shown through another window, its samples then
+    /// elsewhere in the picture shown: a display in strips descends, strip by
+    /// strip, from that strip's picture before.
+    pub fn changed_since(&self, decoded: &Decoded, since: u64) -> [u32; 4] {
+        let [wx, wy, ww, wh] = decoded.window;
+        let pic = &*decoded.picture;
+        let mut kept = vec![1u8; pic.same.len()];
+        let mut at = pic;
+        // Each step is a picture decoded earlier, so the walk ends.
+        loop {
+            if at.base_serial == 0
+                || at.same.len() != kept.len()
+                || at.ctb_size != pic.ctb_size
+                || at.width() != pic.width()
+                || at.height() != pic.height()
+            {
+                return [0, 0, ww, wh];
+            }
+            for (k, &s) in kept.iter_mut().zip(&at.same) {
+                *k &= s;
+            }
+            let base = at.base_serial;
+            let held = self.dpb.iter().map(|e| &*e.pic).chain(&self.pool).find(|p| p.serial == base);
+            match held {
+                Some(p) if p.window == decoded.window => at = p,
+                _ => return [0, 0, ww, wh],
+            }
+            if base == since {
+                break;
+            }
+        }
+        // The blocks' bounds in samples, then in the window.
+        let (ctb, cols) = (pic.ctb_size, pic.width().div_ceil(pic.ctb_size));
+        let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
+        for (i, _) in kept.iter().enumerate().filter(|&(_, &k)| k == 0) {
+            let (x, y) = (i % cols * ctb, i / cols * ctb);
+            (left, top) = (left.min(x), top.min(y));
+            (right, bottom) = (right.max(x + ctb), bottom.max(y + ctb));
+        }
+        let (wx, wy, ww, wh) = (wx as usize, wy as usize, ww as usize, wh as usize);
+        let (left, right) = (left.max(wx) - wx, right.min(wx + ww).saturating_sub(wx));
+        let (top, bottom) = (top.max(wy) - wy, bottom.min(wy + wh).saturating_sub(wy));
+        if right <= left || bottom <= top {
+            return [0; 4];
+        }
+        [left as u32, top as u32, (right - left) as u32, (bottom - top) as u32]
     }
 
     /// A picture buffer of the sequence's size: a pooled one that no
@@ -476,5 +532,42 @@ impl Decoder {
         for e in std::mem::take(&mut self.dpb) {
             self.release(e.pic);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 64×64 picture of four 32×32 coding tree blocks, shown through
+    /// `window`, decoded from `base` with block `changed` written.
+    fn picture(serial: u64, base: u64, changed: usize, window: [u32; 4]) -> Picture {
+        let mut p = Picture::new(64, 64);
+        (p.serial, p.base_serial, p.ctb_size, p.window) = (serial, base, 32, window);
+        p.same = (0..4).map(|i| (i != changed) as u8).collect();
+        p
+    }
+
+    fn decoded(pic: Picture) -> Decoded {
+        Decoded { window: pic.window, picture: Arc::new(pic), colour: Colour::default(), keyframe: false }
+    }
+
+    /// What a picture says changed is within its window, where the picture
+    /// it comes from was shown through the same one, and the whole window
+    /// where that one was shown through another, though the coded size is
+    /// the same: its samples are elsewhere in the picture shown.
+    #[test]
+    fn a_picture_shown_through_another_window_changed_whole() {
+        let window = [0, 0, 60, 60];
+        let mut d = Decoder::new(1);
+        d.dpb.push(Reference { pic: Arc::new(picture(1, 0, 4, window)), poc: 0 });
+        assert_eq!(d.changed_since(&decoded(picture(2, 1, 3, window)), 1), [32, 32, 28, 28]);
+        assert_eq!(d.changed_since(&decoded(picture(2, 1, 4, window)), 1), [0; 4]);
+
+        let moved = [4, 0, 60, 60];
+        assert_eq!(d.changed_since(&decoded(picture(2, 1, 3, moved)), 1), [0, 0, 60, 60]);
+        // Through a picture between them shown through another, too.
+        d.dpb.push(Reference { pic: Arc::new(picture(2, 1, 4, moved)), poc: 1 });
+        assert_eq!(d.changed_since(&decoded(picture(3, 2, 4, window)), 1), [0, 0, 60, 60]);
     }
 }

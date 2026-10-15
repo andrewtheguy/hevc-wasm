@@ -63,6 +63,14 @@ pub fn start_pool(threads: usize) -> Result<(), JsError> {
 /// How many numbers [`Decoder::picture`] describes a picture in.
 const PICTURE_FIELDS: usize = 16;
 
+/// What the page knows a picture by: the decoder's serial, which counts from 1
+/// and no picture of it shares, wrapped short of 0 to fit 32 bits.
+const WRAP: u64 = u32::MAX as u64;
+
+fn page_serial(serial: u64) -> u32 {
+    ((serial - 1) % WRAP) as u32 + 1
+}
+
 /// One stream's decoder.
 #[wasm_bindgen]
 pub struct Decoder {
@@ -76,6 +84,7 @@ pub struct Decoder {
     /// The last picture's serial.
     serial: u32,
     picture: [i32; PICTURE_FIELDS],
+    changed: [i32; 4],
 }
 
 #[wasm_bindgen]
@@ -84,7 +93,7 @@ impl Decoder {
     /// and, for more than one, that many less one of the pool's.
     #[wasm_bindgen(constructor)]
     pub fn new(threads: usize) -> Decoder {
-        Decoder { inner: hevc::Decoder::new(threads), input: Vec::new(), held: Vec::new(), serial: 0, picture: [0; PICTURE_FIELDS] }
+        Decoder { inner: hevc::Decoder::new(threads), input: Vec::new(), held: Vec::new(), serial: 0, picture: [0; PICTURE_FIELDS], changed: [0; 4] }
     }
 
     /// Room for an access unit of `size` bytes in this module's memory, where
@@ -108,7 +117,7 @@ impl Decoder {
         let Some(decoded) = r.map_err(|e| JsError::new(&e.to_string()))? else {
             return Ok(false);
         };
-        self.serial = self.serial.wrapping_add(1).max(1);
+        self.serial = page_serial(decoded.picture.serial);
         self.held.push((self.serial, decoded));
         Ok(true)
     }
@@ -149,5 +158,27 @@ impl Decoder {
             p[14] = *serial as i32;
         }
         p.as_ptr()
+    }
+
+    /// Where the picture the last unit decoded to may differ from picture
+    /// `since`, by its serial, in four numbers: the left, top, width and
+    /// height of a rectangle of its planes, the whole picture where it does
+    /// not descend from that one, and a width of 0 where nothing changed. A
+    /// strip's is from that strip's picture before it. All four are 0 once
+    /// the picture is released.
+    pub fn changed(&mut self, since: u32) -> *const i32 {
+        let c = &mut self.changed;
+        *c = [0; 4];
+        if let Some((_, d)) = self.held.last().filter(|(s, _)| *s == self.serial) {
+            // The serial `since` is, counted back from this picture's.
+            let serial = d.picture.serial;
+            let back = (u64::from(self.serial) + WRAP - u64::from(since)) % WRAP;
+            let rect = match since {
+                1.. if back < serial => self.inner.changed_since(d, serial - back),
+                _ => [0, 0, d.window[2], d.window[3]],
+            };
+            *c = rect.map(|n| n as i32);
+        }
+        c.as_ptr()
     }
 }
