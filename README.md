@@ -101,8 +101,12 @@ with an account that can write to hevc-wasm-archives. It builds `git archive HEA
 on this machine, not in a workflow, since a public repository's workflow
 artifacts are anyone's to download; attaches the archive and its `SHA256SUMS` to
 hevc-wasm-archives' release `vX.Y.Z`; tags the commit `vX.Y.Z` here, with a
-release of the source alone whose notes give the archive's digest. remotex then
-takes it as a new version and checksum in `src/hevc_wasm.rs`.
+release of the source alone whose notes give the archive's digest; and pushes
+the private image `ghcr.io/andrewtheguy/hevc-wasm-archives:vX.Y.Z`
+(`./publish-image.sh`, logged in to ghcr with `write:packages`), which holds that
+archive and every one before it, for a Kubernetes deployment of remotex to mount
+on its public image's release tree. remotex then takes it as a new version and
+checksum in `src/hevc_wasm.rs`.
 
 ## The decoder
 
