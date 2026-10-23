@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Put every release archive of ARCHIVES_REPO in one image, and push it where only
 # the readers of that repository can pull it: IMAGE, tagged with the newest
-# release's version, as hevc-wasm's versions run and not remotex's.
+# release's version, as hevc-wasm's versions run and not zdesk's.
 #
 # Usage:
 #   ./publish-image.sh
 #
-# It is how a Kubernetes deployment of remotex is given the decoder without an
-# image of remotex's own: the pod runs remotex's public image and mounts this one
-# as an image volume on the release tree's share/remotex, where the gateway looks
+# It is how a Kubernetes deployment of zdesk is given the decoder without an
+# image of zdesk's own: the pod runs zdesk's public image and mounts this one
+# as an image volume on the release tree's share/zdesk, where the gateway looks
 # for exactly the archive it pins. The deployment names the tag, and changes it
-# only when remotex pins a newer hevc-wasm. Every release up to that one is in
-# it, so a remotex release that pins an older one finds it there too.
+# only when zdesk pins a newer hevc-wasm. Every release up to that one is in
+# it, so a zdesk release that pins an older one finds it there too.
 # publish-private.sh runs this after each release; run it alone to build it
 # again.
 #

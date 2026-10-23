@@ -1,7 +1,7 @@
 # hevc-wasm
 
 A software decoder for a High Performance Mac's HEVC, for
-[remotex](https://github.com/andrewtheguy/remotex)'s browser client where the
+[zdesk](https://github.com/andrewtheguy/zdesk)'s browser client where the
 browser's `VideoDecoder` does not take HEVC Range Extensions 4:4:4 — Chrome on a
 GPU without it, for one. It is written in Rust for the one shape of stream the
 Mac sends and nothing else of HEVC, compiled to WebAssembly with SIMD128 and
@@ -11,13 +11,13 @@ A release is `hevc-wasm-vX.Y.Z.tar.gz`, holding the two files the page loads:
 `hevc.js`, wasm-bindgen's ES module glue, and `hevc.wasm`. This repository
 publishes the source of the build and no binary of it: releases go to the
 private [andrewtheguy/hevc-wasm-archives](https://github.com/andrewtheguy/hevc-wasm-archives),
-for whoever can see it. No remotex build holds it either, since its licence
-keeps it out of every remotex artifact:
-remotex pins one by version and SHA-256 (`src/hevc_wasm.rs`), an operator
+for whoever can see it. No zdesk build holds it either, since its licence
+keeps it out of every zdesk artifact:
+zdesk pins one by version and SHA-256 (`src/hevc_wasm.rs`), an operator
 downloads that archive from there and names it in the gateway's `[hevc_wasm]`
 table, and the gateway reads it at start-up and serves its two files at
 `/hevc/`; the page runs it in a worker of its own, shaped as a `VideoDecoder`,
-with the threads as workers of the page's bundle (remotex's
+with the threads as workers of the page's bundle (zdesk's
 `frontend/src/softwareDecoder.ts`, `softwareDecoder.worker.ts` and
 `softwareDecoderPool.worker.ts`).
 
@@ -39,8 +39,8 @@ the channel, not a date: the decoder itself builds on stable. The script writes
 `dist/`.
 
 The archive is built with fixed names, owners and times, so on the same
-toolchain one build's archive is byte for byte the next's, and remotex serves
-it as the release. A changed build has another SHA-256, which remotex refuses
+toolchain one build's archive is byte for byte the next's, and zdesk serves
+it as the release. A changed build has another SHA-256, which zdesk refuses
 until its pin names it:
 
 ```toml
@@ -104,8 +104,8 @@ hevc-wasm-archives' release `vX.Y.Z`; tags the commit `vX.Y.Z` here, with a
 release of the source alone whose notes give the archive's digest; and pushes
 the private image `ghcr.io/andrewtheguy/hevc-wasm-archives:vX.Y.Z`
 (`./publish-image.sh`, logged in to ghcr with `write:packages`), which holds that
-archive and every one before it, for a Kubernetes deployment of remotex to mount
-on its public image's release tree. remotex then takes it as a new version and
+archive and every one before it, for a Kubernetes deployment of zdesk to mount
+on its public image's release tree. zdesk then takes it as a new version and
 checksum in `src/hevc_wasm.rs`.
 
 ## The decoder
@@ -116,7 +116,7 @@ coding tree block rows coded as a wavefront, I and P pictures with short-term
 references. Any other stream is refused by name (HEVC's tiles, B pictures,
 weighted prediction, PCM, scaling lists, transform skip, long-term references,
 other chroma formats or bit depths). A display the Mac sends as four strips
-(`tilesPerFrame` 4 in remotex's offer) is that same shape, each picture a strip
+(`tilesPerFrame` 4 in zdesk's offer) is that same shape, each picture a strip
 of the display, which the page places. Its decoding arithmetic was transcribed from
 [rusty_h265](https://github.com/Remade-With-Rust/rusty_h265) 0.6.0
 (Apache-2.0, `rust/hevc/LICENSE`), which decodes 4:2:0 only; the 4:4:4 handling,
@@ -143,14 +143,14 @@ the byte planes and the threading are this repository's.
   block's sub-blocks, with the coded ones decoded in it, in a function of
   its own, the significance contexts from a table built at compile time
   and the flags unrolled by position.
-- `rust/hevc-web` is the page's module, in the shape of remotex's `egfx` one:
+- `rust/hevc-web` is the page's module, in the shape of zdesk's `egfx` one:
   wasm-bindgen, a pool whose threads are seats the page's workers take
   (`runPoolThread`, `startPool`), and a `Decoder` with `input`, `decode`,
   `picture`, `changed` and `release`. `picture` describes the picture in
   sixteen numbers: its size, the chroma layout, the colour the stream states,
   each plane's address and stride in the module's memory, whether it is a
   keyframe, and its serial, so the paint worker uploads the planes to WebGL
-  from the module's shared memory (remotex's `planesPicture.ts`). A picture is
+  from the module's shared memory (zdesk's `planesPicture.ts`). A picture is
   held until the page releases it by its serial, and the units after it decode
   into other buffers meanwhile, so the next unit decodes while the page uploads
   one; a strip's picture is uploaded into its place in the display there.
@@ -189,7 +189,7 @@ for wasm32. How it is put together, and where its time goes, is in
 ## Requirements
 
 The page must be cross-origin isolated for `SharedArrayBuffer`, the threads'
-shared memory: remotex's gateway serves every file with
+shared memory: zdesk's gateway serves every file with
 `Cross-Origin-Opener-Policy: same-origin` and
 `Cross-Origin-Embedder-Policy: require-corp` when `[hevc_wasm]` is enabled. The
 browser must run shared-memory SIMD WebAssembly and build an I444 `VideoFrame`.

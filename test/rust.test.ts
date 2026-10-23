@@ -4,7 +4,7 @@ import { accessUnits } from "./annexb";
 import { type Fixture, type FixtureName, loadFixtures } from "./fixtures";
 import { decodeHeld, decodeUnit, type LoadedRust, loadRust, type RustDecoder, type RustPicture, rustChanged, rustPictureCopy, rustPictureMd5 } from "./rust";
 
-// The pool remotex would start, at most.
+// The pool zdesk would start, at most.
 const POOL = 4;
 
 let loaded: LoadedRust;
