@@ -1,5 +1,5 @@
 // Loads the decoder's module as released (build/out, built by ./build.sh) under
-// Bun as zdesk's decode worker loads it: the module instantiated on a shared
+// Bun as zDesk's decode worker loads it: the module instantiated on a shared
 // memory, its pool's threads started as workers that each run an instance of it,
 // and a picture read from where the decoder left its planes.
 

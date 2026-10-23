@@ -21,7 +21,7 @@ do not depend on the load. The module's ms is the median of its own clock's
 per picture, and FFmpeg's its process's wall time over the pictures. The
 streams are seven scenes of the display, each at 1x and at 2x, thirty seconds
 of each; a picture is a strip, a quarter of the display, and the Mac sends
-only the strips that changed. Strips are what zdesk asks of every such
+only the strips that changed. Strips are what zDesk asks of every such
 session; one picture of the whole display is what it asks only for a display
 too low for strips, under 144 rows, and for a probe, so it is not measured
 here. Each ratio is the module's ms over FFmpeg's

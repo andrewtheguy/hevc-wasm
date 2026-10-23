@@ -7,7 +7,7 @@
 #
 # This repository, which is public, publishes the source of the build and no
 # binary of it. The archive goes to a release of ARCHIVES_REPO, a private
-# repository, and zdesk's operators download it from there. It is built here
+# repository, and zDesk's operators download it from there. It is built here
 # rather than in a workflow because a public repository's workflow artifacts can
 # be downloaded by anyone with a GitHub account.
 #
@@ -98,7 +98,7 @@ gh release edit "$tag" --repo "$ARCHIVES_REPO" --draft=false
 gh release create "$tag" --verify-tag ${prerelease:+"$prerelease"} --title "$tag" --generate-notes --notes "$(printf '%s\n\n    %s\n' \
   "This repository publishes the source of the build and no binary of it. The archive, \`$archive\`, is on the private $ARCHIVES_REPO release of the same tag, whose \`SHA256SUMS\` reads:" \
   "$(cat "$out/SHA256SUMS")")"
-echo ">> published $tag; zdesk pins it in src/hevc_wasm.rs by $(cut -d' ' -f1 "$out/SHA256SUMS")"
+echo ">> published $tag; zDesk pins it in src/hevc_wasm.rs by $(cut -d' ' -f1 "$out/SHA256SUMS")"
 
 # The archives as an image, for a deployment that mounts them (publish-image.sh).
 "$here/publish-image.sh"

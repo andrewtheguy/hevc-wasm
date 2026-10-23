@@ -3,7 +3,7 @@
 hevc-wasm is a software decoder for the HEVC a High Performance Mac sends,
 written in Rust for that one shape of stream and nothing else of HEVC, and
 compiled to WebAssembly with SIMD128 and threads for
-[zdesk](https://github.com/andrewtheguy/zdesk)'s browser client. It
+[zDesk](https://github.com/andrewtheguy/zdesk)'s browser client. It
 decodes bit for bit as FFmpeg does. The [README](../README.md) is the
 operator's and builder's view of the same thing: building, testing and
 releasing. [The benchmarks](benchmarks.md) are the measurements against
@@ -13,7 +13,7 @@ of what it does not do yet.
 ## Data path
 
 ```text
-zdesk's decode worker (frontend/src/softwareDecoder.worker.ts)
+zDesk's decode worker (frontend/src/softwareDecoder.worker.ts)
    │  input(size)   the access unit's bytes go into the module's memory
    │  decode()      true when the unit completed a picture, held from then on; false when it completed none; throws when it does not decode
    │  picture()     sixteen numbers: size, layout, colour, each plane's address and stride, keyframe, serial
@@ -27,7 +27,7 @@ hevc-web, the wasm-bindgen module ── hevc::Decoder
        → residual → samples in place; deblocking a block behind, SAO a block behind that
    → three planes of bytes at the coded size, the window to show, the colour, keyframe or not
    ▼
-zdesk's paint worker uploads the planes to WebGL from the module's shared memory
+zDesk's paint worker uploads the planes to WebGL from the module's shared memory
 ```
 
 A picture's planes stay in the module's memory until the page releases the
@@ -67,7 +67,7 @@ refused.
 
 ### A display in strips
 
-Offered four tiles (`tilesPerFrame` 4 in zdesk's offer), the Mac sends the
+Offered four tiles (`tilesPerFrame` 4 in zDesk's offer), the Mac sends the
 display as four strips: each the
 display's whole width and a quarter of its height rounded up to a multiple of
 16, lying top to bottom a strip's height apart, so the last runs past the
@@ -82,7 +82,7 @@ Which strip a picture is, and how many rows the display has, are not in the
 stream: the Mac sends each strip under an RTP source of its own, and the
 parameter sets know only the strip. So the decoder returns each strip as the
 picture it is, and the page, which is given both with the unit, uploads it
-into its place in the display's textures (zdesk's `planesPicture.ts`): a
+into its place in the display's textures (zDesk's `planesPicture.ts`): a
 frame carries the strips that changed and no others, and the display is shown
 once every strip has come since the keyframe.
 
@@ -101,7 +101,7 @@ no NAL unit is invalid too, since a reference may have been lost with it; an
 empty unit decodes to nothing and changes nothing.
 
 The module turns the error into a thrown `Error` with the same message, and
-zdesk's worker reports it as the decoder's `EncodingError`; the page then
+zDesk's worker reports it as the decoder's `EncodingError`; the page then
 asks the Mac for a keyframe.
 
 A WebAssembly trap, from a panic or an out-of-bounds access, would instead
@@ -308,7 +308,7 @@ rather than `memory.fill` calls into the runtime.
 
 ## The module: `rust/hevc-web`
 
-The page's module, in the shape of zdesk's `egfx` compositor module, so the
+The page's module, in the shape of zDesk's `egfx` compositor module, so the
 two loaders differ only in where the glue comes from:
 
 | export | what it does |
@@ -357,17 +357,17 @@ Picture buffers are pooled and sized by the sequence; the input buffer grows
 to the largest access unit. A 2880×1800 picture at 4:4:4 is 15.5 MB, and the
 DPB keeps `max_dec_pic_buffering` of them plus the one being decoded.
 
-## How zdesk loads it
+## How zDesk loads it
 
 The release archive, `hevc-wasm-vX.Y.Z.tar.gz`, holds `hevc.js` and
-`hevc.wasm`. zdesk pins one release by version and SHA-256
+`hevc.wasm`. zDesk pins one release by version and SHA-256
 (`src/hevc_wasm.rs`), reads the archive once at start-up, refuses any other
 build, and serves the two files from memory at `/hevc/`, with the
 cross-origin isolation the shared memory needs. The decode worker imports the
 glue from there, instantiates the module, seats the pool's threads as workers
 of the page's bundle (`softwareDecoderPool.worker.ts`), and drives a `Decoder` per
 stream; the paint worker reads the planes where `picture` says they are.
-The decoder's licence keeps it out of every zdesk build, as the native
+The decoder's licence keeps it out of every zDesk build, as the native
 decoder's keeps that one out, so the archive, the pin and the `[hevc_wasm]`
 table stay, and the two loaders stay two.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the HEVC WebAssembly decoder for zdesk's page: rust/hevc-web, the `hevc`
+# Build the HEVC WebAssembly decoder for zDesk's page: rust/hevc-web, the `hevc`
 # crate behind the few calls the page's decode worker makes, with threads and
 # SIMD, through wasm-pack. Writes build/out/hevc.js (wasm-bindgen's ES module
 # glue) and build/out/hevc.wasm, and the release archive

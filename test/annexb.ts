@@ -1,4 +1,4 @@
-// Splits an Annex B HEVC stream into access units, the units zdesk hands the
+// Splits an Annex B HEVC stream into access units, the units zDesk hands the
 // decoder one at a time (H.265 7.4.2.4.4).
 
 export interface Nal {
