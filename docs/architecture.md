@@ -367,9 +367,9 @@ cross-origin isolation the shared memory needs. The decode worker imports the
 glue from there, instantiates the module, seats the pool's threads as workers
 of the page's bundle (`softwareDecoderPool.worker.ts`), and drives a `Decoder` per
 stream; the paint worker reads the planes where `picture` says they are.
-The decoder's licence keeps it out of every zDesk build, as the native
-decoder's keeps that one out, so the archive, the pin and the `[hevc_wasm]`
-table stay, and the two loaders stay two.
+The decoder's licence keeps it out of every zDesk build, so the archive and
+the pin stay. The gateway serves the archive when it finds the pinned filename
+in its data directory; `[hevc_wasm].archive` names a file kept elsewhere.
 
 ## The native harness: `rust/hevc-bench`
 

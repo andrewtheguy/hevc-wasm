@@ -14,14 +14,18 @@ private [andrewtheguy/hevc-wasm-archives](https://github.com/andrewtheguy/hevc-w
 for whoever can see it. No zDesk build holds it either, since its licence
 keeps it out of every zDesk artifact:
 zDesk pins one by version and SHA-256 (`src/hevc_wasm.rs`), an operator
-downloads that archive from there and names it in the gateway's `[hevc_wasm]`
-table, and the gateway reads it at start-up and serves its two files at
+downloads that archive from there into the gateway's data directory, or names
+it in the gateway's `[hevc_wasm].archive` when kept elsewhere. The gateway
+reads it at start-up and serves its two files at
 `/hevc/`; the page runs it in a worker of its own, shaped as a `VideoDecoder`,
 with the threads as workers of the page's bundle (zDesk's
 `frontend/src/softwareDecoder.ts`, `softwareDecoder.worker.ts` and
 `softwareDecoderPool.worker.ts`).
 
 ## Building
+
+Install Rust through rustup, Bun and `jq` before building. The build script uses
+`cargo metadata` and `jq` to read the module's release version.
 
 ```sh
 bun install
@@ -45,7 +49,6 @@ until its pin names it:
 
 ```toml
 [hevc_wasm]
-enabled = true
 archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.17.tar.gz"
 ```
 
@@ -53,9 +56,13 @@ archive = "/path/to/hevc-wasm/dist/hevc-wasm-v0.0.17.tar.gz"
 
 ```sh
 bun install
+./build.sh
 bun test
 bun run typecheck
 ```
+
+Build first, or set `HEVC_WASM_DIR` to an existing build; the tests do not build
+the module themselves.
 
 The tests load `build/out/hevc.js` and `hevc.wasm` (or `$HEVC_WASM_DIR`'s)
 under Bun as the page loads them: the module on a shared memory, its pool's
@@ -191,5 +198,8 @@ for wasm32. How it is put together, and where its time goes, is in
 The page must be cross-origin isolated for `SharedArrayBuffer`, the threads'
 shared memory: zDesk's gateway serves every file with
 `Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: require-corp` when `[hevc_wasm]` is enabled. The
-browser must run shared-memory SIMD WebAssembly and build an I444 `VideoFrame`.
+`Cross-Origin-Embedder-Policy: require-corp` on every response served by its
+asset handler, whether or not an HEVC archive is configured. The browser must
+run shared-memory SIMD WebAssembly and support WebGL 2 in an `OffscreenCanvas`:
+the paint worker uploads the decoder's planes directly from shared memory,
+without constructing an I444 `VideoFrame`.
