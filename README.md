@@ -183,8 +183,8 @@ Mac's.
 
 On one thread it takes fewer cycles than native FFmpeg wherever most of a
 picture is the picture before, up to two fifths fewer on a strip at 1x and
-two thirds at 2x, and up to a fifth more where a picture is new, a video
-over the whole display. The tables, how a change is measured (`bench/run.sh`) and
+nearly three quarters at 2x, and where a picture is new, a video over the
+whole display, 7% more at 1x and level at 2x. The tables, how a change is measured (`bench/run.sh`) and
 what each step that got here was worth are in
 [docs/benchmarks.md](docs/benchmarks.md).
 

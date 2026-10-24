@@ -12,24 +12,24 @@ of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
 
 The streams are the Mac's own, taken on 2026-10-12: seven scenes of a
 1440×900 display in four strips, at 1x and at 2x, a picture being a strip.
-Per picture on one thread, release 0.0.10 against native FFmpeg
-(`bench/run.sh`, `perf stat`):
+Per picture on one thread, the module as it is against native FFmpeg,
+under V8 on the idle VM (`bench/run.sh`, `perf stat`):
 
 | | 1x, M cycles | FFmpeg | 2x, M cycles | FFmpeg |
 |---|---|---|---|---|
-| A still page | 1.5 | 2.4 | 2.8 | 9.0 |
-| A window dragged | 2.0 | 2.6 | 5.8 | 9.7 |
-| A quarter of the display in a loop | 2.5 | 3.2 | 7.0 | 11.2 |
-| Typing in a terminal | 2.1 | 3.0 | 4.7 | 10.7 |
-| Chrome scrolling an article | 4.8 | 4.9 | 13.2 | 15.6 |
-| The same four times as fast | 9.4 | 8.8 | 23.5 | 24.0 |
-| A video over the whole display | 20.3 | 17.0 | 39.2 | 34.0 |
+| A still page | 1.2 | 2.1 | 2.1 | 7.5 |
+| A window dragged | 1.4 | 2.2 | 4.2 | 8.2 |
+| A quarter of the display in a loop | 1.8 | 2.5 | 5.0 | 9.3 |
+| Typing in a terminal | 1.5 | 2.5 | 3.6 | 8.9 |
+| Chrome scrolling an article | 3.5 | 4.1 | 9.5 | 13.1 |
+| The same four times as fast | 7.0 | 7.5 | 17.3 | 20.5 |
+| A video over the whole display | 15.4 | 14.4 | 28.3 | 28.2 |
 
 The module is ahead wherever most of a picture is the picture before, and on
-the scroll; it is behind where a picture is new, by 19% and 15% on the video
-and by 7% on the fast scroll at 1x. Those are also the streams that cost
-anything. The video at 2x is 12 ms a strip on one thread, 48 ms for a
-frame's four where 30 frames a second leave 33 ms, and 4.5 ms a strip on
+the scrolls; it is behind only where every picture is new, on the video at
+1x by 7%, and level on it at 2x. Those are also the streams that cost
+anything. The video at 2x is 7.3 ms a strip on one thread, 29 ms for a
+frame's four where 30 frames a second leave 33 ms, and 3.2 ms a strip on
 four threads.
 
 In the order the work would go:
@@ -44,9 +44,10 @@ In the order the work would go:
    three earn their place there:
 
    - **The transform of a block with few coefficients over its coded columns
-     alone**, a fifth of `cap5`'s instructions: on the captures no stream
-     but the typing at 2x took fewer cycles for it as it was made, 3%, and
-     the video took 2% to 4% more. Measured since in the module as it is,
+     alone**, a fifth of `cap5`'s instructions: on the captures under Bun no
+     stream but the typing at 2x took fewer cycles for it as it was made,
+     3%, and the video 2% to 4% more; under V8 on the idle VM it is 9%
+     fewer on the typing at 2x and 1% to 2% fewer on the video. Measured since in the module as it is,
      where the coefficient list feeds it: every block sent to the dense
      transform is 8% more cycles on the typing at 2x, 2% on the video and 1%
      on the scrolls, and none of three narrower rules for which blocks take
@@ -61,8 +62,8 @@ In the order the work would go:
      scroll at 2x, and level where little is coded. That is done, and is not
      in the table above, which is of the night before.
    - **A row copying only the blocks changed since its buffer's picture**:
-     up to 5% more on a light strip, since no strip ever found such a
-     buffer. It pays since item 3 keeps the buffer, 35% of a still strip's
+     up to 5% more on a light strip under Bun and level under V8, since no
+     strip ever found such a buffer. It pays since item 3 keeps the buffer, 35% of a still strip's
      cycles at 2x and 20% of the typing's, and nothing is to be done.
 
    Then the five experiments dropped on the old streams, listed at the end
@@ -126,7 +127,7 @@ In the order the work would go:
 
    Three of these were done in release 0.0.9, every picture of every stream
    still FFmpeg's. In M cycles a picture on one thread, as measured then and
-   before item 3 was done (the table above is release 0.0.10):
+   before item 3 was done (the table above is the module as it is):
 
    | | 0.0.8 | 0.0.9 | FFmpeg |
    |---|---|---|---|
@@ -344,7 +345,7 @@ is:
 ### Elsewhere
 
 - **The target machine.** All of [the benchmarks](benchmarks.md) are from an x86
-  workstation under Bun. The module has not
+  VM, four cores of an AMD EPYC Rome, under Node's V8. The module has not
   been run on Apple silicon, where V8 lowers SIMD128 to NEON differently and
   the memory system differs; the capture's transform and the video's
   memory-bound copy may rank differently there.
