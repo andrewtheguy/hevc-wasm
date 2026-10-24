@@ -6,7 +6,8 @@ what it measures against FFmpeg and the release before in
 [the benchmarks](benchmarks.md). This is the list of what it does not do
 yet, in the order the work would go. Numbers are from the module
 under Node on one thread of the x86 workstation, profiled with `perf record`
-of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
+of V8's JIT output (`tmp/jitprof.sh`, now `tmp/bench-lab/profile.sh` on the
+lab), unless stated otherwise.
 
 ## Speed
 
@@ -18,17 +19,17 @@ under V8 on the idle VM (`bench/run.sh`, `perf stat`):
 | | 1x, M cycles | FFmpeg | 2x, M cycles | FFmpeg |
 |---|---|---|---|---|
 | A still page | 1.1 | 1.9 | 2.1 | 7.5 |
-| A window dragged | 1.4 | 2.1 | 4.2 | 8.3 |
-| A quarter of the display in a loop | 1.8 | 2.4 | 5.1 | 9.5 |
-| Typing in a terminal | 1.5 | 2.5 | 3.5 | 9.0 |
-| Chrome scrolling an article | 3.4 | 4.1 | 9.6 | 13.1 |
-| The same four times as fast | 6.9 | 7.3 | 17.3 | 20.4 |
-| A video over the whole display | 15.3 | 14.3 | 28.0 | 28.3 |
+| A window dragged | 1.3 | 2.1 | 4.2 | 8.3 |
+| A quarter of the display in a loop | 1.8 | 2.4 | 4.9 | 9.5 |
+| Typing in a terminal | 1.5 | 2.5 | 3.4 | 9.0 |
+| Chrome scrolling an article | 3.4 | 4.1 | 9.4 | 13.1 |
+| The same four times as fast | 7.0 | 7.3 | 17.2 | 20.4 |
+| A video over the whole display | 15.3 | 14.3 | 28.1 | 28.3 |
 
 The module is ahead wherever most of a picture is the picture before, and on
 the scrolls; it is behind only where every picture is new, on the video at
 1x by 7%, and a digit ahead on it at 2x. Those are also the streams that cost
-anything. The video at 2x is 7.2 ms a strip on one thread, 29 ms for a
+anything. The video at 2x is 7.1 ms a strip on one thread, 29 ms for a
 frame's four where 30 frames a second leave 33 ms, and 3.1 ms a strip on
 four threads.
 
@@ -78,6 +79,23 @@ In the order the work would go:
    stand.
 
 2. **What the profile of the video and of the fast scroll at 2x ranks.**
+   Profiled again on 2026-10-24, the module as it is on the lab, on one
+   core under V8 (the table in [the architecture](architecture.md#where-the-time-goes)):
+   the residual's parsing, `sub_blocks` with `residual_block`, is a third
+   of the video and of the fast scroll and three tenths of the typing;
+   then `prediction_unit` on the video, a fifth, `intra_predict` on the
+   fast scroll, 11%, and the deblocking there, 9%; and on the light
+   streams, which are most of a session, the quadtree walk with the coding
+   unit's syntax in it, 10% of the typing and 15% of a still page, the row
+   copy, 8% and 12%, `prediction_unit`, 6% and 8%, and `filter_after`,
+   the filtering each decoded block lets happen, 3% and 6%. The parsing,
+   the interpolation and the intra prediction have each had their tries
+   (below and item 1); the quadtree walk and `filter_after` on a strip that
+   hardly changes have not, and what the first costs a skipped coding unit
+   is a split flag, a skip flag, a merge index, three map fills a word at a
+   time and the strengths of two edges. The profile that follows is the
+   one the work so far was ranked by, of release 0.0.8 on the workstation.
+
    Release 0.0.8 on one thread under Node, `perf record` with V8's JIT
    symbols, as shares of the samples:
 
@@ -292,6 +310,15 @@ In the order the work would go:
      load of each line of a plane, whose lines at 2x are 2,880 bytes apart
      in three planes; whether those are misses of the cache or of the page
      table has not been measured.
+     The strengths themselves, `edge_strengths`, were 9% of a still strip
+     at 2x and 6% of the typing in the profile of 2026-10-24 (item 2): a
+     skipped block put its two edges' strengths into the map entry by
+     entry, a read and a write each, whatever they were, and most of a
+     screen's are zero, which the map is already, zeroed for every
+     picture. A zero strength is not written now: 6% fewer cycles on the
+     still page at 2x, 3.5% at 1x, 3% on the scroll, 1.5% on the typing
+     and the drag, and level on the video, five rounds, and the fast
+     scroll.
    - **`residual_block`**, 15.8% of the video at 2x after the eight-line
      deblocking, is little of the parsing its name suggests, that being
      `sub_blocks`, 18.4% and flat: it is the transform of a block with few
