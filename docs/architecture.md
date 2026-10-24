@@ -455,7 +455,9 @@ release 0.0.9 and before, every strip was copied whole, all 1,350 blocks.
 What is copied is what the reference changed from its own reference, not
 what this picture changes, which it writes over all the same.
 
-On four threads the video decodes 2.7× as fast as on one at 2x and 2.2× at
-1x, the fast scroll at 2x 2.1× and the scroll 1.6×. A light strip is slower
-on four: a still strip at 1x is 0.17 ms and 1.5 M cycles on one thread,
-0.29 ms and 1.9 M on four.
+On four threads the video decodes 2.4× as fast as on one at 2x and 2.1× at
+1x, the fast scroll at 2x 1.8× and the scroll 1.4×. A light strip is slower
+on four, whose waking costs more than its rows take: a still strip at 1x is
+0.11 ms and 1.1 M cycles on one thread and 0.15 ms and 2.4 M on four with
+the pool woken, which is why one under 300 bytes is the calling thread's
+alone, 0.11 ms and 1.8 M.

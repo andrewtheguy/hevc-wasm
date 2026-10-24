@@ -17,19 +17,19 @@ under V8 on the idle VM (`bench/run.sh`, `perf stat`):
 
 | | 1x, M cycles | FFmpeg | 2x, M cycles | FFmpeg |
 |---|---|---|---|---|
-| A still page | 1.2 | 2.1 | 2.1 | 7.5 |
-| A window dragged | 1.4 | 2.2 | 4.2 | 8.2 |
-| A quarter of the display in a loop | 1.8 | 2.5 | 5.0 | 9.3 |
-| Typing in a terminal | 1.5 | 2.5 | 3.6 | 8.9 |
-| Chrome scrolling an article | 3.5 | 4.1 | 9.5 | 13.1 |
-| The same four times as fast | 7.0 | 7.5 | 17.3 | 20.5 |
-| A video over the whole display | 15.4 | 14.4 | 28.3 | 28.2 |
+| A still page | 1.1 | 1.9 | 2.1 | 7.5 |
+| A window dragged | 1.4 | 2.1 | 4.2 | 8.3 |
+| A quarter of the display in a loop | 1.8 | 2.4 | 5.1 | 9.5 |
+| Typing in a terminal | 1.5 | 2.5 | 3.5 | 9.0 |
+| Chrome scrolling an article | 3.4 | 4.1 | 9.6 | 13.1 |
+| The same four times as fast | 6.9 | 7.3 | 17.3 | 20.4 |
+| A video over the whole display | 15.3 | 14.3 | 28.0 | 28.3 |
 
 The module is ahead wherever most of a picture is the picture before, and on
 the scrolls; it is behind only where every picture is new, on the video at
-1x by 7%, and level on it at 2x. Those are also the streams that cost
-anything. The video at 2x is 7.3 ms a strip on one thread, 29 ms for a
-frame's four where 30 frames a second leave 33 ms, and 3.2 ms a strip on
+1x by 7%, and a digit ahead on it at 2x. Those are also the streams that cost
+anything. The video at 2x is 7.2 ms a strip on one thread, 29 ms for a
+frame's four where 30 frames a second leave 33 ms, and 3.1 ms a strip on
 four threads.
 
 In the order the work would go:
@@ -204,32 +204,45 @@ In the order the work would go:
    finds in the cache, so that sparing the copy moves the wait to the
    prediction.
 
-4. **Threads on a small picture.** Four threads cost more than one wherever a
-   strip is light, and less than they did: the thread that asks for the
-   picture is now one of the four, with the first row under way while the
-   pool's wake, where it had slept until the pool was done. Every strip is
-   0.1 to 0.2 ms sooner for it on four threads: a still page at 1x 0.29 ms
-   for 0.49 ms, the typing 0.39 ms for 0.61 ms, the video at 2x 4.55 ms for
-   4.66 ms. One thread still does a still strip at 1x in 0.17 ms, since the
-   picture is not done until the pool's threads have woken to find nothing
-   left. Threads pay on the heavy streams: 2.7× on the video at 2x, 2.2× at
-   1x, 2.1× on the fast scroll at 2x, 1.6× on the scroll.
+4. **Threads on a small picture**, done. What a light strip paid for its
+   threads was their waking, and less than the tables said: a still strip
+   at 1x is 0.11 ms on one thread and was 0.15 ms on four, the typing 0.12
+   and 0.17, where under `perf stat`, whose counting lengthens each waking,
+   they were 0.29 and 0.34, which is what every table before 2026-10-24
+   showed, three times the gap there is. The thread that asks for the
+   picture has been one of the four since `8180421`, with the first row
+   under way while the pool's wake, 0.16 ms for 0.19 on the still page.
 
-   Tried and not kept: one thread for a picture under some size in bytes.
-   The size says little of the time: of the strips under 200 bytes at 2x,
-   whose median is 0.61 ms on one thread and 0.67 ms on four, four threads
-   were the quicker for 63%. No threshold beat four threads for every
-   picture at 2x, and the best at 1x, 400 bytes, saved 4% of the time of six
-   streams, by a constant fitted to this machine. Nor is the wait for the
-   pool's threads what a light strip pays: with the picture closed to a
+   Every picture of fourteen streams decoded by a one-thread decoder and a
+   four-thread one side by side (`tmp/threads-choice`, the two in turns,
+   the order swapped every unit, and once more with 16 ms between units as
+   a page has between frames): at 1x, under 300 bytes of slice data, one
+   thread is the quicker for four pictures in five, by some 0.05 ms, a
+   third of the strip; above 400 to 600 bytes four threads are. At 2x the
+   bytes say little of the time: a still strip under 300 bytes is 0.34 ms
+   on one thread and 0.36 on four, and a window dragged, of the same bytes,
+   0.84 ms and 0.57, its cost the motion compensation over the strip, which
+   its bytes do not carry; no threshold in bytes beat four threads there,
+   as the earlier try of one had found, and over the fourteen streams one
+   of 300 bytes alone was behind four threads for every picture, 33.4 s
+   for 33.3. So a picture
+   under 300 bytes and 2^19 luma samples, a light strip of a display at 1x,
+   decodes on the calling thread alone and the pool sleeps (`ALONE`,
+   `ALONE_SAMPLES` in `decoder.rs`); any other wakes it. On four threads a
+   still strip at 1x is now 0.11 ms for 0.15 and the typing 0.14 ms for
+   0.17, the drag, the loop and the scroll at 1x level, and every stream at
+   2x level; paced at 16 ms, a still strip at 1x is 0.15 ms for 0.21.
+
+   The two constants are the lab's: the waking is the kernel's, and the
+   crossover in bytes moves with the machine, lower on a slower one. What
+   is safe to count on is the sign at 1x, where the lightest strip takes
+   less than a waking. Not kept, before this: the picture closed to a
    thread that wakes after the rows are done, so that the caller returns
-   without it, in place of rayon's scope, which waits for each to wake, all
-   ten streams measured were level on four threads, a still page at 1x
-   0.28 ms either way and the typing 0.36 ms for 0.39 ms. The cost is then
-   in waking them or in their sharing the picture, which of the two not
-   having been measured. What would do it is the
-   pool's threads woken only once a picture is known to be worth them, by
-   something the decoder learns as it decodes; it has no clock in the page.
+   without it, which left all ten streams measured level, so the cost is
+   the waking itself and not the wait for it. A rule from what the decoder
+   learns as it decodes, the picture before's motion, say, would carry the
+   choice to 2x, where a still page would gain 0.02 ms, not worth its
+   counter.
 
 5. **SAO's edge offset**, done for what it was worth. `SaoCtx::component`
    was 12.8% of the video at 2x, two thirds of it the edge offset's loop,
