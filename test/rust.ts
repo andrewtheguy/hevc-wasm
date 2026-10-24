@@ -1,12 +1,18 @@
 // Loads the decoder's module as released (build/out, built by ./build.sh) under
-// Bun as zDesk's decode worker loads it: the module instantiated on a shared
-// memory, its pool's threads started as workers that each run an instance of it,
-// and a picture read from where the decoder left its planes.
+// Node or Bun as zDesk's decode worker loads it: the module instantiated on a
+// shared memory, its pool's threads started as workers that each run an instance
+// of it, and a picture read from where the decoder left its planes. Node's APIs
+// only, which Bun has too, so the tests run under Bun and the benchmark under
+// Node, whose V8 is the engine of the Chrome the module is for.
 
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { Worker } from "node:worker_threads";
 
-export const OUT_DIR = resolve(process.env.HEVC_WASM_DIR ?? `${import.meta.dir}/../build/out`);
+export const OUT_DIR = resolve(process.env.HEVC_WASM_DIR ?? fileURLToPath(new URL("../build/out", import.meta.url)));
 
 /** What rust/hevc-web/src/lib.rs exports, as wasm-bindgen's glue presents it. */
 interface Glue {
@@ -61,18 +67,18 @@ export async function loadRust(threads: number): Promise<LoadedRust> {
   if (!existsSync(js) || !existsSync(wasm)) {
     throw new Error(`no hevc.js and hevc.wasm in ${OUT_DIR}: run ./build.sh, or set HEVC_WASM_DIR`);
   }
-  const glue = (await import(js)) as Glue;
-  const bytes = new Uint8Array(await Bun.file(wasm).arrayBuffer());
+  const glue = (await import(pathToFileURL(js).href)) as Glue;
+  const bytes = new Uint8Array(await readFile(wasm));
   const { memory } = await glue.default({ module_or_path: bytes });
   const seat: PoolSeat = { js, module: glue.module(), memory };
   const workers: Worker[] = [];
   try {
     await Promise.all(
       Array.from({ length: threads }, () => new Promise<void>((resolve, reject) => {
-        const worker = new Worker(new URL("./rust-pool.worker.ts", import.meta.url), { type: "module" });
+        const worker = new Worker(new URL("./rust-pool.worker.ts", import.meta.url));
         workers.push(worker);
-        worker.onmessage = ({ data }: MessageEvent<string | null>) => (data === null ? resolve() : reject(new Error(data)));
-        worker.onerror = (event) => reject(new Error(event.message || "a pool worker did not start"));
+        worker.once("message", (data: string | null) => (data === null ? resolve() : reject(new Error(data))));
+        worker.once("error", (error: Error) => reject(error));
         worker.postMessage(seat);
       })),
     );
@@ -130,7 +136,7 @@ export function decodeHeld(loaded: LoadedRust, decoder: RustDecoder, unit: Uint8
 /** `ffmpeg -f framemd5`'s digest of the picture: its three planes, rows packed. */
 export function rustPictureMd5(loaded: LoadedRust, picture: RustPicture): string {
   const heap = new Uint8Array(loaded.memory.buffer);
-  const hasher = new Bun.CryptoHasher("md5");
+  const hasher = createHash("md5");
   for (const plane of picture.planes) {
     for (let y = 0; y < picture.height; y++) {
       hasher.update(heap.subarray(plane.address + y * plane.stride, plane.address + y * plane.stride + picture.width));

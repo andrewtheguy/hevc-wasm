@@ -3,7 +3,8 @@
 # (hevc.js, hevc.wasm), build/out when none is named, or the word ffmpeg for the host's native FFmpeg, ffmpeg-rows for it with its threads on the rows of one picture. They decode the samples of bench/samples.sh alternately, round by
 # round on the same cores, on one thread and on four, and the medians over the rounds are printed per picture: the
 # user-space instructions and cycles of the whole process, which do not depend on the host's load, and the mean and
-# median milliseconds.
+# median milliseconds. The module runs under Node, whose V8 is the engine of the Chrome it is for; Bun's
+# JavaScriptCore is Safari's, which decodes the Mac's HEVC itself.
 #   ROUNDS=3 THREADS="1 4" PICTURES=all SAMPLES="name ..." CPUS1=2 CPUS4=2-5
 # The first build named is first checked against every sample's MD5s, and the host is waited on until it is quiet.
 set -euo pipefail
@@ -29,7 +30,7 @@ quiet() {
 
 for s in $samples; do
   [[ $1 = ffmpeg || $1 = ffmpeg-rows ]] && break
-  HEVC_WASM_DIR=$1 CHECK=1 bun bench/decode.ts "$dir/$s.h265" 4 "${limit[@]}" | sed "s|^|$s: |"
+  HEVC_WASM_DIR=$1 CHECK=1 node bench/decode.ts "$dir/$s.h265" 4 "${limit[@]}" | sed "s|^|$s: |"
 done
 
 log=$(mktemp tmp/bench-run.XXXXXX); trap 'rm -f "$log"' EXIT
@@ -47,7 +48,7 @@ for t in ${THREADS:-1 4}; do
           # Its wall time over the pictures; ffmpeg gives no time per picture, so the median is the mean.
           mean=$(grep -o 'rtime=[0-9.]*' <<<"$out" | cut -d= -f2 | awk -v n="$n" '{print $1 * 1000 / n}'); median=$mean
         else
-          out=$(HEVC_WASM_DIR=$b taskset -c "$cpus" perf stat -e instructions:u,cycles:u -x, bun bench/decode.ts "$dir/$s.h265" "$t" "${limit[@]}" 2>&1)
+          out=$(HEVC_WASM_DIR=$b taskset -c "$cpus" perf stat -e instructions:u,cycles:u -x, node bench/decode.ts "$dir/$s.h265" "$t" "${limit[@]}" 2>&1)
           n=$(grep -o '^[0-9]* pictures' <<<"$out" | cut -d' ' -f1)
           mean=$(grep -o 'mean [0-9.]*' <<<"$out" | cut -d' ' -f2); median=$(grep -o 'median [0-9.]*' <<<"$out" | cut -d' ' -f2)
         fi
