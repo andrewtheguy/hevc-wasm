@@ -90,11 +90,25 @@ In the order the work would go:
    copy, 8% and 12%, `prediction_unit`, 6% and 8%, and `filter_after`,
    the filtering each decoded block lets happen, 3% and 6%. The parsing,
    the interpolation and the intra prediction have each had their tries
-   (below and item 1); the quadtree walk and `filter_after` on a strip that
-   hardly changes have not, and what the first costs a skipped coding unit
-   is a split flag, a skip flag, a merge index, three map fills a word at a
-   time and the strengths of two edges. The profile that follows is the
-   one the work so far was ranked by, of release 0.0.8 on the workstation.
+   (below and item 1). The quadtree walk's 15% of a still page, by a build
+   with its pieces kept as named functions, is the context-coded bins
+   outside the residual, 4.6%, the coding unit's own syntax, 4.9%, the
+   three map fills of a coding unit, depth, mode and QP, a word a row at
+   4×4, 4.2%, the recursion with the split flag's neighbours, 1.8%, and
+   the quantization group's prediction, 1.1%; on the typing the same
+   pieces are 2.8%, 3.5%, 3.1%, 1.2% and 0.8%. Nothing in it is large.
+   What could shrink is the fills and the lookups: the three maps are per
+   coding unit, never finer than 8×8, and kept per 4×4, so at 8×8 the
+   fills would be a quarter, 3% of a still page at the most, for the
+   deblocking's indices and a dozen readers changed, which has not been
+   done. Two cheaper things were tried and are not kept, level on five
+   counted rounds of the light streams: SAO's per-block check, which is
+   the 6% of `filter_after` on a still page, reading a byte of bits per
+   block in place of the parameters of the block and six neighbours, three
+   fields each; and a prediction unit's motion fill as two words a store,
+   1% to 2% more cycles on the still page and the typing. The profile that
+   follows is the one the work so far was ranked by, of release 0.0.8 on
+   the workstation.
 
    Release 0.0.8 on one thread under Node, `perf record` with V8's JIT
    symbols, as shares of the samples:
