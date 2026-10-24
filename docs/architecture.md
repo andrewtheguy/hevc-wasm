@@ -166,7 +166,10 @@ behind the row above: a block waits until the row above has finished the
 block up and to the right of it, which is what its prediction and its
 context models need. The models start as the row above left them after its
 second block (§9.3.1). Rows are claimed in order; a decoder made with one
-thread runs them in order on the caller and needs no pool.
+thread runs them in order on the caller and needs no pool, and so does any
+decoder for a picture under 300 bytes of slice data and half a million
+samples, a light strip of a display at 1x, which the pool's waking would cost
+more than its rows take (`ALONE`, `ALONE_SAMPLES`).
 
 Each row's progress is a sequentially consistent counter the row below waits
 on, spinning a few hundred times before it sleeps, since the block is

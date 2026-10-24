@@ -36,6 +36,18 @@ struct Reference {
 /// sends a display in to descend from (`Decoder::take_buffer`).
 const POOL: usize = 4;
 
+/// The slice data, in bytes, under which a picture of `ALONE_SAMPLES` or fewer
+/// decodes on the caller alone, whatever threads the decoder has: waking the
+/// pool's threads costs such a strip more than they save it, a third of its
+/// time, and one under this many bytes is the one thread's for four pictures
+/// in five (docs/remaining.md, threads on a small picture).
+const ALONE: usize = 300;
+/// The luma samples a picture may have and still be the caller's alone when
+/// light: the bytes of a larger one say little of its time, since the motion
+/// of a window dragged over a strip of a display at 2x costs one thread three
+/// times what a still one does, 0.85 ms for 0.35, and either is the pool's.
+const ALONE_SAMPLES: usize = 1 << 19;
+
 pub struct Decoder {
     threads: usize,
     sps: Vec<Option<Sps>>,
@@ -65,7 +77,8 @@ pub struct Decoder {
 impl Decoder {
     /// A decoder that decodes a picture's rows on `threads` threads: when
     /// more than one, the thread that calls `decode` and the rest of
-    /// rayon's pool, which the caller has made.
+    /// rayon's pool, which the caller has made, but for a picture under `ALONE`
+    /// bytes of slice data and `ALONE_SAMPLES`, which is the caller's alone.
     pub fn new(threads: usize) -> Self {
         let threads = threads.max(1);
         Decoder {
@@ -338,7 +351,10 @@ impl Decoder {
                 sao: (sh.sao_luma || sh.sao_chroma).then_some(SaoCtx { planes, maps }),
             };
             let scratch = &self.scratch;
-            wavefront::run_rows(self.threads, rows, &self.progress, |row| {
+            let light = rbsp.data.len().saturating_sub(sh.data_offset) < ALONE
+                && sps.width as usize * sps.height as usize <= ALONE_SAMPLES;
+            let threads = if light { 1 } else { self.threads };
+            wavefront::run_rows(threads, rows, &self.progress, |row| {
                 // Each thread keeps one scratch; any free one will do.
                 let mut s = scratch
                     .iter()

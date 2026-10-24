@@ -90,7 +90,9 @@ pub struct Decoder {
 #[wasm_bindgen]
 impl Decoder {
     /// A decoder whose pictures' rows decode on `threads` threads: the caller
-    /// and, for more than one, that many less one of the pool's.
+    /// and, for more than one, that many less one of the pool's, but for a
+    /// picture under 300 bytes of slice data and half a million samples, a
+    /// light strip of a display at 1x, which is the caller's alone.
     #[wasm_bindgen(constructor)]
     pub fn new(threads: usize) -> Decoder {
         Decoder { inner: hevc::Decoder::new(threads), input: Vec::new(), held: Vec::new(), serial: 0, picture: [0; PICTURE_FIELDS], changed: [0; 4] }
