@@ -12,8 +12,8 @@
 # for exactly the archive it pins. The deployment names the tag, and changes it
 # only when zDesk pins a newer hevc-wasm. Every release up to that one is in
 # it, so a zDesk release that pins an older one finds it there too.
-# publish-private.sh runs this after each release; run it alone to build it
-# again.
+# It is run on its own, from a machine with podman, after a release that a
+# deployment is to mount; publish-private.sh does not run it.
 #
 # The image is the archives at its root and nothing else. Its label links the
 # package to ARCHIVES_REPO, and the package must stay private: this asks ghcr

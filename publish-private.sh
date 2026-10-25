@@ -53,10 +53,7 @@ if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
 fi
 
 # Before the build rather than after it: minutes of compiling is a poor way to
-# learn that `gh` is logged in to the wrong account, or that publish-image.sh
-# cannot push at the end.
-podman login --get-login ghcr.io >/dev/null 2>&1 \
-  || { echo "not logged in to ghcr.io, which publish-image.sh pushes to: podman login ghcr.io" >&2; exit 1; }
+# learn that `gh` is logged in to the wrong account.
 gh release list --repo "$ARCHIVES_REPO" --limit 1 >/dev/null \
   || { echo "cannot read $ARCHIVES_REPO: gh auth login, with an account that has access" >&2; exit 1; }
 if gh release view "$tag" --repo "$ARCHIVES_REPO" >/dev/null 2>&1; then
@@ -99,6 +96,3 @@ gh release create "$tag" --verify-tag ${prerelease:+"$prerelease"} --title "$tag
   "This repository publishes the source of the build and no binary of it. The archive, \`$archive\`, is on the private $ARCHIVES_REPO release of the same tag, whose \`SHA256SUMS\` reads:" \
   "$(cat "$out/SHA256SUMS")")"
 echo ">> published $tag; zDesk pins it in src/hevc_wasm.rs by $(cut -d' ' -f1 "$out/SHA256SUMS")"
-
-# The archives as an image, for a deployment that mounts them (publish-image.sh).
-"$here/publish-image.sh"
