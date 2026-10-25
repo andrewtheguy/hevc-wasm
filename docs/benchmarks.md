@@ -20,7 +20,8 @@ The instruction and cycle counts are `perf stat`'s for the whole process and
 do not depend on the load. The module's ms is the median of its own clock's
 per picture, and FFmpeg's its process's wall time over the pictures. The
 streams are seven scenes of the display, each at 1x and at 2x, thirty seconds
-of each; a picture is a strip, a quarter of the display, and the Mac sends
+of each, and one capture of a few minutes at the desk at 2x, in its own table
+below; a picture is a strip, a quarter of the display, and the Mac sends
 only the strips that changed. Strips are what zDesk asks of every such
 session; one picture of the whole display is what it asks only for a display
 too low for strips, under 144 rows, and for a probe, so it is not measured
@@ -52,6 +53,24 @@ picture, lower better:
 | Chrome scrolling an article | 2,579 | 9.4 | 9.7 | 10.1 | 13.1 | 1.88 | 3.41 | $\color{green}{0.55}$ | 1.31 | 1.88 | $\color{green}{0.70}$ |
 | The same four times as fast | 2,501 | 17.2 | 17.8 | 18.2 | 20.4 | 4.01 | 5.37 | $\color{green}{0.75}$ | 2.23 | 2.64 | $\color{green}{0.84}$ |
 | A video over the whole display | 2,446 | 28.1 | 29.0 | 29.7 | 28.3 | 7.13 | 7.34 | $\color{green}{0.97}$ | 3.05 | 3.09 | $\color{green}{0.99}$ |
+
+The capture of 2026-10-24 is a few minutes at the desk at 2x rather than one
+scene, scripted on the Mac: Finder through its folders, a text file and an
+image opened, articles read with quick scroll flicks and a link followed, a
+terminal typed in, scrolled, dragged and minimized, windows switched, and a
+4K video in a window and then full screen, 340 seconds in 14,807 strips of
+2880×464, of which about 10,000 are the video. It is the module as it is
+against FFmpeg alone, by the same script on the same cores, the evening of
+2026-10-24:
+
+| 2880×464, a strip | pictures | 1 thread, M cycles | FFmpeg | 1 thread, ms | FFmpeg | Ratio | 4 threads, ms | FFmpeg by rows | Ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A few minutes at the desk, two thirds of it a video | 14,807 | 24.7 | 25.5 | 5.08 | 6.74 | $\color{green}{0.75}$ | 2.48 | 2.87 | $\color{green}{0.86}$ |
+
+A mix sets a median against a mean further apart than one scene does: the
+module's mean over the minutes is 6.43 ms on one thread, 5% under FFmpeg's
+6.74, and 2.82 ms on four, 2% under FFmpeg's rows, while its median is a
+picture of the lighter half. The cycles are 3% under FFmpeg's.
 
 On one thread the module takes fewer cycles than native FFmpeg on every
 stream but the video: two fifths fewer on the still page at 1x and nearly

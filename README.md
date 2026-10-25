@@ -174,7 +174,8 @@ the byte planes and the threading are this repository's.
 
 It decodes every picture of the fourteen captures of a High Performance Mac's
 1440×900 display in strips taken on 2026-10-12 (31,683 pictures, 1440×240 at
-1x and 2880×464 at 2x), of the seven captures of whole pictures before them
+1x and 2880×464 at 2x), of the capture of 2026-10-24 of a few minutes at the
+desk at 2x (14,807 pictures), of the seven captures of whole pictures before them
 (2,833 pictures, 1600×1000 and 1600×256, including the long-term-refresh
 ones) and of a 1080p camera video x265 encoded in the Mac's shape (2,896
 pictures) bit-identically to FFmpeg, as the WebAssembly module on four

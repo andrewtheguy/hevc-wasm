@@ -25,6 +25,7 @@ under V8 on the idle VM (`bench/run.sh`, `perf stat`):
 | Chrome scrolling an article | 3.4 | 4.1 | 9.4 | 13.1 |
 | The same four times as fast | 7.0 | 7.3 | 17.2 | 20.4 |
 | A video over the whole display | 15.3 | 14.3 | 28.1 | 28.3 |
+| A few minutes at the desk, two thirds of it a video, 2x alone | – | – | 24.7 | 25.5 |
 
 The module is ahead wherever most of a picture is the picture before, and on
 the scrolls; it is behind only where every picture is new, on the video at
