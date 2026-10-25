@@ -115,7 +115,7 @@ hevc-wasm-archives' release `vX.Y.Z`; tags the commit `vX.Y.Z` here, with a
 release of the source alone whose notes give the archive's digest. zDesk then
 takes it as a new version and checksum in `src/hevc_wasm.rs`. For a Kubernetes
 deployment of zDesk, which mounts the archives on its public image's release
-tree, `./publish-image.sh`, run on its own from a machine with podman logged in
+tree, `./publish-image.sh`, run on its own with docker or podman logged in
 to ghcr with `write:packages`, pushes the private image
 `ghcr.io/andrewtheguy/hevc-wasm-archives:vX.Y.Z` holding that archive and every
 one before it.

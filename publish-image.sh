@@ -12,8 +12,8 @@
 # for exactly the archive it pins. The deployment names the tag, and changes it
 # only when zDesk pins a newer hevc-wasm. Every release up to that one is in
 # it, so a zDesk release that pins an older one finds it there too.
-# It is run on its own, from a machine with podman, after a release that a
-# deployment is to mount; publish-private.sh does not run it.
+# It is run on its own, with docker or podman, whichever this machine has, after a
+# release that a deployment is to mount; publish-private.sh does not run it.
 #
 # The image is the archives at its root and nothing else. Its label links the
 # package to ARCHIVES_REPO, and the package must stay private: this asks ghcr
@@ -23,7 +23,9 @@
 # Log in to ghcr first, with a token that has write:packages, and to GitHub with
 # access to ARCHIVES_REPO:
 #
-#   gh auth token | podman login ghcr.io -u <user> --password-stdin
+#   gh auth token | docker login ghcr.io -u <user> --password-stdin
+#
+# or podman's, which takes the same words.
 set -euo pipefail
 
 ARCHIVES_REPO=andrewtheguy/hevc-wasm-archives
@@ -37,8 +39,17 @@ cd "$here"
 [ $# -eq 0 ] || { sed -n '2,/^set -euo pipefail$/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 2; }
 
 # Before the downloads rather than after them.
-podman login --get-login "$REGISTRY" >/dev/null 2>&1 \
-  || { echo "not logged in to $REGISTRY: podman login $REGISTRY" >&2; exit 1; }
+# Whichever engine is here; both build and push with the same words.
+engine="$(command -v docker || command -v podman || true)"
+[ -n "$engine" ] || { echo "neither docker nor podman is installed" >&2; exit 1; }
+engine="$(basename "$engine")"
+if [ "$engine" = podman ]; then
+  podman login --get-login "$REGISTRY" >/dev/null 2>&1 \
+    || { echo "not logged in to $REGISTRY: podman login $REGISTRY" >&2; exit 1; }
+else
+  grep -q "\"$REGISTRY\"" "${DOCKER_CONFIG:-$HOME/.docker}/config.json" 2>/dev/null \
+    || { echo "not logged in to $REGISTRY: docker login $REGISTRY" >&2; exit 1; }
+fi
 
 # Newest first, as GitHub lists them; drafts are not releases yet.
 mapfile -t tags < <(gh release list --repo "$ARCHIVES_REPO" --exclude-drafts --limit 1000 \
@@ -69,7 +80,7 @@ COPY archives/ /
 CONTAINERFILE
 
 echo ">> building $IMAGE:$newest"
-podman build --platform linux/amd64 -f "$work/Containerfile" \
+"$engine" build --platform linux/amd64 -f "$work/Containerfile" \
   -t "$IMAGE:$newest" "$work"
 
 # What ghcr tells a client with no credentials that asks to pull the package, as
@@ -99,7 +110,7 @@ case "$access" in
 esac
 
 echo ">> pushing $IMAGE:$newest"
-podman push "$IMAGE:$newest"
+"$engine" push "$IMAGE:$newest"
 
 access="$(anonymous_access)"
 [ "$access" = private ] \
