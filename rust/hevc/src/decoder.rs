@@ -351,7 +351,8 @@ impl Decoder {
                 sao: (sh.sao_luma || sh.sao_chroma).then_some(SaoCtx { planes, maps }),
             };
             let scratch = &self.scratch;
-            let light = rbsp.data.len().saturating_sub(sh.data_offset) < ALONE
+            // The payload ends `RBSP_PAD` bytes before the buffer does.
+            let light = (rbsp.data.len() - nal::RBSP_PAD).saturating_sub(sh.data_offset) < ALONE
                 && sps.width as usize * sps.height as usize <= ALONE_SAMPLES;
             let threads = if light { 1 } else { self.threads };
             wavefront::run_rows(threads, rows, &self.progress, |row| {
