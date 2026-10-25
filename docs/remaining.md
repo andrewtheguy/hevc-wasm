@@ -6,30 +6,32 @@ what it measures against FFmpeg and the release before in
 [the benchmarks](benchmarks.md). This is the list of what it does not do
 yet, in the order the work would go. Numbers are from the module
 under Node on one thread of the x86 workstation, profiled with `perf record`
-of V8's JIT output (`tmp/jitprof.sh`), unless stated otherwise.
+of V8's JIT output (`tmp/jitprof.sh`, now `tmp/bench-lab/profile.sh` on the
+lab), unless stated otherwise.
 
 ## Speed
 
 The streams are the Mac's own, taken on 2026-10-12: seven scenes of a
 1440×900 display in four strips, at 1x and at 2x, a picture being a strip.
-Per picture on one thread, release 0.0.10 against native FFmpeg
-(`bench/run.sh`, `perf stat`):
+Per picture on one thread, the module as it is against native FFmpeg,
+under V8 on the idle VM (`bench/run.sh`, `perf stat`):
 
 | | 1x, M cycles | FFmpeg | 2x, M cycles | FFmpeg |
 |---|---|---|---|---|
-| A still page | 1.5 | 2.4 | 2.8 | 9.0 |
-| A window dragged | 2.0 | 2.6 | 5.8 | 9.7 |
-| A quarter of the display in a loop | 2.5 | 3.2 | 7.0 | 11.2 |
-| Typing in a terminal | 2.1 | 3.0 | 4.7 | 10.7 |
-| Chrome scrolling an article | 4.8 | 4.9 | 13.2 | 15.6 |
-| The same four times as fast | 9.4 | 8.8 | 23.5 | 24.0 |
-| A video over the whole display | 20.3 | 17.0 | 39.2 | 34.0 |
+| A still page | 1.1 | 1.9 | 2.1 | 7.5 |
+| A window dragged | 1.3 | 2.1 | 4.2 | 8.3 |
+| A quarter of the display in a loop | 1.8 | 2.4 | 4.9 | 9.5 |
+| Typing in a terminal | 1.5 | 2.5 | 3.4 | 9.0 |
+| Chrome scrolling an article | 3.4 | 4.1 | 9.4 | 13.1 |
+| The same four times as fast | 7.0 | 7.3 | 17.2 | 20.4 |
+| A video over the whole display | 15.3 | 14.3 | 28.1 | 28.3 |
+| A few minutes at the desk, two thirds of it a video, 2x alone | – | – | 24.7 | 25.5 |
 
 The module is ahead wherever most of a picture is the picture before, and on
-the scroll; it is behind where a picture is new, by 19% and 15% on the video
-and by 7% on the fast scroll at 1x. Those are also the streams that cost
-anything. The video at 2x is 12 ms a strip on one thread, 48 ms for a
-frame's four where 30 frames a second leave 33 ms, and 4.5 ms a strip on
+the scrolls; it is behind only where every picture is new, on the video at
+1x by 7%, and a digit ahead on it at 2x. Those are also the streams that cost
+anything. The video at 2x is 7.1 ms a strip on one thread, 29 ms for a
+frame's four where 30 frames a second leave 33 ms, and 3.1 ms a strip on
 four threads.
 
 In the order the work would go:
@@ -44,9 +46,10 @@ In the order the work would go:
    three earn their place there:
 
    - **The transform of a block with few coefficients over its coded columns
-     alone**, a fifth of `cap5`'s instructions: on the captures no stream
-     but the typing at 2x took fewer cycles for it as it was made, 3%, and
-     the video took 2% to 4% more. Measured since in the module as it is,
+     alone**, a fifth of `cap5`'s instructions: on the captures under Bun no
+     stream but the typing at 2x took fewer cycles for it as it was made,
+     3%, and the video 2% to 4% more; under V8 on the idle VM it is 9%
+     fewer on the typing at 2x and 1% to 2% fewer on the video. Measured since in the module as it is,
      where the coefficient list feeds it: every block sent to the dense
      transform is 8% more cycles on the typing at 2x, 2% on the video and 1%
      on the scrolls, and none of three narrower rules for which blocks take
@@ -61,8 +64,8 @@ In the order the work would go:
      scroll at 2x, and level where little is coded. That is done, and is not
      in the table above, which is of the night before.
    - **A row copying only the blocks changed since its buffer's picture**:
-     up to 5% more on a light strip, since no strip ever found such a
-     buffer. It pays since item 3 keeps the buffer, 35% of a still strip's
+     up to 5% more on a light strip under Bun and level under V8, since no
+     strip ever found such a buffer. It pays since item 3 keeps the buffer, 35% of a still strip's
      cycles at 2x and 20% of the typing's, and nothing is to be done.
 
    Then the five experiments dropped on the old streams, listed at the end
@@ -77,6 +80,37 @@ In the order the work would go:
    stand.
 
 2. **What the profile of the video and of the fast scroll at 2x ranks.**
+   Profiled again on 2026-10-24, the module as it is on the lab, on one
+   core under V8 (the table in [the architecture](architecture.md#where-the-time-goes)):
+   the residual's parsing, `sub_blocks` with `residual_block`, is a third
+   of the video and of the fast scroll and three tenths of the typing;
+   then `prediction_unit` on the video, a fifth, `intra_predict` on the
+   fast scroll, 11%, and the deblocking there, 9%; and on the light
+   streams, which are most of a session, the quadtree walk with the coding
+   unit's syntax in it, 10% of the typing and 15% of a still page, the row
+   copy, 8% and 12%, `prediction_unit`, 6% and 8%, and `filter_after`,
+   the filtering each decoded block lets happen, 3% and 6%. The parsing,
+   the interpolation and the intra prediction have each had their tries
+   (below and item 1). The quadtree walk's 15% of a still page, by a build
+   with its pieces kept as named functions, is the context-coded bins
+   outside the residual, 4.6%, the coding unit's own syntax, 4.9%, the
+   three map fills of a coding unit, depth, mode and QP, a word a row at
+   4×4, 4.2%, the recursion with the split flag's neighbours, 1.8%, and
+   the quantization group's prediction, 1.1%; on the typing the same
+   pieces are 2.8%, 3.5%, 3.1%, 1.2% and 0.8%. Nothing in it is large.
+   What could shrink is the fills and the lookups: the three maps are per
+   coding unit, never finer than 8×8, and kept per 4×4, so at 8×8 the
+   fills would be a quarter, 3% of a still page at the most, for the
+   deblocking's indices and a dozen readers changed, which has not been
+   done. Two cheaper things were tried and are not kept, level on five
+   counted rounds of the light streams: SAO's per-block check, which is
+   the 6% of `filter_after` on a still page, reading a byte of bits per
+   block in place of the parameters of the block and six neighbours, three
+   fields each; and a prediction unit's motion fill as two words a store,
+   1% to 2% more cycles on the still page and the typing. The profile that
+   follows is the one the work so far was ranked by, of release 0.0.8 on
+   the workstation.
+
    Release 0.0.8 on one thread under Node, `perf record` with V8's JIT
    symbols, as shares of the samples:
 
@@ -126,7 +160,7 @@ In the order the work would go:
 
    Three of these were done in release 0.0.9, every picture of every stream
    still FFmpeg's. In M cycles a picture on one thread, as measured then and
-   before item 3 was done (the table above is release 0.0.10):
+   before item 3 was done (the table above is the module as it is):
 
    | | 0.0.8 | 0.0.9 | FFmpeg |
    |---|---|---|---|
@@ -203,32 +237,45 @@ In the order the work would go:
    finds in the cache, so that sparing the copy moves the wait to the
    prediction.
 
-4. **Threads on a small picture.** Four threads cost more than one wherever a
-   strip is light, and less than they did: the thread that asks for the
-   picture is now one of the four, with the first row under way while the
-   pool's wake, where it had slept until the pool was done. Every strip is
-   0.1 to 0.2 ms sooner for it on four threads: a still page at 1x 0.29 ms
-   for 0.49 ms, the typing 0.39 ms for 0.61 ms, the video at 2x 4.55 ms for
-   4.66 ms. One thread still does a still strip at 1x in 0.17 ms, since the
-   picture is not done until the pool's threads have woken to find nothing
-   left. Threads pay on the heavy streams: 2.7× on the video at 2x, 2.2× at
-   1x, 2.1× on the fast scroll at 2x, 1.6× on the scroll.
+4. **Threads on a small picture**, done. What a light strip paid for its
+   threads was their waking, and less than the tables said: a still strip
+   at 1x is 0.11 ms on one thread and was 0.15 ms on four, the typing 0.12
+   and 0.17, where under `perf stat`, whose counting lengthens each waking,
+   they were 0.29 and 0.34, which is what every table before 2026-10-24
+   showed, three times the gap there is. The thread that asks for the
+   picture has been one of the four since `8180421`, with the first row
+   under way while the pool's wake, 0.16 ms for 0.19 on the still page.
 
-   Tried and not kept: one thread for a picture under some size in bytes.
-   The size says little of the time: of the strips under 200 bytes at 2x,
-   whose median is 0.61 ms on one thread and 0.67 ms on four, four threads
-   were the quicker for 63%. No threshold beat four threads for every
-   picture at 2x, and the best at 1x, 400 bytes, saved 4% of the time of six
-   streams, by a constant fitted to this machine. Nor is the wait for the
-   pool's threads what a light strip pays: with the picture closed to a
+   Every picture of fourteen streams decoded by a one-thread decoder and a
+   four-thread one side by side (`tmp/threads-choice`, the two in turns,
+   the order swapped every unit, and once more with 16 ms between units as
+   a page has between frames): at 1x, under 300 bytes of slice data, one
+   thread is the quicker for four pictures in five, by some 0.05 ms, a
+   third of the strip; above 400 to 600 bytes four threads are. At 2x the
+   bytes say little of the time: a still strip under 300 bytes is 0.34 ms
+   on one thread and 0.36 on four, and a window dragged, of the same bytes,
+   0.84 ms and 0.57, its cost the motion compensation over the strip, which
+   its bytes do not carry; no threshold in bytes beat four threads there,
+   as the earlier try of one had found, and over the fourteen streams one
+   of 300 bytes alone was behind four threads for every picture, 33.4 s
+   for 33.3. So a picture
+   under 300 bytes and 2^19 luma samples, a light strip of a display at 1x,
+   decodes on the calling thread alone and the pool sleeps (`ALONE`,
+   `ALONE_SAMPLES` in `decoder.rs`); any other wakes it. On four threads a
+   still strip at 1x is now 0.11 ms for 0.15 and the typing 0.14 ms for
+   0.17, the drag, the loop and the scroll at 1x level, and every stream at
+   2x level; paced at 16 ms, a still strip at 1x is 0.15 ms for 0.21.
+
+   The two constants are the lab's: the waking is the kernel's, and the
+   crossover in bytes moves with the machine, lower on a slower one. What
+   is safe to count on is the sign at 1x, where the lightest strip takes
+   less than a waking. Not kept, before this: the picture closed to a
    thread that wakes after the rows are done, so that the caller returns
-   without it, in place of rayon's scope, which waits for each to wake, all
-   ten streams measured were level on four threads, a still page at 1x
-   0.28 ms either way and the typing 0.36 ms for 0.39 ms. The cost is then
-   in waking them or in their sharing the picture, which of the two not
-   having been measured. What would do it is the
-   pool's threads woken only once a picture is known to be worth them, by
-   something the decoder learns as it decodes; it has no clock in the page.
+   without it, which left all ten streams measured level, so the cost is
+   the waking itself and not the wait for it. A rule from what the decoder
+   learns as it decodes, the picture before's motion, say, would carry the
+   choice to 2x, where a still page would gain 0.02 ms, not worth its
+   counter.
 
 5. **SAO's edge offset**, done for what it was worth. `SaoCtx::component`
    was 12.8% of the video at 2x, two thirds of it the edge offset's loop,
@@ -278,6 +325,15 @@ In the order the work would go:
      load of each line of a plane, whose lines at 2x are 2,880 bytes apart
      in three planes; whether those are misses of the cache or of the page
      table has not been measured.
+     The strengths themselves, `edge_strengths`, were 9% of a still strip
+     at 2x and 6% of the typing in the profile of 2026-10-24 (item 2): a
+     skipped block put its two edges' strengths into the map entry by
+     entry, a read and a write each, whatever they were, and most of a
+     screen's are zero, which the map is already, zeroed for every
+     picture. A zero strength is not written now: 6% fewer cycles on the
+     still page at 2x, 3.5% at 1x, 3% on the scroll, 1.5% on the typing
+     and the drag, and level on the video, five rounds, and the fast
+     scroll.
    - **`residual_block`**, 15.8% of the video at 2x after the eight-line
      deblocking, is little of the parsing its name suggests, that being
      `sub_blocks`, 18.4% and flat: it is the transform of a block with few
@@ -344,7 +400,7 @@ is:
 ### Elsewhere
 
 - **The target machine.** All of [the benchmarks](benchmarks.md) are from an x86
-  workstation under Bun. The module has not
+  VM, four cores of an AMD EPYC Rome, under Node's V8. The module has not
   been run on Apple silicon, where V8 lowers SIMD128 to NEON differently and
   the memory system differs; the capture's transform and the video's
   memory-bound copy may rank differently there.

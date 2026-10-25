@@ -601,8 +601,11 @@ impl<'a> Row<'a> {
             while r < h4 {
                 let q = base + r * m.w4;
                 let (bs, n) = (strength(q - 1, q), run(q - 1, y4 + r, h4 - r));
-                for k in 0..n {
-                    put(q + k * m.w4, bs, 0);
+                // The map is zero for every picture: a zero strength is there already.
+                if bs != 0 {
+                    for k in 0..n {
+                        put(q + k * m.w4, bs, 0);
+                    }
                 }
                 any |= bs;
                 r += n;
@@ -622,8 +625,10 @@ impl<'a> Row<'a> {
             while c < w4 {
                 let q = base + c;
                 let (bs, n) = (strength(q - m.w4, q), run(q - m.w4, x4 + c, w4 - c));
-                for k in 0..n {
-                    put(q + k, bs, 2);
+                if bs != 0 {
+                    for k in 0..n {
+                        put(q + k, bs, 2);
+                    }
                 }
                 any |= bs;
                 c += n;

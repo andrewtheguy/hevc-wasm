@@ -66,7 +66,11 @@ the module themselves.
 
 The tests load `build/out/hevc.js` and `hevc.wasm` (or `$HEVC_WASM_DIR`'s)
 under Bun as the page loads them: the module on a shared memory, its pool's
-threads as workers that each run an instance of it. The `mac-*` streams in
+threads as workers that each run an instance of it. The loader uses only
+Node's APIs, which Bun has too, so either runs it; the benchmark runs it
+under Node alone, since the module is for Chrome, whose engine is Node's V8,
+while Bun's JavaScriptCore is Safari's, and Safari decodes the Mac's HEVC
+itself. The `mac-*` streams in
 `test/data`, x265's nearest shape to the Mac's, must decode to native FFmpeg's
 `-f framemd5`, recorded in `test/data/reference.json`, on one thread and on
 four; the other streams there, of other shapes, must be refused by name. The
@@ -174,7 +178,8 @@ the byte planes and the threading are this repository's.
 
 It decodes every picture of the fourteen captures of a High Performance Mac's
 1440×900 display in strips taken on 2026-10-12 (31,683 pictures, 1440×240 at
-1x and 2880×464 at 2x), of the seven captures of whole pictures before them
+1x and 2880×464 at 2x), of the capture of 2026-10-24 of a few minutes at the
+desk at 2x (14,807 pictures), of the seven captures of whole pictures before them
 (2,833 pictures, 1600×1000 and 1600×256, including the long-term-refresh
 ones) and of a 1080p camera video x265 encoded in the Mac's shape (2,896
 pictures) bit-identically to FFmpeg, as the WebAssembly module on four
@@ -183,8 +188,8 @@ Mac's.
 
 On one thread it takes fewer cycles than native FFmpeg wherever most of a
 picture is the picture before, up to two fifths fewer on a strip at 1x and
-two thirds at 2x, and up to a fifth more where a picture is new, a video
-over the whole display. The tables, how a change is measured (`bench/run.sh`) and
+nearly three quarters at 2x, and where a picture is new, a video over the
+whole display, 7% more at 1x and level at 2x. The tables, how a change is measured (`bench/run.sh`) and
 what each step that got here was worth are in
 [docs/benchmarks.md](docs/benchmarks.md).
 

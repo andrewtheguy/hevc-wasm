@@ -6,21 +6,22 @@ picture's time goes inside the decoder, by function and by count, is in
 [the architecture](architecture.md#where-the-time-goes); what is left to
 gain, in [what remains](remaining.md).
 
-## Against FFmpeg and release 0.0.9
+## Against FFmpeg and the releases before
 
-The comparison is of the module under Bun, as release 0.0.10, which is
-before the one change since ([below](#the-steps-that-got-here)), and as
-release 0.0.9,
+The comparison is of the module as it is, as release 0.0.10 and as release
+0.0.9, under Node 26 (V8 14.6, the engine of the Chrome the module is for),
 against FFmpeg's native decoder: Debian 13's ffmpeg 7.1.5-0+deb13u1, built by
 gcc 14 with `--toolchain=hardened`, which picks its vector code as it runs,
-AVX2 on this i5-8500T, run as `ffmpeg -threads N -i FILE -benchmark -f null -`.
-They ran on a six-core x86 workstation, alternately on the same cores, one
-for one thread and four for four, and the medians of three rounds are shown.
+AVX2 on this EPYC, run as `ffmpeg -threads N -i FILE -benchmark -f null -`.
+They ran on an idle VM, four cores of an AMD EPYC Rome with two threads each
+and nothing else running, alternately on the same cores, one for one thread
+and four, one per core, for four, and the medians of three rounds are shown.
 The instruction and cycle counts are `perf stat`'s for the whole process and
 do not depend on the load. The module's ms is the median of its own clock's
 per picture, and FFmpeg's its process's wall time over the pictures. The
 streams are seven scenes of the display, each at 1x and at 2x, thirty seconds
-of each; a picture is a strip, a quarter of the display, and the Mac sends
+of each, and one capture of a few minutes at the desk at 2x, in its own table
+below; a picture is a strip, a quarter of the display, and the Mac sends
 only the strips that changed. Strips are what zDesk asks of every such
 session; one picture of the whole display is what it asks only for a display
 too low for strips, under 144 rows, and for a probe, so it is not measured
@@ -33,45 +34,75 @@ how long a strip takes; left to itself it decodes four pictures at once,
 which is quicker over a file and no use to a display that is watched. Per
 picture, lower better:
 
-| 1440×240, a strip | pictures | 1 thread, M cycles | 0.0.9 | FFmpeg | 1 thread, ms | FFmpeg | Ratio | 4 threads, ms | FFmpeg by rows | Ratio |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| A still page | 1,450 | 1.5 | 1.8 | 2.4 | 0.17 | 0.80 | $\color{green}{0.21}$ | 0.29 | 0.80 | $\color{green}{0.36}$ |
-| A window dragged | 2,403 | 2.0 | 2.0 | 2.6 | 0.35 | 0.88 | $\color{green}{0.40}$ | 0.46 | 0.74 | $\color{green}{0.62}$ |
-| A quarter of the display in a loop | 2,273 | 2.5 | 2.7 | 3.2 | 0.67 | 1.05 | $\color{green}{0.64}$ | 0.67 | 0.93 | $\color{green}{0.72}$ |
-| Typing in a terminal | 2,248 | 2.1 | 2.3 | 3.0 | 0.17 | 0.99 | $\color{green}{0.17}$ | 0.38 | 0.78 | $\color{green}{0.49}$ |
-| Chrome scrolling an article | 2,588 | 4.8 | 4.7 | 4.9 | 1.01 | 1.57 | $\color{green}{0.64}$ | 1.01 | 1.15 | $\color{green}{0.88}$ |
-| The same four times as fast | 2,362 | 9.4 | 9.4 | 8.8 | 2.53 | 2.77 | $\color{green}{0.91}$ | 1.56 | 1.62 | $\color{green}{0.96}$ |
-| A video over the whole display | 1,978 | 20.3 | 20.4 | 17.0 | 6.21 | 5.32 | $\color{red}{1.17}$ | 2.81 | 2.43 | $\color{red}{1.16}$ |
+| 1440×240, a strip | pictures | 1 thread, M cycles | 0.0.10 | 0.0.9 | FFmpeg | 1 thread, ms | FFmpeg | Ratio | 4 threads, ms | FFmpeg by rows | Ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A still page | 1,450 | 1.1 | 1.2 | 1.3 | 1.9 | 0.10 | 0.50 | $\color{green}{0.20}$ | 0.10 | 0.41 | $\color{green}{0.24}$ |
+| A window dragged | 2,403 | 1.3 | 1.4 | 1.4 | 2.1 | 0.17 | 0.54 | $\color{green}{0.31}$ | 0.21 | 0.45 | $\color{green}{0.47}$ |
+| A quarter of the display in a loop | 2,273 | 1.8 | 1.9 | 1.9 | 2.4 | 0.40 | 0.64 | $\color{green}{0.62}$ | 0.44 | 0.57 | $\color{green}{0.77}$ |
+| Typing in a terminal | 2,248 | 1.5 | 1.5 | 1.7 | 2.5 | 0.10 | 0.64 | $\color{green}{0.16}$ | 0.13 | 0.47 | $\color{green}{0.28}$ |
+| Chrome scrolling an article | 2,588 | 3.4 | 3.6 | 3.5 | 4.1 | 0.59 | 1.08 | $\color{green}{0.55}$ | 0.58 | 0.83 | $\color{green}{0.70}$ |
+| The same four times as fast | 2,362 | 7.0 | 7.2 | 7.3 | 7.3 | 1.56 | 1.93 | $\color{green}{0.81}$ | 1.03 | 1.19 | $\color{green}{0.87}$ |
+| A video over the whole display | 1,978 | 15.3 | 15.7 | 15.9 | 14.3 | 3.97 | 3.72 | $\color{red}{1.07}$ | 1.87 | 1.79 | $\color{red}{1.04}$ |
 
-| 2880×464, a strip | pictures | 1 thread, M cycles | 0.0.9 | FFmpeg | 1 thread, ms | FFmpeg | Ratio | 4 threads, ms | FFmpeg by rows | Ratio |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| A still page | 1,694 | 2.8 | 4.3 | 9.0 | 0.54 | 2.83 | $\color{green}{0.19}$ | 0.56 | 1.31 | $\color{green}{0.43}$ |
-| A window dragged | 2,507 | 5.8 | 6.0 | 9.7 | 1.48 | 3.08 | $\color{green}{0.48}$ | 0.96 | 1.37 | $\color{green}{0.70}$ |
-| A quarter of the display in a loop | 2,230 | 7.0 | 7.8 | 11.2 | 2.25 | 3.55 | $\color{green}{0.63}$ | 1.37 | 1.70 | $\color{green}{0.81}$ |
-| Typing in a terminal | 2,424 | 4.7 | 6.0 | 10.7 | 0.50 | 3.37 | $\color{green}{0.15}$ | 0.65 | 1.46 | $\color{green}{0.45}$ |
-| Chrome scrolling an article | 2,579 | 13.2 | 13.1 | 15.6 | 3.12 | 4.88 | $\color{green}{0.64}$ | 1.90 | 2.33 | $\color{green}{0.82}$ |
-| The same four times as fast | 2,501 | 23.5 | 23.4 | 24.0 | 6.59 | 7.53 | $\color{green}{0.88}$ | 3.21 | 3.45 | $\color{green}{0.93}$ |
-| A video over the whole display | 2,446 | 39.2 | 39.7 | 34.0 | 11.79 | 10.53 | $\color{red}{1.12}$ | 4.47 | 3.80 | $\color{red}{1.18}$ |
+| 2880×464, a strip | pictures | 1 thread, M cycles | 0.0.10 | 0.0.9 | FFmpeg | 1 thread, ms | FFmpeg | Ratio | 4 threads, ms | FFmpeg by rows | Ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A still page | 1,694 | 2.1 | 2.2 | 3.4 | 7.5 | 0.31 | 1.93 | $\color{green}{0.16}$ | 0.36 | 1.03 | $\color{green}{0.35}$ |
+| A window dragged | 2,507 | 4.2 | 4.2 | 4.5 | 8.3 | 0.86 | 2.16 | $\color{green}{0.40}$ | 0.58 | 1.15 | $\color{green}{0.50}$ |
+| A quarter of the display in a loop | 2,230 | 4.9 | 5.2 | 5.7 | 9.5 | 1.30 | 2.43 | $\color{green}{0.53}$ | 0.95 | 1.35 | $\color{green}{0.70}$ |
+| Typing in a terminal | 2,424 | 3.4 | 3.7 | 4.5 | 9.0 | 0.29 | 2.33 | $\color{green}{0.12}$ | 0.37 | 1.20 | $\color{green}{0.31}$ |
+| Chrome scrolling an article | 2,579 | 9.4 | 9.7 | 10.1 | 13.1 | 1.88 | 3.41 | $\color{green}{0.55}$ | 1.31 | 1.88 | $\color{green}{0.70}$ |
+| The same four times as fast | 2,501 | 17.2 | 17.8 | 18.2 | 20.4 | 4.01 | 5.37 | $\color{green}{0.75}$ | 2.23 | 2.64 | $\color{green}{0.84}$ |
+| A video over the whole display | 2,446 | 28.1 | 29.0 | 29.7 | 28.3 | 7.13 | 7.34 | $\color{green}{0.97}$ | 3.05 | 3.09 | $\color{green}{0.99}$ |
 
-On one thread the module takes fewer cycles than native FFmpeg wherever most
-of a picture is the picture before, which it neither decodes nor filters nor,
-as release 0.0.9 still did, copies: two fifths fewer on the still page at 1x and two thirds
-at 2x, a third and a half on the typing, and a fifth to two fifths on the
-drag and the loop; 15% fewer on the scroll at 2x. Where a picture is new it
-takes more: 7% on the fast scroll at 1x, and 19% and 15% on the video, whose
-strip at 2x is 12 ms on one thread, four of them more than the 33 ms of a
-frame at thirty a second, and 4.5 ms on four.
+The capture of 2026-10-24 is a few minutes at the desk at 2x rather than one
+scene, scripted on the Mac: Finder through its folders, a text file and an
+image opened, articles read with quick scroll flicks and a link followed, a
+terminal typed in, scrolled, dragged and minimized, windows switched, and a
+4K video in a window and then full screen, 340 seconds in 14,807 strips of
+2880×464, of which about 10,000 are the video. It is the module as it is
+against FFmpeg alone, by the same script on the same cores, the evening of
+2026-10-24:
 
-On four threads, strip for strip, the module is the quicker on all but the
-video: by half and more on the still page and the typing, by a fifth to two
-fifths on the drag and the loop, and by 4% to 18% on the scrolls. The video
-is 16% and 18% behind. A light strip still gains nothing from threads, whose
-waking costs more than its few rows do to decode: a still strip at 1x is
-0.17 ms on one thread and 0.29 ms on four in the module, 0.80 ms on either
-in FFmpeg. All of it is one run, the night of 2026-10-12. The host's
-1-minute load as each stream's one-thread timing ended was 1.1 to 1.6, of
-which the decoder being timed is 1.0; the cycle counts do not depend on the
-rest and the milliseconds do.
+| 2880×464, a strip | pictures | 1 thread, M cycles | FFmpeg | 1 thread, ms | FFmpeg | Ratio | 4 threads, ms | FFmpeg by rows | Ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A few minutes at the desk, two thirds of it a video | 14,807 | 24.7 | 25.5 | 5.08 | 6.74 | $\color{green}{0.75}$ | 2.48 | 2.87 | $\color{green}{0.86}$ |
+
+A mix sets a median against a mean further apart than one scene does: the
+module's mean over the minutes is 6.43 ms on one thread, 5% under FFmpeg's
+6.74, and 2.82 ms on four, 2% under FFmpeg's rows, while its median is a
+picture of the lighter half. The cycles are 3% under FFmpeg's.
+
+On one thread the module takes fewer cycles than native FFmpeg on every
+stream but the video: two fifths fewer on the still page at 1x and nearly
+three quarters at 2x, two fifths and three fifths on the typing, a quarter
+to a half on the drag and the loop, 17% and 28% on the scroll, and 4% and
+16% on the fast scroll, where a picture is new. The video takes 7% more at
+1x and 1% fewer at 2x, 28.1 M for 28.3 M; its strip at 2x is 7.1 ms on one
+thread, four of them 29 ms of the 33 ms of a frame at thirty a second, and
+3.1 ms on four. Release 0.0.9 still copied the part of a picture that is
+the picture before, which is the still page at 2x going from 3.4 M to
+2.1 M; the six steps since 0.0.10 ([below](#the-steps-that-got-here)) are
+the digit to 8% between its column and the first.
+
+On four threads, strip for strip, the module is the quicker on every stream
+but the video at 1x, where FFmpeg's rows are 4% quicker: by two thirds to
+three quarters on the still page and the typing, by half on the drag, a
+quarter to three tenths on the loop, three tenths on the scroll and a tenth to a seventh on
+the fast scroll, and level on the video at 2x. A light strip gains nothing
+from threads, whose waking costs more than its few rows take: a still
+strip at 1x is 0.10 ms on one thread and was 0.15 ms on four, 0.50 ms and
+0.41 ms in FFmpeg, so since the step before the last a picture under 300
+bytes at 1x is the calling thread's alone, which is the 0.10 ms in the
+column, and the typing's 0.13 ms for 0.17. FFmpeg's columns and the
+releases' are of one run, the afternoon of 2026-10-24, on the idle VM,
+whose 1-minute load as each stream's one-thread timing ended was 0.0 to
+1.5, of which the decoder being timed is 1.0; the module's are of the same
+cells that evening, after the last two steps, on the same cores by the
+same script. The tables before this run were of the module under Bun,
+whose JavaScriptCore is Safari's, on an i5-8500T workstation that was not
+idle; here the module takes a fifth to a quarter fewer cycles on every
+stream and FFmpeg a sixth fewer, and which part of that is the engine's and
+which the machine's the run does not say.
 
 ## Measuring a change
 
@@ -89,73 +120,93 @@ what a busy host needs: it checks the first build against FFmpeg's MD5s,
 pins the builds to the same cores (`taskset`), alternates them round by
 round, waits for the load to fall before each stream, and prints
 `perf stat -e instructions:u,cycles:u` beside the times, with the medians of
-three rounds; wall-time medians drift with the load, the counts do not.
+three rounds; wall-time medians drift with the load, the counts do not. The
+times are of runs without perf and the counts of one more run of each under
+it: its counting lengthens each waking of a thread, 0.15 ms a picture on four
+threads on the lab, which the tables before 2026-10-24 carry in their
+four-thread columns, and the counts it does not change.
 
 ## The steps that got here
 
 Each step was kept on the streams there were when it was made, and until
 2026-10-12 those were "the capture", a 1600×1000 Mac capture most of whose
 pictures turned out to decode to the picture before them, and "the video",
-an x265 camera video. So every step has been measured again on the fourteen
-captures: the module built from each step's commit, all of them decoding
-every capture to FFmpeg's digests, alternately through one night. In
+an x265 camera video, under Bun. So every step has been measured again on
+the fourteen captures, under V8 on the idle VM: the module built from each
+step's commit, all of them decoding every capture to FFmpeg's digests, then
+timed alternately through one afternoon on the eight cells here, the
+last row that evening. In
 M cycles a picture on one thread at 2x unless said, and the median ms of a
 strip on four threads, each row against the one above it:
 
 | | commit | a still page | typing | the scroll | the fast scroll | the video | the video at 1x | 4 threads, ms: a still page at 1x | the video |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| The decoder as first written | `b9082b2` | 16.2 | 23.1 | 39.1 | 61.4 | 130.8 | 57.4 | 1.86 | 15.02 |
-| SIMD128 kernels and a 16-bit inverse transform | `c77190e` | 15.9 | 19.6 | 28.8 | 44.8 | 73.1 | 34.6 | 1.83 | 8.79 |
-| The transform by dot products, a wavefront that spins before it sleeps | `30f74c9` | 15.3 | 18.3 | 26.0 | 40.1 | 66.4 | 29.2 | 1.69 | 7.70 |
-| One bounds check per kernel, padded CABAC contexts | `ad52364` | 12.9 | 15.8 | 24.1 | 38.7 | 62.1 | 28.4 | 1.56 | 7.37 |
-| The filters in the wavefront, SAO in place, samples straight from the filters | `e4090e8` | 10.6 | 13.2 | 20.8 | 35.1 | 51.7 | 25.5 | 0.67 | 5.72 |
-| Transform rows by shuffles, copies down columns, map fills by words | `0aa1fbd` | 8.4 | 11.0 | 18.2 | 32.4 | 47.9 | 23.3 | 0.66 | 5.36 |
-| Boundary strengths as the blocks decode, the edge filter by vector, idle SAO blocks skipped | `8dbc348` | 7.0 | 9.4 | 16.4 | 29.0 | 45.6 | 22.9 | 0.64 | 5.18 |
-| Each row starts as the first reference's rows | `79eeb4a` | 5.4 | 7.8 | 15.5 | 27.8 | 45.3 | 23.0 | 0.56 | 5.20 |
-| The probable symbol's short path, the engine's registers, the merge list as far as its index | `38da479` | 4.7 | 6.9 | 14.1 | 25.9 | 43.3 | 21.4 | 0.52 | 5.00 |
-| *no step: the filters reach the picture by pointer* |  | 4.6 | 6.7 | 13.9 | 25.6 | 42.4 | 21.0 | 0.49 | 4.90 |
-| The transform of a block with few coefficients over its coded columns | `2075045` | 4.6 | 6.5 | 14.0 | 25.9 | 43.1 | 21.8 | 0.48 | 5.05 |
-| The sub-block walk in a function of its own, its contexts from a table | `d964e99` | 4.6 | 6.5 | 14.1 | 26.0 | 43.6 | 22.1 | 0.50 | 5.08 |
-| The LPS table packed by model | `96a4144` | 4.6 | 6.4 | 13.9 | 25.7 | 43.2 | 21.7 | 0.48 | 5.03 |
-| A row copies only the blocks changed since its buffer's picture | `8f1e91c` | 4.7 | 6.5 | 14.0 | 26.0 | 43.3 | 21.8 | 0.50 | 5.06 |
-| A block with no edge strength is not scanned by the deblocking | `8a77392` | 4.4 | 6.2 | 13.8 | 25.7 | 43.4 | 21.7 | 0.48 | 5.07 |
-| *no step: a display in strips put together* |  | 4.4 | 6.2 | 13.8 | 25.7 | 43.5 | 21.7 | 0.48 | 5.09 |
-| The coefficients listed as they are parsed | `e631224` | 4.4 | 6.1 | 13.6 | 25.4 | 42.0 | 21.1 | 0.48 | 4.92 |
-| The second pass by multiply-add, the angular turn by vector | `cb0221e` | 4.4 | 6.0 | 13.3 | 24.6 | 40.2 | 20.6 | 0.48 | 4.70 |
-| An intra block's neighbours gathered as two runs | `02e1a8f` | 4.3 | 6.0 | 13.1 | 23.4 | 39.7 | 20.4 | 0.47 | 4.68 |
-| Buffers kept for a display in strips | `1520dc8` | 2.8 | 4.8 | 13.3 | 23.8 | 39.6 | 20.4 | 0.50 | 4.71 |
-| The calling thread is one of the wavefront's | `8180421` | 2.9 | 4.7 | 13.2 | 23.7 | 39.6 | 20.4 | 0.30 | 4.53 |
-| A row of SAO's edge offset out of line, its offsets saturating bytes | `6ca65d7` | 2.8 | 4.7 | 13.1 | 23.6 | 39.1 | 20.3 | 0.30 | 4.42 |
-| A buffer kept only for a reference that left a block of it | `cd88a8a` | 2.8 | 4.7 | 13.2 | 23.5 | 39.2 | 20.3 | 0.29 | 4.47 |
+| The decoder as first written | `b9082b2` | 16.7 | 21.5 | 32.7 | 48.8 | 98.5 | 42.6 | 0.90 | 4.96 |
+| SIMD128 kernels and a 16-bit inverse transform | `c77190e` | 16.0 | 18.9 | 25.6 | 37.3 | 55.5 | 26.1 | 0.89 | 3.50 |
+| The transform by dot products, a wavefront that spins before it sleeps | `30f74c9` | 10.5 | 12.7 | 19.3 | 30.8 | 47.8 | 22.0 | 0.64 | 3.00 |
+| One bounds check per kernel, padded CABAC contexts | `ad52364` | 10.0 | 12.1 | 18.7 | 30.1 | 47.3 | 21.8 | 0.62 | 3.03 |
+| The filters in the wavefront, SAO in place, samples straight from the filters | `e4090e8` | 8.0 | 10.3 | 16.2 | 27.5 | 39.6 | 19.7 | 0.48 | 2.52 |
+| Transform rows by shuffles, copies down columns, map fills by words | `0aa1fbd` | 6.5 | 8.5 | 14.0 | 24.6 | 35.8 | 17.9 | 0.37 | 2.28 |
+| Boundary strengths as the blocks decode, the edge filter by vector, idle SAO blocks skipped | `8dbc348` | 5.5 | 7.4 | 12.6 | 22.2 | 34.2 | 17.7 | 0.29 | 2.22 |
+| Each row starts as the first reference's rows | `79eeb4a` | 4.3 | 6.3 | 11.9 | 21.3 | 34.0 | 17.6 | 0.25 | 2.20 |
+| The probable symbol's short path, the engine's registers, the merge list as far as its index | `38da479` | 3.6 | 5.4 | 10.9 | 20.1 | 32.6 | 16.6 | 0.22 | 2.06 |
+| *no step: the filters reach the picture by pointer* | `4e95e0f` | 3.5 | 5.4 | 10.9 | 19.9 | 32.4 | 16.7 | 0.23 | 2.07 |
+| The transform of a block with few coefficients over its coded columns | `2075045` | 3.5 | 4.9 | 10.8 | 20.1 | 31.9 | 16.6 | 0.21 | 2.08 |
+| The sub-block walk in a function of its own, its contexts from a table | `d964e99` | 3.5 | 4.9 | 10.7 | 19.8 | 31.9 | 16.8 | 0.21 | 2.08 |
+| The LPS table packed by model | `96a4144` | 3.5 | 4.8 | 10.6 | 19.8 | 32.2 | 16.6 | 0.22 | 2.02 |
+| A row copies only the blocks changed since its buffer's picture | `8f1e91c` | 3.5 | 4.9 | 10.7 | 19.7 | 32.0 | 16.5 | 0.21 | 2.08 |
+| A block with no edge strength is not scanned by the deblocking | `8a77392` | 3.4 | 4.7 | 10.5 | 19.7 | 31.8 | 16.7 | 0.19 | 2.10 |
+| *no step: a display in strips put together* | `1c8b0f5` | 3.3 | 4.7 | 10.6 | 19.8 | 31.9 | 16.7 | 0.20 | 2.04 |
+| The coefficients listed as they are parsed | `e631224` | 3.3 | 4.6 | 10.5 | 19.8 | 31.3 | 16.5 | 0.19 | 2.05 |
+| The second pass by multiply-add, the angular turn by vector | `cb0221e` | 3.4 | 4.6 | 10.4 | 19.3 | 30.1 | 16.0 | 0.19 | 2.03 |
+| An intra block's neighbours gathered as two runs | `02e1a8f` | 3.3 | 4.6 | 10.1 | 18.1 | 29.4 | 15.8 | 0.19 | 1.96 |
+| Buffers kept for a display in strips | `1520dc8` | 2.2 | 3.6 | 9.9 | 18.1 | 29.3 | 15.8 | 0.19 | 2.04 |
+| The calling thread is one of the wavefront's | `8180421` | 2.3 | 3.6 | 9.9 | 18.2 | 29.3 | 15.8 | 0.16 | 1.97 |
+| A row of SAO's edge offset out of line, its offsets saturating bytes | `6ca65d7` | 2.1 | 3.6 | 9.8 | 18.0 | 29.0 | 15.7 | 0.16 | 1.97 |
+| A buffer kept only for a reference that left a block of it; release 0.0.10 | `cd88a8a` | 2.2 | 3.7 | 9.8 | 18.0 | 28.9 | 15.7 | 0.17 | 1.97 |
+| A coded sub-block decoded in the walk's function, not one of its own | `9071df3` | 2.1 | 3.5 | 9.7 | 17.9 | 28.5 | 15.4 | 0.17 | 1.93 |
+| The deblocking filters take eight lines of an edge where they took four | `767b06f` | 2.1 | 3.6 | 9.6 | 17.4 | 28.1 | 15.2 | 0.16 | 1.88 |
+| A wide block's residual added sixteen samples at a time | `87e32e6` | 2.2 | 3.5 | 9.6 | 17.5 | 28.5 | 15.1 | 0.16 | 1.87 |
+| SAO's band offset a row in a function of its own, one table for its four bands | `48a662f` | 2.1 | 3.6 | 9.6 | 17.4 | 28.3 | 15.4 | 0.17 | 1.94 |
+| A picture held until the page releases it, and where it changed | `ac4efe4` | 2.1 | 3.6 | 9.5 | 17.3 | 28.4 | 15.2 | 0.16 | 1.90 |
+| A light strip at 1x on the calling thread alone, the pool asleep | `fc013d7` | 2.1 | 3.4 | 9.5 | 17.2 | 28.2 | 15.3 | 0.11 | 1.86 |
+| The module as it is: a zero boundary strength not written | `59ebeff` | 2.0 | 3.4 | 9.4 | 17.3 | 28.0 | 15.2 | 0.10 | 1.91 |
 
 The first nine steps, the ones that made the decoder, each take cycles off
-every capture: together the video at 2x goes from 130.8 M
-cycles a picture to 43.3 M, a still strip from 16.2 M to 4.7 M, and the
-filters in the wavefront alone take three fifths off a light strip's time on
-four threads. Of the later ones the deblocking's skip, the coefficient list,
-the packed LPS table, the second pass, the gathering, the buffers kept and
-the calling thread each show the gain they were kept for, on the streams
-they were aimed at. Three do not:
+every capture: together the video at 2x goes from 98.5 M cycles a picture
+to 32.6 M, a still strip from 16.7 M to 3.6 M, and the filters in the
+wavefront alone take a quarter off a light strip's time on four threads.
+Of the later ones the transform over the coded columns, the coefficient
+list, the second pass, the gathering, the buffers kept, the calling thread,
+the sub-block decoded in the walk's function, the deblocking's eight
+lines, the light strip left to the calling thread and the zero strength
+not written each show the gain they were kept for, on the streams they were aimed
+at; the deblocking's skip and SAO's two rows are a digit on theirs. The
+transform is the one that did not show under Bun, where no stream but the
+typing took fewer cycles for it and the video 2% to 4% more; under V8 it is
+9% fewer on the typing at 2x and 1% to 2% fewer on the video. Three show
+nothing:
 
-- **The transform over the coded columns** was a fifth of the capture's
-  instructions and a sixth of its cycles. On the captures no stream but the
-  typing at 2x takes fewer cycles for it, 3%, and the video takes 2% to 4%
-  more.
 - **The sub-block walk in a function of its own** is level on every stream
-  and 1% more on the video.
+  and 1% more on the video at 1x, as it was under Bun.
 - **A row copying only the changed blocks** was a twelfth of the x265
-  video's cycles. On the strips it was up to 5% more, since no strip ever
-  found a buffer holding its reference's ancestor; it is the buffers kept,
-  six steps later, that it pays through.
+  video's cycles. On the strips it is level, since no strip ever found a
+  buffer holding its reference's ancestor; it is the buffers kept, six
+  steps later, that it pays through.
+- **The LPS table packed by model** was 4% of the capture's cycles under
+  Bun. Under V8 it is a digit on the typing and the scroll and 1% more on
+  the video.
 
-Each of the first two has since been measured against its plain form in the
-module as it is ([what remains](remaining.md#speed)): both stay, the
-transform being worth 8% of the typing's cycles at 2x there, and a coded
-sub-block is decoded in the walk's function where it had one of its own, 1%
-to 2% fewer cycles on the scrolls and the video, which the tables above, of
-the night before, do not have. The counts are printed to 0.1 M, a
-twentieth of a light strip's, so a row that differs from the one above by
-that digit on a light stream may not differ at all.
+And one goes the other way: **a wide block's residual added sixteen samples
+at a time** is 1% more on the video at 2x here, level elsewhere, where it
+was 1% fewer on the workstation.
+
+The walk and the transform have each also been measured against their plain
+form in the module as it is ([what remains](remaining.md#speed)): both
+stay. The counts are printed to 0.1 M, a twentieth of a light strip's, so a
+row that differs from the one above by that digit on a light stream may not
+differ at all; on the video at 2x the last three rows, 28.4 M, 28.2 M and
+28.0 M, of which the first two are the same code on one thread, show what the digit is worth there.
 
 As each step was measured when it was made, on the capture and the x265
 video:

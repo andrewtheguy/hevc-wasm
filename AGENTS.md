@@ -18,3 +18,16 @@ and build details belong in the [README](README.md), measurements in
   retains the environment and access of the user that started it. Test a
   capability once and read its error; being able to drive the GUI is still not
   permission to do so.
+
+## Benchmarks
+
+- Measure the module under Node (`node bench/decode.ts`, `bench/run.sh`),
+  never under Bun; `bun test` runs the tests.
+- Measure only on an idle machine, never on this workstation while anything
+  else runs. The benchmark host is the ssh Host `hevc-lab` (its address and
+  key in `~/.ssh/config`), an idle VM. Stage everything there under
+  `~/codes/staging-area`, as ../devtools has it: the repository rsynced to
+  `hevc-wasm`, the drive's `bench` folder of captures to
+  `hevc-artifacts/bench`, and the runs' worktrees, builds and raw rows to
+  `hevc-wasm-bench`. The scripts of a run live in `tmp/bench-lab` here,
+  with a README of the host.

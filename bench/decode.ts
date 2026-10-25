@@ -1,17 +1,18 @@
-// bun bench/decode.ts FILE.h265 THREADS [PICTURES]: the module in HEVC_WASM_DIR (build/out) decoding a stream, timed per
-// access unit by its own clock. With CHECK=1 each picture's MD5 is compared with FILE.h265.framemd5, outside the timing,
+// node bench/decode.ts FILE.h265 THREADS [PICTURES]: the module in HEVC_WASM_DIR (build/out) decoding a stream, timed per
+// access unit by its own clock, under Node, whose V8 is the engine of the Chrome the module is for. With CHECK=1 each picture's MD5 is compared with FILE.h265.framemd5, outside the timing,
 // and the stream decoded whole must come to as many pictures as the reference has.
-import { accessUnits } from "../test/annexb";
-import { decodeUnit, loadRust, rustPictureMd5 } from "../test/rust";
+import { readFile } from "node:fs/promises";
+import { accessUnits } from "../test/annexb.ts";
+import { decodeUnit, loadRust, rustPictureMd5 } from "../test/rust.ts";
 
 const [file, t = "1", limit = "100000"] = process.argv.slice(2);
-if (!file) throw new Error("usage: bun bench/decode.ts FILE.h265 THREADS [PICTURES]");
+if (!file) throw new Error("usage: node bench/decode.ts FILE.h265 THREADS [PICTURES]");
 const threads = Number(t);
 const check = process.env.CHECK === "1";
 const loaded = await loadRust(Math.max(threads, 1));
-const every = accessUnits(new Uint8Array(await Bun.file(file).arrayBuffer()));
+const every = accessUnits(new Uint8Array(await readFile(file)));
 const units = every.slice(0, Number(limit));
-const md5s = check ? (await Bun.file(`${file}.framemd5`).text()).split("\n").filter((l) => l && !l.startsWith("#")).map((l) => l.split(",").pop()!.trim()) : [];
+const md5s = check ? (await readFile(`${file}.framemd5`, "utf8")).split("\n").filter((l) => l && !l.startsWith("#")).map((l) => l.split(",").pop()!.trim()) : [];
 const decoder = new loaded.glue.Decoder(threads);
 const times: number[] = [];
 let pictures = 0;
