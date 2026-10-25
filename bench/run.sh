@@ -50,7 +50,7 @@ for t in ${THREADS:-1 4}; do
           # Its wall time over the pictures; ffmpeg gives no time per picture, so the median is the mean.
           mean=$(grep -o 'rtime=[0-9.]*' <<<"$out" | cut -d= -f2 | awk -v n="$n" '{print $1 * 1000 / n}'); median=$mean
         else
-          cmd=(env HEVC_WASM_DIR=$b node bench/decode.ts "$dir/$s.h265" "$t" "${limit[@]}")
+          cmd=(env "HEVC_WASM_DIR=$b" node bench/decode.ts "$dir/$s.h265" "$t" "${limit[@]}")
           out=$(taskset -c "$cpus" "${cmd[@]}" 2>&1)
           n=$(grep -o '^[0-9]* pictures' <<<"$out" | cut -d' ' -f1)
           mean=$(grep -o 'mean [0-9.]*' <<<"$out" | cut -d' ' -f2); median=$(grep -o 'median [0-9.]*' <<<"$out" | cut -d' ' -f2)
