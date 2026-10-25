@@ -21,11 +21,8 @@ and build details belong in the [README](README.md), measurements in
 
 ## Benchmarks
 
-- The module is for Chrome, whose engine is V8: measure it under Node
-  (`node bench/decode.ts`, `bench/run.sh`), never under Bun, whose
-  JavaScriptCore is Safari's, and Safari decodes the Mac's HEVC itself.
-  `bun test` runs the tests; the loader uses only Node's APIs, which Bun has
-  too, so both run it.
+- Measure the module under Node (`node bench/decode.ts`, `bench/run.sh`),
+  never under Bun; `bun test` runs the tests.
 - Measure only on an idle machine, never on this workstation while anything
   else runs. The benchmark host is the ssh Host `hevc-lab` (its address and
   key in `~/.ssh/config`), an idle VM. Stage everything there under

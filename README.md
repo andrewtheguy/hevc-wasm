@@ -66,7 +66,11 @@ the module themselves.
 
 The tests load `build/out/hevc.js` and `hevc.wasm` (or `$HEVC_WASM_DIR`'s)
 under Bun as the page loads them: the module on a shared memory, its pool's
-threads as workers that each run an instance of it. The `mac-*` streams in
+threads as workers that each run an instance of it. The loader uses only
+Node's APIs, which Bun has too, so either runs it; the benchmark runs it
+under Node alone, since the module is for Chrome, whose engine is Node's V8,
+while Bun's JavaScriptCore is Safari's, and Safari decodes the Mac's HEVC
+itself. The `mac-*` streams in
 `test/data`, x265's nearest shape to the Mac's, must decode to native FFmpeg's
 `-f framemd5`, recorded in `test/data/reference.json`, on one thread and on
 four; the other streams there, of other shapes, must be refused by name. The
