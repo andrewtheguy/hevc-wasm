@@ -113,12 +113,9 @@ on this machine, not in a workflow, since a public repository's workflow
 artifacts are anyone's to download; attaches the archive and its `SHA256SUMS` to
 hevc-wasm-archives' release `vX.Y.Z`; tags the commit `vX.Y.Z` here, with a
 release of the source alone whose notes give the archive's digest. zDesk then
-takes it as a new version and checksum in `src/hevc_wasm.rs`. For a Kubernetes
-deployment of zDesk, which mounts the archives on its public image's release
-tree, `./publish-image.sh`, run on its own with docker or podman logged in
-to ghcr with `write:packages`, pushes the private image
-`ghcr.io/andrewtheguy/hevc-wasm-archives:vX.Y.Z` holding that archive and every
-one before it.
+takes it as a new version and checksum in `src/hevc_wasm.rs`. A deployment that
+mounts the archives on zDesk's release tree as an image volume builds that
+image itself, from the releases; this repository publishes no image.
 
 ## The decoder
 
