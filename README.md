@@ -38,7 +38,8 @@ build. A nightly because the module's threads share a memory, and the standard
 library as shipped for `wasm32-unknown-unknown` is built without `atomics`: it
 links, but its locks are single-thread stubs, and only a nightly Cargo builds
 it with them (`build-std`, in `rust/hevc-web/.cargo/config.toml`). The pin is
-the channel, not a date: the decoder itself builds on stable. The script writes
+a dated nightly, so a build is the same compiler until the date is moved: the
+decoder itself builds on stable. The script writes
 `build/out/hevc.js`, `build/out/hevc.wasm`, and the release archive in
 `dist/`.
 
